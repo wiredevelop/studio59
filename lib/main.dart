@@ -839,8 +839,8 @@ class StaffLoginPage extends ConsumerStatefulWidget {
 }
 
 class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
-  final emailCtrl = TextEditingController(text: 'admin@studio59.local');
-  final passCtrl = TextEditingController(text: 'password');
+  final emailCtrl = TextEditingController();
+  final passCtrl = TextEditingController();
 
   @override
   Widget build(BuildContext context) {

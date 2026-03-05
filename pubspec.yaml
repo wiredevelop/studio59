@@ -43,6 +43,15 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.13.1
+
+flutter_launcher_icons:
+  image_path: /var/www/wiredevelop/studio59/docs/logo-icon-s59.jpg
+  android: true
+  ios: true
+  web:
+    generate: true
+    image_path: /var/www/wiredevelop/studio59/docs/logo-icon-s59.jpg
 
   flutter_lints: ^6.0.0
 
