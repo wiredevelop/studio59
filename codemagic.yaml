@@ -9,13 +9,14 @@ workflows:
       ios_signing:
         distribution_type: app_store
         bundle_identifier: pt.studio59.app
-      vars:
-        FLUTTER_BUILD_NUMBER: "$BUILD_NUMBER"
     scripts:
       - name: Flutter Pub Get
         script: flutter pub get
       - name: Build IPA
-        script: flutter build ipa --release --build-number=$FLUTTER_BUILD_NUMBER
+        script: |
+          BUILD_NUMBER_OVERRIDE="$(date +%Y%m%d%H%M%S)"
+          echo "Using build number: $BUILD_NUMBER_OVERRIDE"
+          flutter build ipa --release --build-number=$BUILD_NUMBER_OVERRIDE
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
