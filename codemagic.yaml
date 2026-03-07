@@ -10,7 +10,7 @@ workflows:
         distribution_type: app_store
         bundle_identifier: pt.studio59.app
       vars:
-        FLUTTER_BUILD_NUMBER: "3"
+        FLUTTER_BUILD_NUMBER: "$BUILD_NUMBER"
     scripts:
       - name: Flutter Pub Get
         script: flutter pub get
