@@ -1544,12 +1544,69 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
               icon: Icons.manage_accounts,
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffUsersPage())),
             ),
+          if (user.hasPermission('clients.read'))
+            _StaffMenuTile(
+              title: 'Clientes',
+              subtitle: 'Gerir clientes',
+              icon: Icons.people_outline,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffClientsPage())),
+            ),
           if (user.hasPermission('events.read'))
             _StaffMenuTile(
               title: 'Sincronizar',
               subtitle: 'Exportar/Importar dados offline',
               icon: Icons.sync,
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffSyncPage())),
+            ),
+          const Divider(height: 24),
+          if (user.hasPermission('events.read'))
+            FutureBuilder<List<StaffEvent>>(
+              future: ref.read(apiProvider).staffEvents(token),
+              builder: (_, snap) {
+                if (!snap.hasData) return const SizedBox.shrink();
+                final events = snap.data!;
+                if (events.isEmpty) return const SizedBox.shrink();
+                final recent = events.take(5).toList();
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Eventos recentes', style: TextStyle(fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 6),
+                    ...recent.map((e) => ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(e.name),
+                      subtitle: Text(e.eventDate),
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => StaffEventDetailPage(event: e))),
+                    )),
+                  ],
+                );
+              },
+            ),
+          if (user.hasPermission('orders.read'))
+            FutureBuilder<List<OrderListItem>>(
+              future: ref.read(apiProvider).staffOrdersList(token),
+              builder: (_, snap) {
+                if (!snap.hasData) return const SizedBox.shrink();
+                final orders = snap.data!;
+                if (orders.isEmpty) return const SizedBox.shrink();
+                final recent = orders.take(5).toList();
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 12),
+                    const Text('Pedidos recentes', style: TextStyle(fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 6),
+                    ...recent.map((o) => ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(o.customerName ?? o.orderCode),
+                      subtitle: Text('${o.status} • ${o.totalAmount.toStringAsFixed(2)}€'),
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => StaffOrderDetailPage(orderId: o.id))),
+                    )),
+                  ],
+                );
+              },
             ),
         ],
       ),
@@ -1715,13 +1772,14 @@ class StaffEventFormPage extends ConsumerStatefulWidget {
   ConsumerState<StaffEventFormPage> createState() => _StaffEventFormPageState();
 }
 
-class StaffEventDetailPage extends StatelessWidget {
+class StaffEventDetailPage extends ConsumerWidget {
   const StaffEventDetailPage({super.key, required this.event});
   final StaffEvent event;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final meta = event.eventMeta ?? {};
+    final user = ref.watch(staffUserProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Detalhe do Evento')),
       body: ListView(
@@ -1735,6 +1793,17 @@ class StaffEventDetailPage extends StatelessWidget {
           Text('Preço por foto: ${event.pricePerPhoto}'),
           if (event.accessPin != null && event.accessPin!.isNotEmpty) Text('PIN: ${event.accessPin}'),
           if (event.notes != null && event.notes!.isNotEmpty) Text('Notas: ${event.notes}'),
+          const SizedBox(height: 12),
+          if (user != null && user.hasPermission('events.write'))
+            FilledButton.tonal(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => StaffEventStaffPage(event: event)),
+                );
+              },
+              child: const Text('Gerir staff do evento'),
+            ),
           const SizedBox(height: 12),
           if (meta.isNotEmpty) ...[
             const Text('Detalhes', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -2277,6 +2346,158 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   }
 }
 
+class StaffEventStaffPage extends ConsumerStatefulWidget {
+  const StaffEventStaffPage({super.key, required this.event});
+  final StaffEvent event;
+
+  @override
+  ConsumerState<StaffEventStaffPage> createState() => _StaffEventStaffPageState();
+}
+
+class _StaffEventStaffPageState extends ConsumerState<StaffEventStaffPage> {
+  int? selectedUserId;
+  String role = 'photographer';
+  bool sendInvite = true;
+  String channel = 'email';
+  final messageCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    messageCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<_StaffStaffData> _loadData(String token) async {
+    final api = ref.read(apiProvider);
+    final staff = await api.staffEventStaff(token, widget.event.id);
+    final users = await api.staffAssignableUsers(token, widget.event.id);
+    return _StaffStaffData(staff: staff, users: users);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final token = ref.watch(staffTokenProvider);
+    if (token == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+
+    return Scaffold(
+      appBar: AppBar(title: Text('Staff • ${widget.event.name}')),
+      body: FutureBuilder<_StaffStaffData>(
+        future: _loadData(token),
+        builder: (context, snap) {
+          if (!snap.hasData) {
+            if (snap.hasError) {
+              return ListView(
+                padding: const EdgeInsets.all(16),
+                children: [Text('Erro: ${snap.error}')],
+              );
+            }
+            return const Center(child: CircularProgressIndicator());
+          }
+          final data = snap.data!;
+          final users = data.users;
+          final staff = data.staff;
+          if (selectedUserId == null && users.isNotEmpty) {
+            selectedUserId = users.first.id;
+          }
+
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              const Text('Associar staff', style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<int>(
+                value: selectedUserId,
+                items: users.map((u) => DropdownMenuItem(value: u.id, child: Text('${u.name} (${u.role})'))).toList(),
+                onChanged: (v) => setState(() => selectedUserId = v),
+                decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Utilizador'),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                value: role,
+                items: const [
+                  DropdownMenuItem(value: 'photographer', child: Text('Fotógrafo')),
+                  DropdownMenuItem(value: 'assistant', child: Text('Assistente')),
+                  DropdownMenuItem(value: 'sales', child: Text('Vendas')),
+                ],
+                onChanged: (v) => setState(() => role = v ?? 'photographer'),
+                decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Função'),
+              ),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                value: sendInvite,
+                onChanged: (v) => setState(() => sendInvite = v),
+                title: const Text('Enviar convite'),
+              ),
+              if (sendInvite) ...[
+                DropdownButtonFormField<String>(
+                  value: channel,
+                  items: const [
+                    DropdownMenuItem(value: 'email', child: Text('Email')),
+                    DropdownMenuItem(value: 'whatsapp', child: Text('WhatsApp')),
+                  ],
+                  onChanged: (v) => setState(() => channel = v ?? 'email'),
+                  decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Canal'),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: messageCtrl,
+                  maxLines: 2,
+                  decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Mensagem (opcional)'),
+                ),
+              ],
+              const SizedBox(height: 8),
+              FilledButton(
+                onPressed: selectedUserId == null
+                    ? null
+                    : () async {
+                        await ref.read(apiProvider).staffAssignEventStaff(
+                              token,
+                              widget.event.id,
+                              [selectedUserId!],
+                              role: role,
+                              sendInvite: sendInvite,
+                              channel: channel,
+                              message: messageCtrl.text.trim(),
+                            );
+                        if (!mounted) return;
+                        setState(() {});
+                      },
+                child: const Text('Associar'),
+              ),
+              const Divider(height: 32),
+              const Text('Staff associado', style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              if (staff.isEmpty) const Text('Sem staff associado.'),
+              ...staff.map((s) {
+                return Card(
+                  child: ListTile(
+                    title: Text('${s.user.name} (${s.user.role})'),
+                    subtitle: Text('${s.role} • ${s.status}'),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () async {
+                        await ref.read(apiProvider).staffRemoveEventStaff(token, widget.event.id, s.user.id);
+                        if (!mounted) return;
+                        setState(() {});
+                      },
+                    ),
+                  ),
+                );
+              }).toList(),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _StaffStaffData {
+  const _StaffStaffData({required this.staff, required this.users});
+  final List<StaffEventStaff> staff;
+  final List<StaffUser> users;
+}
+
 class StaffUploadsPage extends ConsumerStatefulWidget {
   const StaffUploadsPage({super.key});
 
@@ -2612,6 +2833,7 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
     if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     final canWrite = user.hasPermission('orders.write');
     final canDownload = user.hasPermission('orders.download');
+    final canExport = user.hasPermission('orders.export');
 
     return Scaffold(
       appBar: AppBar(
@@ -2681,6 +2903,18 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                       decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Nome/codigo'),
                       onSubmitted: (_) => setState(() {}),
                     ),
+                    if (canExport && eventId != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: FilledButton.tonal(
+                          onPressed: () async {
+                            final path = await ref.read(apiProvider).staffExportOrdersCsv(token, eventId!);
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('CSV guardado em: $path')));
+                          },
+                          child: const Text('Exportar CSV do evento'),
+                        ),
+                      ),
                     if (selected.isNotEmpty && canWrite)
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
@@ -3244,6 +3478,209 @@ class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
   }
 }
 
+class StaffClientsPage extends ConsumerStatefulWidget {
+  const StaffClientsPage({super.key});
+
+  @override
+  ConsumerState<StaffClientsPage> createState() => _StaffClientsPageState();
+}
+
+class _StaffClientsPageState extends ConsumerState<StaffClientsPage> {
+  final searchCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<List<StaffClient>> _loadClients(String token) =>
+      ref.read(apiProvider).staffClients(token, q: searchCtrl.text.trim());
+
+  @override
+  Widget build(BuildContext context) {
+    final token = ref.watch(staffTokenProvider);
+    final user = ref.watch(staffUserProvider);
+    if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Clientes'),
+        actions: [
+          IconButton(onPressed: () => setState(() {}), icon: const Icon(Icons.refresh)),
+        ],
+      ),
+      floatingActionButton: user.hasPermission('clients.write')
+          ? FloatingActionButton(
+              onPressed: () async {
+                await Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffClientFormPage()));
+                setState(() {});
+              },
+              child: const Icon(Icons.add),
+            )
+          : null,
+      body: RefreshIndicator(
+        onRefresh: () async => setState(() {}),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: TextField(
+                controller: searchCtrl,
+                decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Pesquisar'),
+                onSubmitted: (_) => setState(() {}),
+              ),
+            ),
+            Expanded(
+              child: FutureBuilder<List<StaffClient>>(
+                future: _loadClients(token),
+                builder: (_, snap) {
+                  if (!snap.hasData) {
+                    if (snap.hasError) return Center(child: Text('Erro: ${snap.error}'));
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final clients = snap.data!;
+                  if (clients.isEmpty) return const Center(child: Text('Sem clientes'));
+                  return ListView.builder(
+                    itemCount: clients.length,
+                    itemBuilder: (_, i) {
+                      final c = clients[i];
+                      return Card(
+                        child: ListTile(
+                          title: Text(c.name),
+                          subtitle: Text([c.phone, c.email].where((v) => v != null && v!.isNotEmpty).join(' • ')),
+                          onTap: () async {
+                            await Navigator.push(context, MaterialPageRoute(builder: (_) => StaffClientFormPage(client: c)));
+                            setState(() {});
+                          },
+                          trailing: user.hasPermission('clients.write')
+                              ? IconButton(
+                                  icon: const Icon(Icons.delete_outline),
+                                  onPressed: () async {
+                                    final ok = await _confirm(context, 'Remover cliente?', c.name);
+                                    if (!ok) return;
+                                    await ref.read(apiProvider).deleteClient(token, c.id);
+                                    if (!context.mounted) return;
+                                    setState(() {});
+                                  },
+                                )
+                              : null,
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class StaffClientFormPage extends ConsumerStatefulWidget {
+  const StaffClientFormPage({super.key, this.client});
+  final StaffClient? client;
+
+  @override
+  ConsumerState<StaffClientFormPage> createState() => _StaffClientFormPageState();
+}
+
+class _StaffClientFormPageState extends ConsumerState<StaffClientFormPage> {
+  late final TextEditingController nameCtrl;
+  late final TextEditingController phoneCtrl;
+  late final TextEditingController emailCtrl;
+  late final TextEditingController notesCtrl;
+  bool marketingConsent = false;
+  bool saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    nameCtrl = TextEditingController(text: widget.client?.name ?? '');
+    phoneCtrl = TextEditingController(text: widget.client?.phone ?? '');
+    emailCtrl = TextEditingController(text: widget.client?.email ?? '');
+    notesCtrl = TextEditingController(text: widget.client?.notes ?? '');
+    marketingConsent = widget.client?.marketingConsent ?? false;
+  }
+
+  @override
+  void dispose() {
+    nameCtrl.dispose();
+    phoneCtrl.dispose();
+    emailCtrl.dispose();
+    notesCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final token = ref.watch(staffTokenProvider);
+    if (token == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.client == null ? 'Novo cliente' : 'Editar cliente')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
+          const SizedBox(height: 8),
+          TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Telemóvel', border: OutlineInputBorder())),
+          const SizedBox(height: 8),
+          TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+          const SizedBox(height: 8),
+          TextField(
+            controller: notesCtrl,
+            maxLines: 3,
+            decoration: const InputDecoration(labelText: 'Notas', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            value: marketingConsent,
+            onChanged: (v) => setState(() => marketingConsent = v),
+            title: const Text('Consentimento marketing'),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: saving
+                ? null
+                : () async {
+                    final payload = StaffClientPayload(
+                      name: nameCtrl.text.trim(),
+                      phone: phoneCtrl.text.trim(),
+                      email: emailCtrl.text.trim(),
+                      notes: notesCtrl.text.trim(),
+                      marketingConsent: marketingConsent,
+                    );
+                    if (payload.name.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome é obrigatório.')));
+                      return;
+                    }
+                    try {
+                      setState(() => saving = true);
+                      if (widget.client == null) {
+                        await ref.read(apiProvider).createClient(token, payload);
+                      } else {
+                        await ref.read(apiProvider).updateClient(token, widget.client!.id, payload);
+                      }
+                      if (!context.mounted) return;
+                      Navigator.pop(context);
+                    } catch (e) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                    } finally {
+                      if (mounted) setState(() => saving = false);
+                    }
+                  },
+            child: Text(saving ? 'A guardar...' : 'Guardar'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 Future<bool> _confirm(BuildContext context, String title, String message) {
   return showDialog<bool>(
     context: context,
@@ -3709,6 +4146,51 @@ class ApiService {
     return list.map(StaffEvent.fromJson).toList();
   }
 
+  Future<List<StaffEventStaff>> staffEventStaff(String token, int eventId) async {
+    final r = await dio.get('/events/$eventId/staff', options: Options(headers: {'Authorization': 'Bearer $token'}));
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    final list = (r.data['data'] as List).cast<Map<String, dynamic>>();
+    return list.map(StaffEventStaff.fromJson).toList();
+  }
+
+  Future<List<StaffUser>> staffAssignableUsers(String token, int eventId) async {
+    final r = await dio.get('/events/$eventId/staff/users', options: Options(headers: {'Authorization': 'Bearer $token'}));
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    final list = (r.data['data'] as List).cast<Map<String, dynamic>>();
+    return list.map(StaffUser.fromJson).toList();
+  }
+
+  Future<void> staffAssignEventStaff(
+    String token,
+    int eventId,
+    List<int> userIds, {
+    required String role,
+    required bool sendInvite,
+    required String channel,
+    String? message,
+  }) async {
+    final r = await dio.post(
+      '/events/$eventId/staff',
+      data: {
+        'user_ids': userIds,
+        'role': role,
+        'send_invite': sendInvite,
+        'channel': channel,
+        'message': message?.trim().isEmpty == true ? null : message,
+      },
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+    if (r.statusCode != 201) throw _errorFromResponse(r);
+  }
+
+  Future<void> staffRemoveEventStaff(String token, int eventId, int userId) async {
+    final r = await dio.delete(
+      '/events/$eventId/staff/$userId',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+  }
+
   Future<StaffEvent> createEvent(String token, StaffEventPayload payload) async {
     final r = await dio.post('/events', data: payload.toJson(), options: Options(headers: {'Authorization': 'Bearer $token'}));
     if (r.statusCode != 201) throw _errorFromResponse(r);
@@ -3863,11 +4345,51 @@ class ApiService {
     return savePath;
   }
 
+  Future<String> staffExportOrdersCsv(String token, int eventId) async {
+    final tempDir = await getTemporaryDirectory();
+    final savePath = '${tempDir.path}/orders-event-$eventId.csv';
+    final r = await dio.download(
+      '/events/$eventId/orders/export',
+      savePath,
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    return savePath;
+  }
+
   Future<List<StaffUser>> staffUsers(String token) async {
     final r = await dio.get('/users', options: Options(headers: {'Authorization': 'Bearer $token'}));
     if (r.statusCode != 200) throw _errorFromResponse(r);
     final list = (r.data['data'] as List).cast<Map<String, dynamic>>();
     return list.map(StaffUser.fromJson).toList();
+  }
+
+  Future<List<StaffClient>> staffClients(String token, {String q = ''}) async {
+    final r = await dio.get(
+      '/clients',
+      queryParameters: {'q': q},
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    final list = (r.data['data'] as List).cast<Map<String, dynamic>>();
+    return list.map(StaffClient.fromJson).toList();
+  }
+
+  Future<StaffClient> createClient(String token, StaffClientPayload payload) async {
+    final r = await dio.post('/clients', data: payload.toJson(), options: Options(headers: {'Authorization': 'Bearer $token'}));
+    if (r.statusCode != 201) throw _errorFromResponse(r);
+    return StaffClient.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  Future<StaffClient> updateClient(String token, int clientId, StaffClientPayload payload) async {
+    final r = await dio.put('/clients/$clientId', data: payload.toJson(), options: Options(headers: {'Authorization': 'Bearer $token'}));
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    return StaffClient.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  Future<void> deleteClient(String token, int clientId) async {
+    final r = await dio.delete('/clients/$clientId', options: Options(headers: {'Authorization': 'Bearer $token'}));
+    if (r.statusCode != 200) throw _errorFromResponse(r);
   }
 
   Future<StaffUser> createUser(String token, StaffUserPayload payload) async {
@@ -4117,6 +4639,55 @@ class StaffUserPayload {
   };
 }
 
+class StaffClient {
+  StaffClient({
+    required this.id,
+    required this.name,
+    this.phone,
+    this.email,
+    this.notes,
+    this.marketingConsent = false,
+  });
+  final int id;
+  final String name;
+  final String? phone;
+  final String? email;
+  final String? notes;
+  final bool marketingConsent;
+
+  factory StaffClient.fromJson(Map<String, dynamic> j) => StaffClient(
+    id: j['id'] as int,
+    name: j['name'] as String? ?? '',
+    phone: j['phone'] as String?,
+    email: j['email'] as String?,
+    notes: j['notes'] as String?,
+    marketingConsent: j['marketing_consent'] == true || j['marketing_consent'] == 1,
+  );
+}
+
+class StaffClientPayload {
+  StaffClientPayload({
+    required this.name,
+    this.phone,
+    this.email,
+    this.notes,
+    this.marketingConsent = false,
+  });
+  final String name;
+  final String? phone;
+  final String? email;
+  final String? notes;
+  final bool marketingConsent;
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'phone': phone?.trim().isEmpty == true ? null : phone,
+    'email': email?.trim().isEmpty == true ? null : email,
+    'notes': notes?.trim().isEmpty == true ? null : notes,
+    'marketing_consent': marketingConsent,
+  };
+}
+
 class StaffEvent {
   StaffEvent({
     required this.id,
@@ -4164,6 +4735,26 @@ class StaffEvent {
     accessPin: j['access_pin'] as String?,
     notes: j['notes'] as String?,
     isLocked: j['is_locked'] == true || j['is_locked'] == 1,
+  );
+}
+
+class StaffEventStaff {
+  StaffEventStaff({
+    required this.id,
+    required this.role,
+    required this.status,
+    required this.user,
+  });
+  final int id;
+  final String role;
+  final String status;
+  final StaffUser user;
+
+  factory StaffEventStaff.fromJson(Map<String, dynamic> j) => StaffEventStaff(
+    id: j['id'] as int,
+    role: j['role'] as String? ?? 'photographer',
+    status: j['status'] as String? ?? 'invited',
+    user: StaffUser.fromJson((j['user'] as Map).cast<String, dynamic>()),
   );
 }
 
