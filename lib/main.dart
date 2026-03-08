@@ -179,7 +179,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           ),
         ),
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -811,7 +811,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
     final eventType = session?.eventType ?? '';
     return Scaffold(
       appBar: AppBar(title: const Text('Checkout')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
@@ -1341,7 +1341,7 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Staff Login')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
@@ -1776,7 +1776,7 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
 
     return Scaffold(
       appBar: AppBar(title: Text(widget.event == null ? 'Novo Evento' : 'Editar Evento')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
@@ -4076,7 +4076,7 @@ class _StaffSyncPageState extends ConsumerState<StaffSyncPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Sincronizar')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
