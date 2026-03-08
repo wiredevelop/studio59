@@ -88,6 +88,14 @@ import Photos
       self?.screenChannel?.invokeMethod("screenshotTaken", arguments: nil)
     }
 
+    NotificationCenter.default.addObserver(
+      forName: UIScreen.capturedDidChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.screenChannel?.invokeMethod("captureChanged", arguments: ["captured": UIScreen.main.isCaptured])
+    }
+
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 }

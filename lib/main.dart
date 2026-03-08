@@ -3010,6 +3010,10 @@ class _SecureScreenState extends State<SecureScreen> {
           screenshotTimer = Timer(const Duration(seconds: 2), () {
             if (mounted) setState(() => screenshotDetected = false);
           });
+        } else if (call.method == 'captureChanged') {
+          if (!mounted) return;
+          final captured = call.arguments is Map ? (call.arguments['captured'] == true) : false;
+          setState(() => isRecording = captured);
         }
       });
       timer = Timer.periodic(const Duration(seconds: 1), (_) async {
