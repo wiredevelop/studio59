@@ -443,21 +443,22 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
 
   Future<void> _startFaceSearch(GuestSession session) async {
     if (faceSearching) return;
-    var status = await Permission.camera.status;
-    if (!status.isGranted) {
-      status = await Permission.camera.request();
-    }
-    if (!status.isGranted) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Permissão de câmara não concedida.')),
-      );
-      return;
-    }
-
     final picker = ImagePicker();
     XFile? file;
     try {
+      if (!Platform.isIOS) {
+        var status = await Permission.camera.status;
+        if (!status.isGranted) {
+          status = await Permission.camera.request();
+        }
+        if (!status.isGranted) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Permissão de câmara não concedida.')),
+          );
+          return;
+        }
+      }
       file = await picker.pickImage(
         source: ImageSource.camera,
         preferredCameraDevice: CameraDevice.front,
