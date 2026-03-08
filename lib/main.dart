@@ -244,8 +244,59 @@ Future<void> enqueueOfflineOrder(int eventId, Map<String, dynamic> order) async 
   orders.add(order);
   payload['event_id'] = eventId;
   payload['orders'] = orders;
+  payload['selections'] ??= [];
+  payload['order_updates'] ??= [];
+  final clients = (payload['clients'] as List? ?? []).cast<Map<String, dynamic>>();
+  final email = order['customer_email']?.toString().trim();
+  final phone = order['customer_phone']?.toString().trim();
+  if ((email != null && email.isNotEmpty) || (phone != null && phone.isNotEmpty)) {
+    final exists = clients.any((c) => (email != null && c['email'] == email) || (phone != null && c['phone'] == phone));
+    if (!exists) {
+      clients.add({
+        'name': order['customer_name'] ?? 'Cliente',
+        'email': email,
+        'phone': phone,
+      });
+    }
+  }
+  payload['clients'] = clients;
   payload['device_id'] ??= await getDeviceId();
   payload['exported_at'] = DateTime.now().toIso8601String();
+  await _writeOfflinePayload(eventId, payload);
+}
+
+Future<void> enqueueSelection(int eventId, int photoId, String status) async {
+  final payload = await _readOfflinePayload(eventId);
+  final selections = (payload['selections'] as List? ?? []).cast<Map<String, dynamic>>();
+  selections.add({
+    'uuid': const Uuid().v4(),
+    'event_id': eventId,
+    'device_id': await getDeviceId(),
+    'photo_id': photoId,
+    'status': status,
+    'selected_at': DateTime.now().toIso8601String(),
+  });
+  payload['selections'] = selections;
+  payload['orders'] ??= [];
+  payload['order_updates'] ??= [];
+  payload['clients'] ??= [];
+  await _writeOfflinePayload(eventId, payload);
+}
+
+Future<void> enqueueOrderUpdate(int eventId, int orderId, String status) async {
+  final payload = await _readOfflinePayload(eventId);
+  final updates = (payload['order_updates'] as List? ?? []).cast<Map<String, dynamic>>();
+  updates.add({
+    'uuid': const Uuid().v4(),
+    'event_id': eventId,
+    'order_id': orderId,
+    'status': status,
+    'updated_at': DateTime.now().toIso8601String(),
+  });
+  payload['order_updates'] = updates;
+  payload['orders'] ??= [];
+  payload['selections'] ??= [];
+  payload['clients'] ??= [];
   await _writeOfflinePayload(eventId, payload);
 }
 
@@ -253,6 +304,10 @@ Future<Map<String, dynamic>> buildOfflinePayload(int eventId) async {
   final payload = await _readOfflinePayload(eventId);
   payload['device_id'] ??= await getDeviceId();
   payload['exported_at'] = DateTime.now().toIso8601String();
+  payload['orders'] ??= [];
+  payload['selections'] ??= [];
+  payload['order_updates'] ??= [];
+  payload['clients'] ??= [];
   return payload;
 }
 
@@ -377,6 +432,32 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
           title: Text('${session.eventName} | Senha: ${session.accessPassword}'),
           actions: [
             IconButton(
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Detalhes do Evento'),
+                    content: SizedBox(
+                      width: double.maxFinite,
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          if (session.eventType != null && session.eventType!.isNotEmpty) Text('Tipo: ${session.eventType}'),
+                          if (session.eventDate != null && session.eventDate!.isNotEmpty) Text('Data: ${session.eventDate}'),
+                          if (session.location != null && session.location!.isNotEmpty) Text('Local: ${session.location}'),
+                          const SizedBox(height: 8),
+                          ...session.eventMeta.entries.map((e) => Text('${_prettyMetaKey(e.key)}: ${e.value}')),
+                        ],
+                      ),
+                    ),
+                    actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fechar'))],
+                  ),
+                );
+              },
+              icon: const Icon(Icons.info_outline),
+              tooltip: 'Detalhes',
+            ),
+            IconButton(
               onPressed: faceSearching ? null : () => _startFaceSearch(session),
               icon: faceSearching
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
@@ -427,7 +508,11 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                     final isSelected = selected.contains(photo.id);
                     return Card(
                       child: InkWell(
-                        onTap: () => ref.read(cartProvider.notifier).toggle(photo.id),
+                        onTap: () async {
+                          ref.read(cartProvider.notifier).toggle(photo.id);
+                          final nowSelected = ref.read(cartProvider).contains(photo.id);
+                          await enqueueSelection(widget.eventId, photo.id, nowSelected ? 'selected' : 'unselected');
+                        },
                         child: Column(
                           children: [
                             Expanded(
@@ -2054,7 +2139,7 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                 if (canWrite && o.status != 'paid' && o.status != 'delivered')
                                   FilledButton(
                                     onPressed: () async {
-                                      final emailed = await ref.read(apiProvider).markOrderPaid(token, o.id);
+                                      final emailed = await ref.read(apiProvider).markOrderPaid(token, o.id, eventId: o.eventId ?? eventId);
                                       if (!context.mounted) return;
                                       ScaffoldMessenger.of(context).showSnackBar(
                                         SnackBar(content: Text(emailed ? 'Marcado pago e link enviado.' : 'Marcado pago. Sem email.')),
@@ -2066,7 +2151,7 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                 if (canWrite && o.status == 'paid')
                                   OutlinedButton(
                                     onPressed: () async {
-                                      await ref.read(apiProvider).markOrderDelivered(token, o.id);
+                                      await ref.read(apiProvider).markOrderDelivered(token, o.id, eventId: o.eventId ?? eventId);
                                       if (!context.mounted) return;
                                       setState(() {});
                                     },
@@ -2862,18 +2947,34 @@ class ApiService {
     return list.map(StaffOrderItem.fromJson).toList();
   }
 
-  Future<bool> markOrderPaid(String token, int orderId) async {
-    final r = await dio.post('/orders/$orderId/mark-paid', options: Options(headers: {'Authorization': 'Bearer $token'}));
-    if (r.statusCode != 200) throw _errorFromResponse(r);
-    if (r.data is Map<String, dynamic>) {
-      return r.data['download_link_emailed'] == true;
+  Future<bool> markOrderPaid(String token, int orderId, {int? eventId}) async {
+    try {
+      final r = await dio.post('/orders/$orderId/mark-paid', options: Options(headers: {'Authorization': 'Bearer $token'}));
+      if (r.statusCode != 200) throw _errorFromResponse(r);
+      if (r.data is Map<String, dynamic>) {
+        return r.data['download_link_emailed'] == true;
+      }
+      return false;
+    } on DioException catch (e) {
+      if (eventId != null && (e.type == DioExceptionType.connectionError || e.error is SocketException)) {
+        await enqueueOrderUpdate(eventId, orderId, 'paid');
+        return false;
+      }
+      rethrow;
     }
-    return false;
   }
 
-  Future<void> markOrderDelivered(String token, int orderId) async {
-    final r = await dio.post('/orders/$orderId/mark-delivered', options: Options(headers: {'Authorization': 'Bearer $token'}));
-    if (r.statusCode != 200) throw _errorFromResponse(r);
+  Future<void> markOrderDelivered(String token, int orderId, {int? eventId}) async {
+    try {
+      final r = await dio.post('/orders/$orderId/mark-delivered', options: Options(headers: {'Authorization': 'Bearer $token'}));
+      if (r.statusCode != 200) throw _errorFromResponse(r);
+    } on DioException catch (e) {
+      if (eventId != null && (e.type == DioExceptionType.connectionError || e.error is SocketException)) {
+        await enqueueOrderUpdate(eventId, orderId, 'delivered');
+        return;
+      }
+      rethrow;
+    }
   }
 
   Future<List<StaffEvent>> staffEvents(String token) async {
@@ -3107,12 +3208,20 @@ class GuestSession {
     required this.eventName,
     required this.accessPassword,
     required this.pricePerPhoto,
+    required this.eventType,
+    required this.eventMeta,
+    required this.eventDate,
+    required this.location,
   });
   final String token;
   final int eventId;
   final String eventName;
   final String accessPassword;
   final num pricePerPhoto;
+  final String? eventType;
+  final Map<String, dynamic> eventMeta;
+  final String? eventDate;
+  final String? location;
 
   factory GuestSession.fromJson(Map<String, dynamic> j) {
     final e = j['event'] as Map<String, dynamic>;
@@ -3122,6 +3231,10 @@ class GuestSession {
       eventName: e['name'] as String,
       accessPassword: e['access_password'] as String? ?? '****',
       pricePerPhoto: e['price_per_photo'] is num ? e['price_per_photo'] as num : num.tryParse(e['price_per_photo']?.toString() ?? '') ?? 0,
+      eventType: e['event_type'] as String?,
+      eventMeta: e['event_meta'] is Map<String, dynamic> ? Map<String, dynamic>.from(e['event_meta']) : <String, dynamic>{},
+      eventDate: e['event_date'] as String?,
+      location: e['location'] as String?,
     );
   }
 }
@@ -3390,6 +3503,7 @@ class OrderListItem {
     required this.customerName,
     required this.status,
     this.eventName,
+    this.eventId,
     this.totalAmount,
   });
   final int id;
@@ -3397,6 +3511,7 @@ class OrderListItem {
   final String customerName;
   final String status;
   final String? eventName;
+  final int? eventId;
   final num? totalAmount;
 
   factory OrderListItem.fromJson(Map<String, dynamic> j) => OrderListItem(
@@ -3405,6 +3520,7 @@ class OrderListItem {
     customerName: j['customer_name'] as String? ?? '',
     status: j['status'] as String? ?? '',
     eventName: (j['event'] is Map<String, dynamic>) ? (j['event']['name'] as String?) : null,
+    eventId: (j['event'] is Map<String, dynamic>) ? (j['event']['id'] as int?) : null,
     totalAmount: j['total_amount'] is num ? j['total_amount'] as num : num.tryParse(j['total_amount']?.toString() ?? ''),
   );
 }
