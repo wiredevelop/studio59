@@ -1,5 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.gradle.api.tasks.compile.JavaCompile
 
 allprojects {
     repositories {
@@ -9,6 +10,7 @@ allprojects {
 }
 
 subprojects {
+    val isMobileScanner = name == "mobile_scanner"
     plugins.withId("com.android.library") {
         val androidExt = extensions.findByName("android")
         if (androidExt is com.android.build.gradle.LibraryExtension && androidExt.namespace == null) {
@@ -16,13 +18,17 @@ subprojects {
         }
         if (androidExt is com.android.build.gradle.LibraryExtension) {
             androidExt.compileOptions {
-                sourceCompatibility = JavaVersion.VERSION_1_8
-                targetCompatibility = JavaVersion.VERSION_1_8
+                sourceCompatibility = JavaVersion.VERSION_17
+                targetCompatibility = JavaVersion.VERSION_17
             }
         }
     }
     tasks.withType<KotlinCompile>().configureEach {
-        compilerOptions.jvmTarget.set(JvmTarget.JVM_1_8)
+        compilerOptions.jvmTarget.set(if (isMobileScanner) JvmTarget.JVM_1_8 else JvmTarget.JVM_17)
+    }
+    tasks.withType<JavaCompile>().configureEach {
+        sourceCompatibility = if (isMobileScanner) "1.8" else "17"
+        targetCompatibility = if (isMobileScanner) "1.8" else "17"
     }
 }
 
