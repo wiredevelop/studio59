@@ -443,22 +443,33 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
 
   Future<void> _startFaceSearch(GuestSession session) async {
     if (faceSearching) return;
-    await Permission.camera.request();
-    final status = await Permission.camera.status;
+    var status = await Permission.camera.status;
+    if (!status.isGranted) {
+      status = await Permission.camera.request();
+    }
     if (!status.isGranted) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Permissão de câmara bloqueada. Ativa nas Definições.')),
+        const SnackBar(content: Text('Permissão de câmara não concedida.')),
       );
       return;
     }
 
     final picker = ImagePicker();
-    final file = await picker.pickImage(
-      source: ImageSource.camera,
-      preferredCameraDevice: CameraDevice.front,
-      imageQuality: 85,
-    );
+    XFile? file;
+    try {
+      file = await picker.pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.front,
+        imageQuality: 85,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao abrir câmara: $e')),
+      );
+      return;
+    }
     if (file == null) return;
 
     setState(() => faceSearching = true);
