@@ -446,13 +446,43 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
       context: context,
       builder: (_) {
         final selected = ref.watch(cartProvider).containsKey(photo.id);
+        final size = MediaQuery.of(context).size;
         return AlertDialog(
           title: Text('Foto ${photo.number}'),
           content: SizedBox(
-            width: double.maxFinite,
+            width: size.width * 0.9,
+            height: size.height * 0.7,
             child: photo.previewUrl == null
                 ? const Center(child: Text('Sem preview'))
-                : Image.network(photo.previewUrl!, fit: BoxFit.contain),
+                : Stack(
+                    children: [
+                      Positioned.fill(
+                        child: InteractiveViewer(
+                          minScale: 1,
+                          maxScale: 4,
+                          child: Image.network(photo.previewUrl!, fit: BoxFit.contain),
+                        ),
+                      ),
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: Center(
+                            child: Opacity(
+                              opacity: 0.12,
+                              child: Text(
+                                'STUDIO 59',
+                                style: TextStyle(
+                                  fontSize: size.width * 0.12,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
+                                  letterSpacing: 4,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fechar')),
@@ -615,11 +645,6 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                                 Positioned.fill(
                                   child: InkWell(
                                     onTap: () => _openPhotoPreview(photo),
-                                    onLongPress: () async {
-                                      ref.read(cartProvider.notifier).toggle(photo);
-                                      final nowSelected = ref.read(cartProvider).containsKey(photo.id);
-                                      await enqueueSelection(widget.eventId, photo.id, nowSelected ? 'selected' : 'unselected');
-                                    },
                                     child: photo.previewUrl == null
                                         ? const Center(child: Text('preview...'))
                                         : Image.network(
@@ -628,6 +653,24 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                                             width: double.infinity,
                                             errorBuilder: (context, error, stackTrace) => const Center(child: Text('Sem preview')),
                                           ),
+                                  ),
+                                ),
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: Center(
+                                      child: Opacity(
+                                        opacity: 0.15,
+                                        child: Text(
+                                          'STUDIO 59',
+                                          style: TextStyle(
+                                            fontSize: 22,
+                                            fontWeight: FontWeight.w800,
+                                            color: Colors.white,
+                                            letterSpacing: 2,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                                   ),
                                 ),
                                 Positioned(
@@ -655,7 +698,14 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Text(photo.number, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                Icon(isSelected ? Icons.check_circle : Icons.circle_outlined),
+                                IconButton(
+                                  icon: Icon(isSelected ? Icons.check_circle : Icons.circle_outlined),
+                                  onPressed: () async {
+                                    ref.read(cartProvider.notifier).toggle(photo);
+                                    final nowSelected = ref.read(cartProvider).containsKey(photo.id);
+                                    await enqueueSelection(widget.eventId, photo.id, nowSelected ? 'selected' : 'unselected');
+                                  },
+                                ),
                               ],
                             ),
                           ),
