@@ -13,6 +13,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
@@ -117,6 +118,19 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
   }
 
+  Future<void> _enterByPin(String pin) async {
+    try {
+      final session = await ref.read(apiProvider).enterEventByPin(pin);
+      ref.read(guestSessionProvider.notifier).state = session;
+      ref.read(cartProvider.notifier).clear();
+      if (!context.mounted) return;
+      Navigator.push(context, MaterialPageRoute(builder: (_) => GuestCatalogPage(eventId: session.eventId)));
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Falha ao entrar: $e')));
+    }
+  }
+
   Future<void> _scanQrAndEnter() async {
     final token = await Navigator.push<String?>(
       context,
@@ -131,8 +145,14 @@ class _HomePageState extends ConsumerState<HomePage> {
     final token = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Código do Evento'),
-        content: TextField(controller: c, autofocus: true, decoration: const InputDecoration(hintText: 'Cole o código/QR')),
+        title: const Text('PIN do Evento'),
+        content: TextField(
+          controller: c,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
+          decoration: const InputDecoration(hintText: '4 dígitos'),
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
           FilledButton(onPressed: () => Navigator.pop(context, c.text.trim()), child: const Text('Entrar')),
@@ -140,7 +160,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       ),
     );
     if (token == null || token.isEmpty) return;
-    await _enterByQrToken(token);
+    await _enterByPin(token);
   }
 
   @override
@@ -206,6 +226,35 @@ String extractQrToken(String raw) {
     }
   }
   return trimmed;
+}
+
+void showQrDialog(BuildContext context, {required String title, required String url}) {
+  showDialog(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: Text(title),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              color: Colors.white,
+              padding: const EdgeInsets.all(8),
+              child: QrImageView(
+                data: url,
+                size: 220,
+                backgroundColor: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(url, style: const TextStyle(fontSize: 11), textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fechar'))],
+    ),
+  );
 }
 
 Future<String> getDeviceId() async {
@@ -429,8 +478,17 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
     return SecureScreen(
       child: Scaffold(
         appBar: AppBar(
-          title: Text('${session.eventName} | Senha: ${session.accessPassword}'),
+          title: Text(session.eventName),
           actions: [
+            if (session.qrToken != null && session.qrToken!.isNotEmpty)
+              IconButton(
+                onPressed: () {
+                  final url = ref.read(apiProvider).publicQrUrl(session.qrToken!);
+                  showQrDialog(context, title: 'QR Code do Evento', url: url);
+                },
+                icon: const Icon(Icons.qr_code_2),
+                tooltip: 'QR do evento',
+              ),
             IconButton(
               onPressed: () {
                 showDialog(
@@ -444,7 +502,6 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                         children: [
                           if (session.eventType != null && session.eventType!.isNotEmpty) Text('Tipo: ${session.eventType}'),
                           if (session.eventDate != null && session.eventDate!.isNotEmpty) Text('Data: ${session.eventDate}'),
-                          if (session.location != null && session.location!.isNotEmpty) Text('Local: ${session.location}'),
                           const SizedBox(height: 8),
                           ...session.eventMeta.entries.map((e) => Text('${_prettyMetaKey(e.key)}: ${e.value}')),
                         ],
@@ -1288,6 +1345,14 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
                     trailing: Wrap(
                       spacing: 6,
                       children: [
+                        if (e.qrToken != null && e.qrToken!.isNotEmpty)
+                          IconButton(
+                            icon: const Icon(Icons.qr_code_2),
+                            onPressed: () {
+                              final url = ref.read(apiProvider).publicQrUrl(e.qrToken!);
+                              showQrDialog(context, title: 'QR Code do Evento', url: url);
+                            },
+                          ),
                         if (user.hasPermission('events.write'))
                           IconButton(
                             icon: const Icon(Icons.edit),
@@ -1343,9 +1408,9 @@ class StaffEventDetailPage extends StatelessWidget {
           Text(event.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Text('Data: ${event.eventDate}'),
-          if (event.location != null && event.location!.isNotEmpty) Text('Local: ${event.location}'),
           Text('Tipo: ${event.eventType ?? '-'}'),
           Text('Preço por foto: ${event.pricePerPhoto}'),
+          if (event.accessPin != null && event.accessPin!.isNotEmpty) Text('PIN: ${event.accessPin}'),
           const SizedBox(height: 12),
           if (meta.isNotEmpty) ...[
             const Text('Detalhes', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1372,6 +1437,10 @@ String _prettyMetaKey(String key) {
       return 'Profissão do noivo';
     case 'noiva_profissao':
       return 'Profissão da noiva';
+    case 'noivo_morada':
+      return 'Morada do noivo';
+    case 'noiva_morada':
+      return 'Morada da noiva';
     case 'bebe_nome':
       return 'Nome do bebé';
     case 'pai_nome':
@@ -1394,8 +1463,6 @@ String _prettyMetaKey(String key) {
 class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   late final TextEditingController nameCtrl;
   late final TextEditingController dateCtrl;
-  late final TextEditingController locationCtrl;
-  late final TextEditingController passwordCtrl;
   late final TextEditingController priceCtrl;
   late final TextEditingController noivoNomeCtrl;
   late final TextEditingController noivaNomeCtrl;
@@ -1403,7 +1470,8 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   late final TextEditingController noivaContactoCtrl;
   late final TextEditingController noivoProfissaoCtrl;
   late final TextEditingController noivaProfissaoCtrl;
-  late final TextEditingController casamentoMoradaCtrl;
+  late final TextEditingController noivoMoradaCtrl;
+  late final TextEditingController noivaMoradaCtrl;
   late final TextEditingController bebeNomeCtrl;
   late final TextEditingController paiNomeCtrl;
   late final TextEditingController maeNomeCtrl;
@@ -1411,7 +1479,6 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   late final TextEditingController madrinhaNomeCtrl;
   late final TextEditingController contactoPaisCtrl;
   late final TextEditingController batizadoMoradaCtrl;
-  bool isActiveToday = false;
   bool saving = false;
   String eventType = '';
 
@@ -1420,10 +1487,7 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     super.initState();
     nameCtrl = TextEditingController(text: widget.event?.name ?? '');
     dateCtrl = TextEditingController(text: widget.event?.eventDate ?? '');
-    locationCtrl = TextEditingController(text: widget.event?.location ?? '');
-    passwordCtrl = TextEditingController(text: widget.event?.accessPassword ?? '');
     priceCtrl = TextEditingController(text: widget.event?.pricePerPhoto.toString() ?? '0');
-    isActiveToday = widget.event?.isActiveToday ?? false;
     eventType = widget.event?.eventType ?? '';
     final meta = widget.event?.eventMeta ?? {};
     noivoNomeCtrl = TextEditingController(text: meta['noivo_nome']?.toString() ?? '');
@@ -1432,7 +1496,8 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     noivaContactoCtrl = TextEditingController(text: meta['noiva_contacto']?.toString() ?? '');
     noivoProfissaoCtrl = TextEditingController(text: meta['noivo_profissao']?.toString() ?? '');
     noivaProfissaoCtrl = TextEditingController(text: meta['noiva_profissao']?.toString() ?? '');
-    casamentoMoradaCtrl = TextEditingController(text: meta['morada']?.toString() ?? '');
+    noivoMoradaCtrl = TextEditingController(text: meta['noivo_morada']?.toString() ?? '');
+    noivaMoradaCtrl = TextEditingController(text: meta['noiva_morada']?.toString() ?? '');
     bebeNomeCtrl = TextEditingController(text: meta['bebe_nome']?.toString() ?? '');
     paiNomeCtrl = TextEditingController(text: meta['pai_nome']?.toString() ?? '');
     maeNomeCtrl = TextEditingController(text: meta['mae_nome']?.toString() ?? '');
@@ -1446,8 +1511,6 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   void dispose() {
     nameCtrl.dispose();
     dateCtrl.dispose();
-    locationCtrl.dispose();
-    passwordCtrl.dispose();
     priceCtrl.dispose();
     noivoNomeCtrl.dispose();
     noivaNomeCtrl.dispose();
@@ -1455,7 +1518,8 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     noivaContactoCtrl.dispose();
     noivoProfissaoCtrl.dispose();
     noivaProfissaoCtrl.dispose();
-    casamentoMoradaCtrl.dispose();
+    noivoMoradaCtrl.dispose();
+    noivaMoradaCtrl.dispose();
     bebeNomeCtrl.dispose();
     paiNomeCtrl.dispose();
     maeNomeCtrl.dispose();
@@ -1509,9 +1573,6 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               ),
             ),
             const SizedBox(height: 8),
-            TextField(controller: locationCtrl, decoration: const InputDecoration(labelText: 'Local', border: OutlineInputBorder())),
-            const SizedBox(height: 8),
-            TextField(controller: passwordCtrl, decoration: const InputDecoration(labelText: 'Senha', border: OutlineInputBorder())),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               value: eventType.isEmpty ? null : eventType,
@@ -1536,7 +1597,9 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               const SizedBox(height: 8),
               TextField(controller: noivaProfissaoCtrl, decoration: const InputDecoration(labelText: 'Profissão da noiva', border: OutlineInputBorder())),
               const SizedBox(height: 8),
-              TextField(controller: casamentoMoradaCtrl, decoration: const InputDecoration(labelText: 'Morada', border: OutlineInputBorder())),
+              TextField(controller: noivoMoradaCtrl, decoration: const InputDecoration(labelText: 'Morada do noivo', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivaMoradaCtrl, decoration: const InputDecoration(labelText: 'Morada da noiva', border: OutlineInputBorder())),
               const SizedBox(height: 8),
             ],
             if (eventType == 'batizado') ...[
@@ -1561,12 +1624,6 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               decoration: const InputDecoration(labelText: 'Preço por foto', border: OutlineInputBorder()),
             ),
             const SizedBox(height: 8),
-            SwitchListTile(
-              value: isActiveToday,
-              onChanged: (v) => setState(() => isActiveToday = v),
-              title: const Text('Ativo hoje'),
-            ),
-            const SizedBox(height: 12),
             FilledButton(
               onPressed: saving
                   ? null
@@ -1580,7 +1637,8 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                       meta['noiva_contacto'] = noivaContactoCtrl.text.trim();
                       meta['noivo_profissao'] = noivoProfissaoCtrl.text.trim();
                       meta['noiva_profissao'] = noivaProfissaoCtrl.text.trim();
-                      meta['morada'] = casamentoMoradaCtrl.text.trim();
+                      meta['noivo_morada'] = noivoMoradaCtrl.text.trim();
+                      meta['noiva_morada'] = noivaMoradaCtrl.text.trim();
                     }
                     if (eventType == 'batizado') {
                       meta['bebe_nome'] = bebeNomeCtrl.text.trim();
@@ -1599,7 +1657,8 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                         noivaContactoCtrl.text,
                         noivoProfissaoCtrl.text,
                         noivaProfissaoCtrl.text,
-                        casamentoMoradaCtrl.text,
+                        noivoMoradaCtrl.text,
+                        noivaMoradaCtrl.text,
                       ];
                       if (required.any((v) => v.trim().isEmpty)) {
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -1629,14 +1688,11 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                       name: nameCtrl.text.trim(),
                       eventDate: dateCtrl.text.trim(),
                       pricePerPhoto: price,
-                      isActiveToday: isActiveToday,
-                      location: locationCtrl.text.trim(),
-                      accessPassword: passwordCtrl.text.trim(),
                       eventType: eventType,
                       eventMeta: meta,
                     );
-                      if (payload.name.isEmpty || payload.eventDate.isEmpty || payload.accessPassword.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome, data e senha são obrigatórios.')));
+                      if (payload.name.isEmpty || payload.eventDate.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome e data são obrigatórios.')));
                         return;
                       }
                       try {
@@ -2657,7 +2713,9 @@ class _SecureScreenState extends State<SecureScreen> {
   static const channel = MethodChannel('studio59/screen_record');
   static int _secureScreenCount = 0;
   Timer? timer;
+  Timer? screenshotTimer;
   bool isRecording = false;
+  bool screenshotDetected = false;
 
   Future<void> _applyAndroidSecureFlag() async {
     if (!Platform.isAndroid) return;
@@ -2673,6 +2731,16 @@ class _SecureScreenState extends State<SecureScreen> {
     _secureScreenCount += 1;
     _applyAndroidSecureFlag();
     if (Platform.isIOS) {
+      channel.setMethodCallHandler((call) async {
+        if (call.method == 'screenshotTaken') {
+          if (!mounted) return;
+          setState(() => screenshotDetected = true);
+          screenshotTimer?.cancel();
+          screenshotTimer = Timer(const Duration(seconds: 2), () {
+            if (mounted) setState(() => screenshotDetected = false);
+          });
+        }
+      });
       timer = Timer.periodic(const Duration(seconds: 1), (_) async {
         try {
           final captured = await channel.invokeMethod<bool>('isCaptured') ?? false;
@@ -2685,6 +2753,7 @@ class _SecureScreenState extends State<SecureScreen> {
   @override
   void dispose() {
     timer?.cancel();
+    screenshotTimer?.cancel();
     _secureScreenCount -= 1;
     if (_secureScreenCount < 0) _secureScreenCount = 0;
     _applyAndroidSecureFlag();
@@ -2693,7 +2762,7 @@ class _SecureScreenState extends State<SecureScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!isRecording) return widget.child;
+    if (!isRecording && !screenshotDetected) return widget.child;
     return Stack(
       children: [
         widget.child,
@@ -2770,6 +2839,13 @@ class ApiService {
     return Uri.parse(normalized);
   }
 
+  String publicQrUrl(String token) {
+    final base = _publicBaseUri;
+    final basePath = base.path == '/' ? '' : base.path;
+    final path = '$basePath/api/public/events/qr/$token';
+    return base.replace(path: path).toString();
+  }
+
   String _normalizeExternalUrl(String url) {
     final parsed = Uri.tryParse(url);
     if (parsed == null || !parsed.hasScheme) return url;
@@ -2791,6 +2867,12 @@ class ApiService {
 
   Future<GuestSession> enterEvent(int id, String password) async {
     final r = await dio.post('/public/events/$id/enter', data: {'password': password});
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    return GuestSession.fromJson(r.data);
+  }
+
+  Future<GuestSession> enterEventByPin(String pin) async {
+    final r = await dio.post('/public/events/pin', data: {'pin': pin});
     if (r.statusCode != 200) throw _errorFromResponse(r);
     return GuestSession.fromJson(r.data);
   }
@@ -3206,22 +3288,22 @@ class GuestSession {
     required this.token,
     required this.eventId,
     required this.eventName,
-    required this.accessPassword,
     required this.pricePerPhoto,
     required this.eventType,
     required this.eventMeta,
     required this.eventDate,
     required this.location,
+    required this.qrToken,
   });
   final String token;
   final int eventId;
   final String eventName;
-  final String accessPassword;
   final num pricePerPhoto;
   final String? eventType;
   final Map<String, dynamic> eventMeta;
   final String? eventDate;
   final String? location;
+  final String? qrToken;
 
   factory GuestSession.fromJson(Map<String, dynamic> j) {
     final e = j['event'] as Map<String, dynamic>;
@@ -3229,12 +3311,12 @@ class GuestSession {
       token: j['event_session_token'] as String,
       eventId: e['id'] as int,
       eventName: e['name'] as String,
-      accessPassword: e['access_password'] as String? ?? '****',
       pricePerPhoto: e['price_per_photo'] is num ? e['price_per_photo'] as num : num.tryParse(e['price_per_photo']?.toString() ?? '') ?? 0,
       eventType: e['event_type'] as String?,
       eventMeta: e['event_meta'] is Map<String, dynamic> ? Map<String, dynamic>.from(e['event_meta']) : <String, dynamic>{},
       eventDate: e['event_date'] as String?,
       location: e['location'] as String?,
+      qrToken: e['qr_token'] as String?,
     );
   }
 }
@@ -3374,6 +3456,8 @@ class StaffEvent {
     this.accessPassword,
     this.eventType,
     this.eventMeta,
+    this.qrToken,
+    this.accessPin,
   });
   final int id;
   final String name;
@@ -3384,6 +3468,8 @@ class StaffEvent {
   final String? accessPassword;
   final String? eventType;
   final Map<String, dynamic>? eventMeta;
+  final String? qrToken;
+  final String? accessPin;
 
   factory StaffEvent.fromJson(Map<String, dynamic> j) => StaffEvent(
     id: j['id'] as int,
@@ -3395,6 +3481,8 @@ class StaffEvent {
     accessPassword: j['access_password'] as String?,
     eventType: j['event_type'] as String?,
     eventMeta: j['event_meta'] is Map<String, dynamic> ? Map<String, dynamic>.from(j['event_meta']) : null,
+    qrToken: j['qr_token'] as String?,
+    accessPin: j['access_pin'] as String?,
   );
 }
 
@@ -3403,18 +3491,12 @@ class StaffEventPayload {
     required this.name,
     required this.eventDate,
     required this.pricePerPhoto,
-    required this.isActiveToday,
-    required this.location,
-    required this.accessPassword,
     required this.eventType,
     required this.eventMeta,
   });
   final String name;
   final String eventDate;
   final num pricePerPhoto;
-  final bool isActiveToday;
-  final String location;
-  final String accessPassword;
   final String eventType;
   final Map<String, dynamic> eventMeta;
 
@@ -3422,9 +3504,6 @@ class StaffEventPayload {
     'name': name,
     'event_date': eventDate,
     'price_per_photo': pricePerPhoto,
-    'is_active_today': isActiveToday,
-    'location': location,
-    'access_password': accessPassword,
     'event_type': eventType.isEmpty ? null : eventType,
     'event_meta': eventMeta,
   };
