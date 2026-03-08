@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -7,11 +8,13 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 void main() {
   runApp(const ProviderScope(child: Studio59App()));
@@ -203,6 +206,69 @@ String extractQrToken(String raw) {
     }
   }
   return trimmed;
+}
+
+Future<String> getDeviceId() async {
+  final prefs = await SharedPreferences.getInstance();
+  final existing = prefs.getString('device_id');
+  if (existing != null && existing.isNotEmpty) return existing;
+  final id = const Uuid().v4();
+  await prefs.setString('device_id', id);
+  return id;
+}
+
+Future<File> _offlineFileForEvent(int eventId) async {
+  final dir = await getApplicationDocumentsDirectory();
+  return File('${dir.path}/offline_event_$eventId.json');
+}
+
+Future<Map<String, dynamic>> _readOfflinePayload(int eventId) async {
+  final file = await _offlineFileForEvent(eventId);
+  if (!await file.exists()) {
+    return {'event_id': eventId, 'orders': []};
+  }
+  final raw = await file.readAsString();
+  final data = jsonDecode(raw);
+  if (data is Map<String, dynamic>) return data;
+  return {'event_id': eventId, 'orders': []};
+}
+
+Future<void> _writeOfflinePayload(int eventId, Map<String, dynamic> payload) async {
+  final file = await _offlineFileForEvent(eventId);
+  await file.writeAsString(jsonEncode(payload));
+}
+
+Future<void> enqueueOfflineOrder(int eventId, Map<String, dynamic> order) async {
+  final payload = await _readOfflinePayload(eventId);
+  final orders = (payload['orders'] as List? ?? []).cast<Map<String, dynamic>>();
+  orders.add(order);
+  payload['event_id'] = eventId;
+  payload['orders'] = orders;
+  payload['device_id'] ??= await getDeviceId();
+  payload['exported_at'] = DateTime.now().toIso8601String();
+  await _writeOfflinePayload(eventId, payload);
+}
+
+Future<Map<String, dynamic>> buildOfflinePayload(int eventId) async {
+  final payload = await _readOfflinePayload(eventId);
+  payload['device_id'] ??= await getDeviceId();
+  payload['exported_at'] = DateTime.now().toIso8601String();
+  return payload;
+}
+
+Future<void> clearOfflineQueue(int eventId) async {
+  final file = await _offlineFileForEvent(eventId);
+  if (await file.exists()) {
+    await file.delete();
+  }
+}
+
+Future<File> writeOfflineExportFile(int eventId, Map<String, dynamic> payload) async {
+  final dir = await getApplicationDocumentsDirectory();
+  final path = '${dir.path}/offline_export_${eventId}_${DateTime.now().millisecondsSinceEpoch}.json';
+  final file = File(path);
+  await file.writeAsString(jsonEncode(payload));
+  return file;
 }
 
 class QrScanPage extends StatefulWidget {
@@ -476,6 +542,8 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
   @override
   Widget build(BuildContext context) {
     final selected = ref.watch(cartProvider).toList();
+    final session = ref.watch(guestSessionProvider);
+    final pricePerPhoto = session?.pricePerPhoto ?? 0;
     return Scaffold(
       appBar: AppBar(title: const Text('Checkout')),
       body: Padding(
@@ -532,10 +600,16 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                           email: email,
                           paymentMethod: paymentMethod,
                           photoIds: selected,
+                          pricePerPhoto: pricePerPhoto,
                         );
                         await ref.read(savedOrdersProvider.notifier).add(code);
                         ref.read(cartProvider.notifier).clear();
                         if (!context.mounted) return;
+                        if (code.startsWith('OFF-')) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Sem internet. Pedido guardado para sincronizar.')),
+                          );
+                        }
                         Navigator.pushReplacement(
                           context,
                           MaterialPageRoute(builder: (_) => TicketPage(orderCode: code)),
@@ -1005,6 +1079,13 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
               subtitle: 'CRUD utilizadores e permissões',
               icon: Icons.manage_accounts,
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffUsersPage())),
+            ),
+          if (user.hasPermission('events.read'))
+            _StaffMenuTile(
+              title: 'Sincronizar',
+              subtitle: 'Exportar/Importar dados offline',
+              icon: Icons.sync,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffSyncPage())),
             ),
         ],
       ),
@@ -2478,21 +2559,65 @@ class ApiService {
     required String email,
     required String paymentMethod,
     required List<int> photoIds,
+    required num pricePerPhoto,
   }) async {
+    final payload = {
+      'event_id': eventId,
+      'customer_name': customerName,
+      'customer_phone': phone.isEmpty ? null : phone,
+      'customer_email': email.isEmpty ? null : email,
+      'payment_method': paymentMethod,
+      'photo_ids': photoIds,
+    };
+    try {
+      final r = await dio.post(
+        '/public/orders',
+        data: payload,
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (r.statusCode != 201) throw _errorFromResponse(r);
+      return r.data['order_code'] as String;
+    } on DioException catch (e) {
+      if (e.type == DioExceptionType.connectionError || e.error is SocketException) {
+        final localCode = 'OFF-${DateTime.now().millisecondsSinceEpoch}';
+        await enqueueOfflineOrder(eventId, {
+          'order_code': localCode,
+          'customer_name': customerName,
+          'customer_phone': phone.isEmpty ? null : phone,
+          'customer_email': email.isEmpty ? null : email,
+          'payment_method': paymentMethod,
+          'status': 'paid',
+          'total_amount': (photoIds.length * pricePerPhoto).toStringAsFixed(2),
+          'items': photoIds.map((id) => {'photo_id': id, 'price': pricePerPhoto}).toList(),
+          'created_at': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toIso8601String(),
+        });
+        return localCode;
+      }
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> offlineExportJson(String token, int eventId) async {
+    final r = await dio.get('/offline/events/$eventId/export', options: Options(headers: {'Authorization': 'Bearer $token'}));
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    return (r.data as Map).cast<String, dynamic>();
+  }
+
+  Future<void> offlineImportFile(String token, int eventId, String filePath, String deviceId) async {
+    final form = FormData.fromMap({
+      'device_id': deviceId,
+      'payload': await MultipartFile.fromFile(filePath, filename: 'offline.json'),
+    });
     final r = await dio.post(
-      '/public/orders',
-      data: {
-        'event_id': eventId,
-        'customer_name': customerName,
-        'customer_phone': phone.isEmpty ? null : phone,
-        'customer_email': email.isEmpty ? null : email,
-        'payment_method': paymentMethod,
-        'photo_ids': photoIds,
-      },
-      options: Options(headers: {'Authorization': 'Bearer $token'}),
+      '/offline/events/$eventId/import',
+      data: form,
+      options: Options(
+        headers: {'Authorization': 'Bearer $token'},
+        contentType: 'multipart/form-data',
+      ),
     );
-    if (r.statusCode != 201) throw _errorFromResponse(r);
-    return r.data['order_code'] as String;
+    if (r.statusCode != 200) throw _errorFromResponse(r);
   }
 
   Future<OrderDetail> orderDetail(String code) async {
@@ -2770,11 +2895,18 @@ class EventItem {
 }
 
 class GuestSession {
-  GuestSession({required this.token, required this.eventId, required this.eventName, required this.accessPassword});
+  GuestSession({
+    required this.token,
+    required this.eventId,
+    required this.eventName,
+    required this.accessPassword,
+    required this.pricePerPhoto,
+  });
   final String token;
   final int eventId;
   final String eventName;
   final String accessPassword;
+  final num pricePerPhoto;
 
   factory GuestSession.fromJson(Map<String, dynamic> j) {
     final e = j['event'] as Map<String, dynamic>;
@@ -2783,6 +2915,7 @@ class GuestSession {
       eventId: e['id'] as int,
       eventName: e['name'] as String,
       accessPassword: e['access_password'] as String? ?? '****',
+      pricePerPhoto: e['price_per_photo'] is num ? e['price_per_photo'] as num : num.tryParse(e['price_per_photo']?.toString() ?? '') ?? 0,
     );
   }
 }
@@ -3117,4 +3250,134 @@ class StaffOrderUpdatePayload {
     'payment_method': paymentMethod,
     'status': status,
   };
+}
+
+class StaffSyncPage extends ConsumerStatefulWidget {
+  const StaffSyncPage({super.key});
+
+  @override
+  ConsumerState<StaffSyncPage> createState() => _StaffSyncPageState();
+}
+
+class _StaffSyncPageState extends ConsumerState<StaffSyncPage> {
+  List<StaffEvent> _events = [];
+  int? _eventId;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEvents();
+  }
+
+  Future<void> _loadEvents() async {
+    final token = ref.read(staffTokenProvider);
+    if (token == null) return;
+    final events = await ref.read(apiProvider).staffEvents(token);
+    setState(() {
+      _events = events;
+      _eventId ??= events.isNotEmpty ? events.first.id : null;
+    });
+  }
+
+  Future<void> _exportJson() async {
+    final token = ref.read(staffTokenProvider);
+    if (token == null || _eventId == null) return;
+    setState(() => _loading = true);
+    try {
+      final json = await ref.read(apiProvider).offlineExportJson(token, _eventId!);
+      final file = await writeOfflineExportFile(_eventId!, json);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Exportado: ${file.path}')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro export: $e')));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _uploadQueue() async {
+    final token = ref.read(staffTokenProvider);
+    if (token == null || _eventId == null) return;
+    setState(() => _loading = true);
+    try {
+      final payload = await buildOfflinePayload(_eventId!);
+      if (payload['orders'].isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sem pedidos offline.')));
+        return;
+      }
+      final file = await writeOfflineExportFile(_eventId!, payload);
+      final deviceId = await getDeviceId();
+      await ref.read(apiProvider).offlineImportFile(token, _eventId!, file.path, deviceId);
+      await clearOfflineQueue(_eventId!);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sincronizado.')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro sync: $e')));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _uploadFile() async {
+    final token = ref.read(staffTokenProvider);
+    if (token == null || _eventId == null) return;
+    final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['json']);
+    if (picked == null || picked.files.isEmpty) return;
+    final path = picked.files.single.path;
+    if (path == null) return;
+    setState(() => _loading = true);
+    try {
+      final deviceId = await getDeviceId();
+      await ref.read(apiProvider).offlineImportFile(token, _eventId!, path, deviceId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ficheiro importado.')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro import: $e')));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Sincronizar')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            DropdownButtonFormField<int>(
+              value: _eventId,
+              decoration: const InputDecoration(labelText: 'Evento', border: OutlineInputBorder()),
+              items: _events.map((e) => DropdownMenuItem(value: e.id, child: Text(e.name))).toList(),
+              onChanged: _loading ? null : (v) => setState(() => _eventId = v),
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: _loading ? null : _exportJson,
+              child: const Text('Exportar JSON do servidor'),
+            ),
+            const SizedBox(height: 8),
+            FilledButton.tonal(
+              onPressed: _loading ? null : _uploadQueue,
+              child: const Text('Enviar fila offline deste dispositivo'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton(
+              onPressed: _loading ? null : _uploadFile,
+              child: const Text('Importar ficheiro JSON'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
