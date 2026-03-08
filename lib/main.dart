@@ -1248,8 +1248,23 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   late final TextEditingController locationCtrl;
   late final TextEditingController passwordCtrl;
   late final TextEditingController priceCtrl;
+  late final TextEditingController noivoNomeCtrl;
+  late final TextEditingController noivaNomeCtrl;
+  late final TextEditingController noivoContactoCtrl;
+  late final TextEditingController noivaContactoCtrl;
+  late final TextEditingController noivoProfissaoCtrl;
+  late final TextEditingController noivaProfissaoCtrl;
+  late final TextEditingController casamentoMoradaCtrl;
+  late final TextEditingController bebeNomeCtrl;
+  late final TextEditingController paiNomeCtrl;
+  late final TextEditingController maeNomeCtrl;
+  late final TextEditingController padrinhoNomeCtrl;
+  late final TextEditingController madrinhaNomeCtrl;
+  late final TextEditingController contactoPaisCtrl;
+  late final TextEditingController batizadoMoradaCtrl;
   bool isActiveToday = false;
   bool saving = false;
+  String eventType = '';
 
   @override
   void initState() {
@@ -1260,6 +1275,22 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     passwordCtrl = TextEditingController(text: widget.event?.accessPassword ?? '');
     priceCtrl = TextEditingController(text: widget.event?.pricePerPhoto.toString() ?? '0');
     isActiveToday = widget.event?.isActiveToday ?? false;
+    eventType = widget.event?.eventType ?? '';
+    final meta = widget.event?.eventMeta ?? {};
+    noivoNomeCtrl = TextEditingController(text: meta['noivo_nome']?.toString() ?? '');
+    noivaNomeCtrl = TextEditingController(text: meta['noiva_nome']?.toString() ?? '');
+    noivoContactoCtrl = TextEditingController(text: meta['noivo_contacto']?.toString() ?? '');
+    noivaContactoCtrl = TextEditingController(text: meta['noiva_contacto']?.toString() ?? '');
+    noivoProfissaoCtrl = TextEditingController(text: meta['noivo_profissao']?.toString() ?? '');
+    noivaProfissaoCtrl = TextEditingController(text: meta['noiva_profissao']?.toString() ?? '');
+    casamentoMoradaCtrl = TextEditingController(text: meta['morada']?.toString() ?? '');
+    bebeNomeCtrl = TextEditingController(text: meta['bebe_nome']?.toString() ?? '');
+    paiNomeCtrl = TextEditingController(text: meta['pai_nome']?.toString() ?? '');
+    maeNomeCtrl = TextEditingController(text: meta['mae_nome']?.toString() ?? '');
+    padrinhoNomeCtrl = TextEditingController(text: meta['padrinho_nome']?.toString() ?? '');
+    madrinhaNomeCtrl = TextEditingController(text: meta['madrinha_nome']?.toString() ?? '');
+    contactoPaisCtrl = TextEditingController(text: meta['contacto_pais']?.toString() ?? '');
+    batizadoMoradaCtrl = TextEditingController(text: meta['morada']?.toString() ?? '');
   }
 
   @override
@@ -1269,6 +1300,20 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     locationCtrl.dispose();
     passwordCtrl.dispose();
     priceCtrl.dispose();
+    noivoNomeCtrl.dispose();
+    noivaNomeCtrl.dispose();
+    noivoContactoCtrl.dispose();
+    noivaContactoCtrl.dispose();
+    noivoProfissaoCtrl.dispose();
+    noivaProfissaoCtrl.dispose();
+    casamentoMoradaCtrl.dispose();
+    bebeNomeCtrl.dispose();
+    paiNomeCtrl.dispose();
+    maeNomeCtrl.dispose();
+    padrinhoNomeCtrl.dispose();
+    madrinhaNomeCtrl.dispose();
+    contactoPaisCtrl.dispose();
+    batizadoMoradaCtrl.dispose();
     super.dispose();
   }
 
@@ -1319,6 +1364,48 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
             const SizedBox(height: 8),
             TextField(controller: passwordCtrl, decoration: const InputDecoration(labelText: 'Senha', border: OutlineInputBorder())),
             const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: eventType.isEmpty ? null : eventType,
+              decoration: const InputDecoration(labelText: 'Tipo Evento', border: OutlineInputBorder()),
+              items: const [
+                DropdownMenuItem(value: 'casamento', child: Text('CASAMENTO')),
+                DropdownMenuItem(value: 'batizado', child: Text('BATIZADO')),
+              ],
+              onChanged: (v) => setState(() => eventType = v ?? ''),
+            ),
+            const SizedBox(height: 8),
+            if (eventType == 'casamento') ...[
+              TextField(controller: noivoNomeCtrl, decoration: const InputDecoration(labelText: 'Nome do noivo', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivaNomeCtrl, decoration: const InputDecoration(labelText: 'Nome da noiva', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivoContactoCtrl, decoration: const InputDecoration(labelText: 'Contacto do noivo', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivaContactoCtrl, decoration: const InputDecoration(labelText: 'Contacto da noiva', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivoProfissaoCtrl, decoration: const InputDecoration(labelText: 'Profissão do noivo', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivaProfissaoCtrl, decoration: const InputDecoration(labelText: 'Profissão da noiva', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: casamentoMoradaCtrl, decoration: const InputDecoration(labelText: 'Morada', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+            ],
+            if (eventType == 'batizado') ...[
+              TextField(controller: bebeNomeCtrl, decoration: const InputDecoration(labelText: 'Nome do bebé', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: paiNomeCtrl, decoration: const InputDecoration(labelText: 'Nome do pai', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: maeNomeCtrl, decoration: const InputDecoration(labelText: 'Nome da mãe', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: padrinhoNomeCtrl, decoration: const InputDecoration(labelText: 'Nome do padrinho', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: madrinhaNomeCtrl, decoration: const InputDecoration(labelText: 'Nome da madrinha', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: contactoPaisCtrl, decoration: const InputDecoration(labelText: 'Contacto dos pais', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: batizadoMoradaCtrl, decoration: const InputDecoration(labelText: 'Morada', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+            ],
             TextField(
               controller: priceCtrl,
               keyboardType: TextInputType.number,
@@ -1335,15 +1422,36 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               onPressed: saving
                   ? null
                   : () async {
-                      final price = num.tryParse(priceCtrl.text.trim()) ?? 0;
-                      final payload = StaffEventPayload(
-                        name: nameCtrl.text.trim(),
-                        eventDate: dateCtrl.text.trim(),
-                        pricePerPhoto: price,
-                        isActiveToday: isActiveToday,
-                        location: locationCtrl.text.trim(),
-                        accessPassword: passwordCtrl.text.trim(),
-                      );
+                    final price = num.tryParse(priceCtrl.text.trim()) ?? 0;
+                    final meta = <String, dynamic>{};
+                    if (eventType == 'casamento') {
+                      meta['noivo_nome'] = noivoNomeCtrl.text.trim();
+                      meta['noiva_nome'] = noivaNomeCtrl.text.trim();
+                      meta['noivo_contacto'] = noivoContactoCtrl.text.trim();
+                      meta['noiva_contacto'] = noivaContactoCtrl.text.trim();
+                      meta['noivo_profissao'] = noivoProfissaoCtrl.text.trim();
+                      meta['noiva_profissao'] = noivaProfissaoCtrl.text.trim();
+                      meta['morada'] = casamentoMoradaCtrl.text.trim();
+                    }
+                    if (eventType == 'batizado') {
+                      meta['bebe_nome'] = bebeNomeCtrl.text.trim();
+                      meta['pai_nome'] = paiNomeCtrl.text.trim();
+                      meta['mae_nome'] = maeNomeCtrl.text.trim();
+                      meta['padrinho_nome'] = padrinhoNomeCtrl.text.trim();
+                      meta['madrinha_nome'] = madrinhaNomeCtrl.text.trim();
+                      meta['contacto_pais'] = contactoPaisCtrl.text.trim();
+                      meta['morada'] = batizadoMoradaCtrl.text.trim();
+                    }
+                    final payload = StaffEventPayload(
+                      name: nameCtrl.text.trim(),
+                      eventDate: dateCtrl.text.trim(),
+                      pricePerPhoto: price,
+                      isActiveToday: isActiveToday,
+                      location: locationCtrl.text.trim(),
+                      accessPassword: passwordCtrl.text.trim(),
+                      eventType: eventType,
+                      eventMeta: meta,
+                    );
                       if (payload.name.isEmpty || payload.eventDate.isEmpty || payload.accessPassword.isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome, data e senha são obrigatórios.')));
                         return;
@@ -3053,6 +3161,8 @@ class StaffEvent {
     required this.isActiveToday,
     this.location,
     this.accessPassword,
+    this.eventType,
+    this.eventMeta,
   });
   final int id;
   final String name;
@@ -3061,6 +3171,8 @@ class StaffEvent {
   final bool isActiveToday;
   final String? location;
   final String? accessPassword;
+  final String? eventType;
+  final Map<String, dynamic>? eventMeta;
 
   factory StaffEvent.fromJson(Map<String, dynamic> j) => StaffEvent(
     id: j['id'] as int,
@@ -3070,6 +3182,8 @@ class StaffEvent {
     isActiveToday: j['is_active_today'] == true || j['is_active_today'] == 1,
     location: j['location'] as String?,
     accessPassword: j['access_password'] as String?,
+    eventType: j['event_type'] as String?,
+    eventMeta: j['event_meta'] is Map<String, dynamic> ? Map<String, dynamic>.from(j['event_meta']) : null,
   );
 }
 
@@ -3081,6 +3195,8 @@ class StaffEventPayload {
     required this.isActiveToday,
     required this.location,
     required this.accessPassword,
+    required this.eventType,
+    required this.eventMeta,
   });
   final String name;
   final String eventDate;
@@ -3088,6 +3204,8 @@ class StaffEventPayload {
   final bool isActiveToday;
   final String location;
   final String accessPassword;
+  final String eventType;
+  final Map<String, dynamic> eventMeta;
 
   Map<String, dynamic> toJson() => {
     'name': name,
@@ -3096,6 +3214,8 @@ class StaffEventPayload {
     'is_active_today': isActiveToday,
     'location': location,
     'access_password': accessPassword,
+    'event_type': eventType.isEmpty ? null : eventType,
+    'event_meta': eventMeta,
   };
 }
 
