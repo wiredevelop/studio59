@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -62,12 +63,10 @@ class _HomePageState extends ConsumerState<HomePage> {
   bool staffUnlocked = false;
   int logoTapCount = 0;
   DateTime? firstTapAt;
-  Future<List<EventItem>>? _eventsFuture;
 
   @override
   void initState() {
     super.initState();
-    _reloadEvents();
   }
 
   void onLogoTap() {
@@ -100,9 +99,43 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  void _reloadEvents() {
-    _eventsFuture = ref.read(apiProvider).todayEvents();
-    setState(() {});
+  Future<void> _enterByQrToken(String token) async {
+    try {
+      final session = await ref.read(apiProvider).enterEventByQr(token);
+      ref.read(guestSessionProvider.notifier).state = session;
+      ref.read(cartProvider.notifier).clear();
+      if (!context.mounted) return;
+      Navigator.push(context, MaterialPageRoute(builder: (_) => GuestCatalogPage(eventId: session.eventId)));
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Falha ao entrar: $e')));
+    }
+  }
+
+  Future<void> _scanQrAndEnter() async {
+    final token = await Navigator.push<String?>(
+      context,
+      MaterialPageRoute(builder: (_) => const QrScanPage()),
+    );
+    if (token == null || token.isEmpty) return;
+    await _enterByQrToken(token);
+  }
+
+  Future<void> _manualTokenEntry() async {
+    final c = TextEditingController();
+    final token = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Código do Evento'),
+        content: TextField(controller: c, autofocus: true, decoration: const InputDecoration(hintText: 'Cole o código/QR')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(context, c.text.trim()), child: const Text('Entrar')),
+        ],
+      ),
+    );
+    if (token == null || token.isEmpty) return;
+    await _enterByQrToken(token);
   }
 
   @override
@@ -132,67 +165,91 @@ class _HomePageState extends ConsumerState<HomePage> {
                 child: const Text('Acesso Staff'),
               ),
             const SizedBox(height: 10),
-            const Text('Servicos / Eventos de Hoje', style: TextStyle(fontWeight: FontWeight.w700)),
+            const Text('Acesso ao Evento', style: TextStyle(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
-            Expanded(
-              child: RefreshIndicator(
-                onRefresh: () async => _reloadEvents(),
-                child: FutureBuilder<List<EventItem>>(
-                  future: _eventsFuture,
-                  builder: (context, snap) {
-                    if (!snap.hasData) {
-                      if (snap.hasError) {
-                        return ListView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          children: [Padding(padding: const EdgeInsets.all(16), child: Text('Erro: ${snap.error}'))],
-                        );
-                      }
-                      return ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        children: const [SizedBox(height: 300, child: Center(child: CircularProgressIndicator()))],
-                      );
-                    }
-                    final events = snap.data!;
-                    if (events.isEmpty) {
-                      return ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        children: const [Padding(padding: EdgeInsets.all(16), child: Text('Sem eventos ativos hoje.'))],
-                      );
-                    }
-                    return ListView.builder(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      itemCount: events.length,
-                      itemBuilder: (_, i) {
-                        final event = events[i];
-                        return Card(
-                          child: ListTile(
-                            title: Text(event.name),
-                            subtitle: Text('${event.eventDate} ${event.location ?? ''}'),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () async {
-                              final password = await askPassword(context);
-                              if (password == null || password.isEmpty) return;
-                              try {
-                                final session = await ref.read(apiProvider).enterEvent(event.id, password);
-                                ref.read(guestSessionProvider.notifier).state = session;
-                                ref.read(cartProvider.notifier).clear();
-                                if (!context.mounted) return;
-                                Navigator.push(context, MaterialPageRoute(builder: (_) => GuestCatalogPage(eventId: event.id)));
-                              } catch (e) {
-                                if (!context.mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Falha ao entrar: $e')));
-                              }
-                            },
-                          ),
-                        );
-                      },
-                    );
-                  },
-                ),
-              ),
+            FilledButton(
+              onPressed: _scanQrAndEnter,
+              child: const Text('Ler QR Code'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton(
+              onPressed: _manualTokenEntry,
+              child: const Text('Inserir código manualmente'),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Se não tiveres a app instalada, usa um tablet do fotógrafo.',
+              textAlign: TextAlign.center,
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+String extractQrToken(String raw) {
+  final trimmed = raw.trim();
+  final uri = Uri.tryParse(trimmed);
+  if (uri != null && uri.pathSegments.isNotEmpty) {
+    final idx = uri.pathSegments.indexOf('qr');
+    if (idx != -1 && idx + 1 < uri.pathSegments.length) {
+      return uri.pathSegments[idx + 1];
+    }
+    if (uri.pathSegments.length == 1) {
+      return uri.pathSegments.first;
+    }
+  }
+  return trimmed;
+}
+
+class QrScanPage extends StatefulWidget {
+  const QrScanPage({super.key});
+
+  @override
+  State<QrScanPage> createState() => _QrScanPageState();
+}
+
+class _QrScanPageState extends State<QrScanPage> {
+  final MobileScannerController _controller = MobileScannerController();
+  bool _handled = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onDetect(BarcodeCapture capture) {
+    if (_handled) return;
+    final raw = capture.barcodes.isNotEmpty ? capture.barcodes.first.rawValue : null;
+    if (raw == null || raw.trim().isEmpty) return;
+    _handled = true;
+    final token = extractQrToken(raw);
+    Navigator.pop(context, token);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Ler QR Code')),
+      body: Stack(
+        children: [
+          MobileScanner(
+            controller: _controller,
+            onDetect: _onDetect,
+          ),
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: FilledButton.tonal(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancelar'),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2360,6 +2417,13 @@ class ApiService {
 
   Future<GuestSession> enterEvent(int id, String password) async {
     final r = await dio.post('/public/events/$id/enter', data: {'password': password});
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    return GuestSession.fromJson(r.data);
+  }
+
+  Future<GuestSession> enterEventByQr(String token) async {
+    final clean = extractQrToken(token);
+    final r = await dio.get('/public/events/qr/$clean');
     if (r.statusCode != 200) throw _errorFromResponse(r);
     return GuestSession.fromJson(r.data);
   }
