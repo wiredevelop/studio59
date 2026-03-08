@@ -1730,9 +1730,11 @@ class StaffEventDetailPage extends StatelessWidget {
           Text(event.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Text('Data: ${event.eventDate}'),
+          if (event.eventTime != null && event.eventTime!.isNotEmpty) Text('Hora: ${event.eventTime}'),
           Text('Tipo: ${event.eventType ?? '-'}'),
           Text('Preço por foto: ${event.pricePerPhoto}'),
           if (event.accessPin != null && event.accessPin!.isNotEmpty) Text('PIN: ${event.accessPin}'),
+          if (event.notes != null && event.notes!.isNotEmpty) Text('Notas: ${event.notes}'),
           const SizedBox(height: 12),
           if (meta.isNotEmpty) ...[
             const Text('Detalhes', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1807,7 +1809,10 @@ String _prettyMetaKey(String key) {
 class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   late final TextEditingController nameCtrl;
   late final TextEditingController dateCtrl;
+  late final TextEditingController timeCtrl;
+  late final TextEditingController pinCtrl;
   late final TextEditingController priceCtrl;
+  late final TextEditingController notesCtrl;
   late final TextEditingController noivoNomeCtrl;
   late final TextEditingController noivaNomeCtrl;
   late final TextEditingController noivoContactoCtrl;
@@ -1836,14 +1841,23 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   late final TextEditingController batizadoMoradaCtrl;
   bool saving = false;
   String eventType = '';
+  bool isLocked = false;
 
   @override
   void initState() {
     super.initState();
     nameCtrl = TextEditingController(text: widget.event?.name ?? '');
     dateCtrl = TextEditingController(text: widget.event?.eventDate ?? '');
+    timeCtrl = TextEditingController(text: widget.event?.eventTime ?? '');
+    pinCtrl = TextEditingController(
+      text: widget.event?.accessPin?.isNotEmpty == true
+          ? widget.event!.accessPin!
+          : 'Gerado automaticamente ao guardar',
+    );
     priceCtrl = TextEditingController(text: widget.event?.pricePerPhoto.toString() ?? '0');
+    notesCtrl = TextEditingController(text: widget.event?.notes ?? '');
     eventType = widget.event?.eventType ?? '';
+    isLocked = widget.event?.isLocked ?? false;
     final meta = widget.event?.eventMeta ?? {};
     noivoNomeCtrl = TextEditingController(text: meta['noivo_nome']?.toString() ?? '');
     noivaNomeCtrl = TextEditingController(text: meta['noiva_nome']?.toString() ?? '');
@@ -1877,7 +1891,10 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   void dispose() {
     nameCtrl.dispose();
     dateCtrl.dispose();
+    timeCtrl.dispose();
+    pinCtrl.dispose();
     priceCtrl.dispose();
+    notesCtrl.dispose();
     noivoNomeCtrl.dispose();
     noivaNomeCtrl.dispose();
     noivoContactoCtrl.dispose();
@@ -1926,6 +1943,35 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     dateCtrl.text = '$y-$m-$d';
   }
 
+  Future<void> _pickTime() async {
+    final now = TimeOfDay.now();
+    TimeOfDay initial = now;
+    if (timeCtrl.text.trim().isNotEmpty) {
+      final parts = timeCtrl.text.trim().split(':');
+      if (parts.length >= 2) {
+        final h = int.tryParse(parts[0]);
+        final m = int.tryParse(parts[1]);
+        if (h != null && m != null) {
+          initial = TimeOfDay(hour: h, minute: m);
+        }
+      }
+    }
+    final picked = await showTimePicker(context: context, initialTime: initial);
+    if (picked == null) return;
+    final hh = picked.hour.toString().padLeft(2, '0');
+    final mm = picked.minute.toString().padLeft(2, '0');
+    timeCtrl.text = '$hh:$mm';
+  }
+
+  bool _isTodayOrPast(String dateValue) {
+    final parsed = DateTime.tryParse(dateValue);
+    if (parsed == null) return false;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(parsed.year, parsed.month, parsed.day);
+    return !day.isAfter(today);
+  }
+
   @override
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
@@ -1950,6 +1996,17 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               ),
             ),
             const SizedBox(height: 8),
+            TextField(
+              controller: timeCtrl,
+              readOnly: true,
+              onTap: _pickTime,
+              decoration: const InputDecoration(
+                labelText: 'Hora',
+                border: OutlineInputBorder(),
+                suffixIcon: Icon(Icons.access_time),
+              ),
+            ),
+            const SizedBox(height: 8),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               value: eventType.isEmpty ? null : eventType,
@@ -1959,6 +2016,27 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                 DropdownMenuItem(value: 'batizado', child: Text('BATIZADO')),
               ],
               onChanged: (v) => setState(() => eventType = v ?? ''),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: priceCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Preço por foto', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: pinCtrl,
+              readOnly: true,
+              decoration: const InputDecoration(
+                labelText: 'PIN do evento (4 dígitos)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: notesCtrl,
+              maxLines: 3,
+              decoration: const InputDecoration(labelText: 'Notas internas', border: OutlineInputBorder()),
             ),
             const SizedBox(height: 8),
             const Align(
@@ -2041,12 +2119,14 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               TextField(controller: instagramPaisCtrl, decoration: const InputDecoration(labelText: 'Instagram dos pais', border: OutlineInputBorder())),
               const SizedBox(height: 8),
             ],
-            TextField(
-              controller: priceCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Preço por foto', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 8),
+            if (widget.event != null && _isTodayOrPast(dateCtrl.text)) ...[
+              SwitchListTile(
+                value: isLocked,
+                onChanged: (v) => setState(() => isLocked = v),
+                title: const Text('Bloqueado'),
+              ),
+              const SizedBox(height: 8),
+            ],
             FilledButton(
               onPressed: saving
                   ? null
@@ -2161,9 +2241,12 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                     final payload = StaffEventPayload(
                       name: nameCtrl.text.trim(),
                       eventDate: dateCtrl.text.trim(),
+                      eventTime: timeCtrl.text.trim(),
                       pricePerPhoto: price,
                       eventType: eventType,
                       eventMeta: meta,
+                      notes: notesCtrl.text.trim(),
+                      isLocked: isLocked,
                     );
                       if (payload.name.isEmpty || payload.eventDate.isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome e data são obrigatórios.')));
@@ -4039,6 +4122,7 @@ class StaffEvent {
     required this.id,
     required this.name,
     required this.eventDate,
+    this.eventTime,
     required this.pricePerPhoto,
     required this.isActiveToday,
     this.location,
@@ -4047,10 +4131,13 @@ class StaffEvent {
     this.eventMeta,
     this.qrToken,
     this.accessPin,
+    this.notes,
+    this.isLocked = false,
   });
   final int id;
   final String name;
   final String eventDate;
+  final String? eventTime;
   final num pricePerPhoto;
   final bool isActiveToday;
   final String? location;
@@ -4059,11 +4146,14 @@ class StaffEvent {
   final Map<String, dynamic>? eventMeta;
   final String? qrToken;
   final String? accessPin;
+  final String? notes;
+  final bool isLocked;
 
   factory StaffEvent.fromJson(Map<String, dynamic> j) => StaffEvent(
     id: j['id'] as int,
     name: j['name'] as String? ?? '',
     eventDate: j['event_date'] as String? ?? '',
+    eventTime: j['event_time'] as String?,
     pricePerPhoto: j['price_per_photo'] is num ? j['price_per_photo'] as num : num.tryParse(j['price_per_photo']?.toString() ?? '') ?? 0,
     isActiveToday: j['is_active_today'] == true || j['is_active_today'] == 1,
     location: j['location'] as String?,
@@ -4072,6 +4162,8 @@ class StaffEvent {
     eventMeta: j['event_meta'] is Map<String, dynamic> ? Map<String, dynamic>.from(j['event_meta']) : null,
     qrToken: j['qr_token'] as String?,
     accessPin: j['access_pin'] as String?,
+    notes: j['notes'] as String?,
+    isLocked: j['is_locked'] == true || j['is_locked'] == 1,
   );
 }
 
@@ -4079,22 +4171,31 @@ class StaffEventPayload {
   StaffEventPayload({
     required this.name,
     required this.eventDate,
+    required this.eventTime,
     required this.pricePerPhoto,
     required this.eventType,
     required this.eventMeta,
+    required this.notes,
+    required this.isLocked,
   });
   final String name;
   final String eventDate;
+  final String eventTime;
   final num pricePerPhoto;
   final String eventType;
   final Map<String, dynamic> eventMeta;
+  final String notes;
+  final bool isLocked;
 
   Map<String, dynamic> toJson() => {
     'name': name,
     'event_date': eventDate,
+    if (eventTime.trim().isNotEmpty) 'event_time': eventTime.trim(),
     'price_per_photo': pricePerPhoto,
     'event_type': eventType.isEmpty ? null : eventType,
     'event_meta': eventMeta,
+    if (notes.trim().isNotEmpty) 'notes': notes.trim(),
+    if (isLocked) 'is_locked': true,
   };
 }
 
