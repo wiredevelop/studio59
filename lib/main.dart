@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter_prevent_screen_capture/flutter_prevent_screen_capture.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:path_provider/path_provider.dart';
@@ -3033,8 +3034,10 @@ class SecureScreen extends StatefulWidget {
 class _SecureScreenState extends State<SecureScreen> {
   static const channel = MethodChannel('studio59/screen_record');
   static int _secureScreenCount = 0;
+  final FlutterPreventScreenCapture _preventScreenCapture = FlutterPreventScreenCapture();
   Timer? timer;
   Timer? screenshotTimer;
+  StreamSubscription<bool>? _screenRecordsSubscription;
   bool isRecording = false;
   bool screenshotDetected = false;
 
@@ -3052,6 +3055,8 @@ class _SecureScreenState extends State<SecureScreen> {
     _secureScreenCount += 1;
     _applyAndroidSecureFlag();
     if (Platform.isIOS) {
+      _checkScreenRecord();
+      _screenRecordsSubscription = _preventScreenCapture.screenRecordsIOS.listen(_updateRecordStatus);
       channel.setMethodCallHandler((call) async {
         if (call.method == 'screenshotTaken') {
           if (!mounted) return;
@@ -3075,10 +3080,23 @@ class _SecureScreenState extends State<SecureScreen> {
     }
   }
 
+  Future<void> _checkScreenRecord() async {
+    try {
+      final recordStatus = await _preventScreenCapture.checkScreenRecord();
+      _updateRecordStatus(recordStatus);
+    } catch (_) {}
+  }
+
+  void _updateRecordStatus(bool record) {
+    if (!mounted) return;
+    setState(() => isRecording = record);
+  }
+
   @override
   void dispose() {
     timer?.cancel();
     screenshotTimer?.cancel();
+    _screenRecordsSubscription?.cancel();
     _secureScreenCount -= 1;
     if (_secureScreenCount < 0) _secureScreenCount = 0;
     _applyAndroidSecureFlag();

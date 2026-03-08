@@ -214,6 +214,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.0.33"
+  flutter_prevent_screen_capture:
+    dependency: "direct main"
+    description:
+      name: flutter_prevent_screen_capture
+      sha256: dc812c81a58f8ea0060ddd59826a3199871de1150b173f7204dacff271e85c98
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.2"
   flutter_riverpod:
     dependency: "direct main"
     description:
