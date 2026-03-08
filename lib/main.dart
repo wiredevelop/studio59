@@ -443,17 +443,13 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
 
   Future<void> _startFaceSearch(GuestSession session) async {
     if (faceSearching) return;
-    final cam = await Permission.camera.request();
-    if (!cam.isGranted) {
+    await Permission.camera.request();
+    final status = await Permission.camera.status;
+    if (!status.isGranted) {
       if (!mounted) return;
-      if (cam.isPermanentlyDenied || cam.isRestricted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Permissão de câmara bloqueada. Ativa nas Definições.')),
-        );
-        await openAppSettings();
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Permissão de câmara negada.')));
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Permissão de câmara bloqueada. Ativa nas Definições.')),
+      );
       return;
     }
 
