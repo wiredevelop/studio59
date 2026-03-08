@@ -35,6 +35,8 @@
 	</dict>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Guardar fotos do pedido na galeria.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Permitir acesso à galeria para selecionar fotos.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Usar a câmara para pesquisar fotos.</string>
 	<key>UIApplicationSceneManifest</key>
