@@ -3007,7 +3007,7 @@ class _SecureScreenState extends State<SecureScreen> {
           if (!mounted) return;
           setState(() => screenshotDetected = true);
           screenshotTimer?.cancel();
-          screenshotTimer = Timer(const Duration(seconds: 2), () {
+          screenshotTimer = Timer(const Duration(seconds: 5), () {
             if (mounted) setState(() => screenshotDetected = false);
           });
         } else if (call.method == 'captureChanged') {
@@ -3040,13 +3040,13 @@ class _SecureScreenState extends State<SecureScreen> {
     if (!isRecording && !screenshotDetected) return widget.child;
     return Stack(
       children: [
-        widget.child,
+        IgnorePointer(child: widget.child),
         Positioned.fill(
           child: Container(
-            color: Colors.black87,
+            color: Colors.black.withOpacity(0.9),
             alignment: Alignment.center,
             child: const Text(
-              'Captura de ecra ativa\nPreviews ocultadas',
+              'Conteúdo protegido\nCaptura de ecrã detetada',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700),
             ),
