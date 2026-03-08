@@ -1763,6 +1763,28 @@ String _prettyMetaKey(String key) {
       return 'Morada do noivo';
     case 'noiva_morada':
       return 'Morada da noiva';
+    case 'missa_hora':
+      return 'Hora da missa';
+    case 'casa_noivo_chegada':
+      return 'Casa do noivo: chegada';
+    case 'casa_noivo_saida':
+      return 'Casa do noivo: saída';
+    case 'casa_noiva_chegada':
+      return 'Casa da noiva: chegada';
+    case 'casa_noiva_saida':
+      return 'Casa da noiva: saída';
+    case 'igreja_local':
+      return 'Igreja';
+    case 'quinta_local':
+      return 'Quinta';
+    case 'instagram_noivos':
+      return 'Instagram dos noivos';
+    case 'instagram_pais':
+      return 'Instagram dos pais';
+    case 'numero_convidados':
+      return 'Número de convidados';
+    case 'tipo_pacote':
+      return 'Tipo de pacote';
     case 'bebe_nome':
       return 'Nome do bebé';
     case 'pai_nome':
@@ -1794,6 +1816,17 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   late final TextEditingController noivaProfissaoCtrl;
   late final TextEditingController noivoMoradaCtrl;
   late final TextEditingController noivaMoradaCtrl;
+  late final TextEditingController missaHoraCtrl;
+  late final TextEditingController igrejaLocalCtrl;
+  late final TextEditingController quintaLocalCtrl;
+  late final TextEditingController numeroConvidadosCtrl;
+  late final TextEditingController tipoPacoteCtrl;
+  late final TextEditingController instagramNoivosCtrl;
+  late final TextEditingController instagramPaisCtrl;
+  late final TextEditingController casaNoivoChegadaCtrl;
+  late final TextEditingController casaNoivoSaidaCtrl;
+  late final TextEditingController casaNoivaChegadaCtrl;
+  late final TextEditingController casaNoivaSaidaCtrl;
   late final TextEditingController bebeNomeCtrl;
   late final TextEditingController paiNomeCtrl;
   late final TextEditingController maeNomeCtrl;
@@ -1820,6 +1853,17 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     noivaProfissaoCtrl = TextEditingController(text: meta['noiva_profissao']?.toString() ?? '');
     noivoMoradaCtrl = TextEditingController(text: meta['noivo_morada']?.toString() ?? '');
     noivaMoradaCtrl = TextEditingController(text: meta['noiva_morada']?.toString() ?? '');
+    missaHoraCtrl = TextEditingController(text: meta['missa_hora']?.toString() ?? '');
+    igrejaLocalCtrl = TextEditingController(text: meta['igreja_local']?.toString() ?? '');
+    quintaLocalCtrl = TextEditingController(text: meta['quinta_local']?.toString() ?? '');
+    numeroConvidadosCtrl = TextEditingController(text: meta['numero_convidados']?.toString() ?? '');
+    tipoPacoteCtrl = TextEditingController(text: meta['tipo_pacote']?.toString() ?? '');
+    instagramNoivosCtrl = TextEditingController(text: meta['instagram_noivos']?.toString() ?? '');
+    instagramPaisCtrl = TextEditingController(text: meta['instagram_pais']?.toString() ?? '');
+    casaNoivoChegadaCtrl = TextEditingController(text: meta['casa_noivo_chegada']?.toString() ?? '');
+    casaNoivoSaidaCtrl = TextEditingController(text: meta['casa_noivo_saida']?.toString() ?? '');
+    casaNoivaChegadaCtrl = TextEditingController(text: meta['casa_noiva_chegada']?.toString() ?? '');
+    casaNoivaSaidaCtrl = TextEditingController(text: meta['casa_noiva_saida']?.toString() ?? '');
     bebeNomeCtrl = TextEditingController(text: meta['bebe_nome']?.toString() ?? '');
     paiNomeCtrl = TextEditingController(text: meta['pai_nome']?.toString() ?? '');
     maeNomeCtrl = TextEditingController(text: meta['mae_nome']?.toString() ?? '');
@@ -1842,6 +1886,17 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     noivaProfissaoCtrl.dispose();
     noivoMoradaCtrl.dispose();
     noivaMoradaCtrl.dispose();
+    missaHoraCtrl.dispose();
+    igrejaLocalCtrl.dispose();
+    quintaLocalCtrl.dispose();
+    numeroConvidadosCtrl.dispose();
+    tipoPacoteCtrl.dispose();
+    instagramNoivosCtrl.dispose();
+    instagramPaisCtrl.dispose();
+    casaNoivoChegadaCtrl.dispose();
+    casaNoivoSaidaCtrl.dispose();
+    casaNoivaChegadaCtrl.dispose();
+    casaNoivaSaidaCtrl.dispose();
     bebeNomeCtrl.dispose();
     paiNomeCtrl.dispose();
     maeNomeCtrl.dispose();
@@ -1906,6 +1961,28 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               onChanged: (v) => setState(() => eventType = v ?? ''),
             ),
             const SizedBox(height: 8),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Detalhes adicionais', style: TextStyle(fontWeight: FontWeight.w600)),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: missaHoraCtrl,
+              decoration: const InputDecoration(labelText: 'Hora da missa (HH:mm)', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 8),
+            TextField(controller: igrejaLocalCtrl, decoration: const InputDecoration(labelText: 'Igreja', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(controller: quintaLocalCtrl, decoration: const InputDecoration(labelText: 'Quinta', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(
+              controller: numeroConvidadosCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Número de convidados', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 8),
+            TextField(controller: tipoPacoteCtrl, decoration: const InputDecoration(labelText: 'Tipo de pacote (informativo)', border: OutlineInputBorder())),
+            const SizedBox(height: 12),
             if (eventType == 'casamento') ...[
               TextField(controller: noivoNomeCtrl, decoration: const InputDecoration(labelText: 'Nome do noivo', border: OutlineInputBorder())),
               const SizedBox(height: 8),
@@ -1923,6 +2000,28 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               const SizedBox(height: 8),
               TextField(controller: noivaMoradaCtrl, decoration: const InputDecoration(labelText: 'Morada da noiva', border: OutlineInputBorder())),
               const SizedBox(height: 8),
+              TextField(controller: instagramNoivosCtrl, decoration: const InputDecoration(labelText: 'Instagram dos noivos', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(
+                controller: casaNoivoChegadaCtrl,
+                decoration: const InputDecoration(labelText: 'Casa do noivo: hora de chegada (HH:mm)', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: casaNoivoSaidaCtrl,
+                decoration: const InputDecoration(labelText: 'Casa do noivo: hora de saída (HH:mm)', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: casaNoivaChegadaCtrl,
+                decoration: const InputDecoration(labelText: 'Casa da noiva: hora de chegada (HH:mm)', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: casaNoivaSaidaCtrl,
+                decoration: const InputDecoration(labelText: 'Casa da noiva: hora de saída (HH:mm)', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 8),
             ],
             if (eventType == 'batizado') ...[
               TextField(controller: bebeNomeCtrl, decoration: const InputDecoration(labelText: 'Nome do bebé', border: OutlineInputBorder())),
@@ -1939,6 +2038,8 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               const SizedBox(height: 8),
               TextField(controller: batizadoMoradaCtrl, decoration: const InputDecoration(labelText: 'Morada', border: OutlineInputBorder())),
               const SizedBox(height: 8),
+              TextField(controller: instagramPaisCtrl, decoration: const InputDecoration(labelText: 'Instagram dos pais', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
             ],
             TextField(
               controller: priceCtrl,
@@ -1951,25 +2052,76 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                   ? null
                   : () async {
                     final price = num.tryParse(priceCtrl.text.trim()) ?? 0;
-                    final meta = <String, dynamic>{};
+                    final meta = Map<String, dynamic>.from(widget.event?.eventMeta ?? {});
+                    void setMeta(String key, TextEditingController ctrl) {
+                      final value = ctrl.text.trim();
+                      if (value.isEmpty) {
+                        meta.remove(key);
+                      } else {
+                        meta[key] = value;
+                      }
+                    }
+                    const weddingKeys = [
+                      'noivo_nome',
+                      'noiva_nome',
+                      'noivo_contacto',
+                      'noiva_contacto',
+                      'noivo_profissao',
+                      'noiva_profissao',
+                      'noivo_morada',
+                      'noiva_morada',
+                      'instagram_noivos',
+                      'casa_noivo_chegada',
+                      'casa_noivo_saida',
+                      'casa_noiva_chegada',
+                      'casa_noiva_saida',
+                    ];
+                    const baptKeys = [
+                      'bebe_nome',
+                      'pai_nome',
+                      'mae_nome',
+                      'padrinho_nome',
+                      'madrinha_nome',
+                      'contacto_pais',
+                      'morada',
+                      'instagram_pais',
+                    ];
+
+                    setMeta('missa_hora', missaHoraCtrl);
+                    setMeta('igreja_local', igrejaLocalCtrl);
+                    setMeta('quinta_local', quintaLocalCtrl);
+                    setMeta('numero_convidados', numeroConvidadosCtrl);
+                    setMeta('tipo_pacote', tipoPacoteCtrl);
                     if (eventType == 'casamento') {
-                      meta['noivo_nome'] = noivoNomeCtrl.text.trim();
-                      meta['noiva_nome'] = noivaNomeCtrl.text.trim();
-                      meta['noivo_contacto'] = noivoContactoCtrl.text.trim();
-                      meta['noiva_contacto'] = noivaContactoCtrl.text.trim();
-                      meta['noivo_profissao'] = noivoProfissaoCtrl.text.trim();
-                      meta['noiva_profissao'] = noivaProfissaoCtrl.text.trim();
-                      meta['noivo_morada'] = noivoMoradaCtrl.text.trim();
-                      meta['noiva_morada'] = noivaMoradaCtrl.text.trim();
+                      for (final key in baptKeys) {
+                        meta.remove(key);
+                      }
+                      setMeta('noivo_nome', noivoNomeCtrl);
+                      setMeta('noiva_nome', noivaNomeCtrl);
+                      setMeta('noivo_contacto', noivoContactoCtrl);
+                      setMeta('noiva_contacto', noivaContactoCtrl);
+                      setMeta('noivo_profissao', noivoProfissaoCtrl);
+                      setMeta('noiva_profissao', noivaProfissaoCtrl);
+                      setMeta('noivo_morada', noivoMoradaCtrl);
+                      setMeta('noiva_morada', noivaMoradaCtrl);
+                      setMeta('instagram_noivos', instagramNoivosCtrl);
+                      setMeta('casa_noivo_chegada', casaNoivoChegadaCtrl);
+                      setMeta('casa_noivo_saida', casaNoivoSaidaCtrl);
+                      setMeta('casa_noiva_chegada', casaNoivaChegadaCtrl);
+                      setMeta('casa_noiva_saida', casaNoivaSaidaCtrl);
                     }
                     if (eventType == 'batizado') {
-                      meta['bebe_nome'] = bebeNomeCtrl.text.trim();
-                      meta['pai_nome'] = paiNomeCtrl.text.trim();
-                      meta['mae_nome'] = maeNomeCtrl.text.trim();
-                      meta['padrinho_nome'] = padrinhoNomeCtrl.text.trim();
-                      meta['madrinha_nome'] = madrinhaNomeCtrl.text.trim();
-                      meta['contacto_pais'] = contactoPaisCtrl.text.trim();
-                      meta['morada'] = batizadoMoradaCtrl.text.trim();
+                      for (final key in weddingKeys) {
+                        meta.remove(key);
+                      }
+                      setMeta('bebe_nome', bebeNomeCtrl);
+                      setMeta('pai_nome', paiNomeCtrl);
+                      setMeta('mae_nome', maeNomeCtrl);
+                      setMeta('padrinho_nome', padrinhoNomeCtrl);
+                      setMeta('madrinha_nome', madrinhaNomeCtrl);
+                      setMeta('contacto_pais', contactoPaisCtrl);
+                      setMeta('morada', batizadoMoradaCtrl);
+                      setMeta('instagram_pais', instagramPaisCtrl);
                     }
                     if (eventType == 'casamento') {
                       final required = [
