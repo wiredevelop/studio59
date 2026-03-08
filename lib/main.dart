@@ -441,6 +441,34 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
   List<PhotoItem> suggested = [];
   bool faceSearching = false;
 
+  void _openPhotoPreview(PhotoItem photo) {
+    showDialog(
+      context: context,
+      builder: (_) {
+        final selected = ref.watch(cartProvider).containsKey(photo.id);
+        return AlertDialog(
+          title: Text('Foto ${photo.number}'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: photo.previewUrl == null
+                ? const Center(child: Text('Sem preview'))
+                : Image.network(photo.previewUrl!, fit: BoxFit.contain),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fechar')),
+            FilledButton(
+              onPressed: () {
+                ref.read(cartProvider.notifier).toggle(photo);
+                Navigator.pop(context);
+              },
+              child: Text(selected ? 'Remover' : 'Selecionar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _startFaceSearch(GuestSession session) async {
     if (faceSearching) return;
     final picker = ImagePicker();
@@ -579,36 +607,59 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                   Widget buildPhotoCard(PhotoItem photo) {
                     final isSelected = selected.containsKey(photo.id);
                     return Card(
-                      child: InkWell(
-                        onTap: () async {
-                          ref.read(cartProvider.notifier).toggle(photo);
-                          final nowSelected = ref.read(cartProvider).containsKey(photo.id);
-                          await enqueueSelection(widget.eventId, photo.id, nowSelected ? 'selected' : 'unselected');
-                        },
-                        child: Column(
-                          children: [
-                            Expanded(
-                              child: photo.previewUrl == null
-                                  ? const Center(child: Text('preview...'))
-                                  : Image.network(
-                                      photo.previewUrl!,
-                                      fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      errorBuilder: (context, error, stackTrace) => const Center(child: Text('Sem preview')),
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: Stack(
+                              children: [
+                                Positioned.fill(
+                                  child: InkWell(
+                                    onTap: () => _openPhotoPreview(photo),
+                                    onLongPress: () async {
+                                      ref.read(cartProvider.notifier).toggle(photo);
+                                      final nowSelected = ref.read(cartProvider).containsKey(photo.id);
+                                      await enqueueSelection(widget.eventId, photo.id, nowSelected ? 'selected' : 'unselected');
+                                    },
+                                    child: photo.previewUrl == null
+                                        ? const Center(child: Text('preview...'))
+                                        : Image.network(
+                                            photo.previewUrl!,
+                                            fit: BoxFit.cover,
+                                            width: double.infinity,
+                                            errorBuilder: (context, error, stackTrace) => const Center(child: Text('Sem preview')),
+                                          ),
+                                  ),
+                                ),
+                                Positioned(
+                                  right: 6,
+                                  top: 6,
+                                  child: InkWell(
+                                    onTap: () async {
+                                      ref.read(cartProvider.notifier).toggle(photo);
+                                      final nowSelected = ref.read(cartProvider).containsKey(photo.id);
+                                      await enqueueSelection(widget.eventId, photo.id, nowSelected ? 'selected' : 'unselected');
+                                    },
+                                    child: Icon(
+                                      isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+                                      color: isSelected ? Colors.greenAccent : Colors.white,
+                                      size: 22,
                                     ),
+                                  ),
+                                ),
+                              ],
                             ),
-                            Padding(
-                              padding: const EdgeInsets.all(4),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(photo.number, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                  Icon(isSelected ? Icons.check_circle : Icons.circle_outlined),
-                                ],
-                              ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(photo.number, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                Icon(isSelected ? Icons.check_circle : Icons.circle_outlined),
+                              ],
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     );
                   }
