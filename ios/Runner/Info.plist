@@ -36,9 +36,9 @@
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Guardar fotos do pedido na galeria.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Permitir acesso à galeria para selecionar fotos.</string>
+	<string>Permitir acesso à galeria para guardar fotos do evento.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Usar a câmara para pesquisar fotos.</string>
+	<string>Usar a câmara para ler QR Code e pesquisa facial.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -446,7 +446,14 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
     final cam = await Permission.camera.request();
     if (!cam.isGranted) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Permissão de câmara negada.')));
+      if (cam.isPermanentlyDenied || cam.isRestricted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Permissão de câmara bloqueada. Ativa nas Definições.')),
+        );
+        await openAppSettings();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Permissão de câmara negada.')));
+      }
       return;
     }
 
@@ -816,7 +823,10 @@ class _TicketPageState extends ConsumerState<TicketPage> {
   Future<bool> _ensureGalleryPermission() async {
     if (Platform.isIOS) {
       final status = await Permission.photosAddOnly.request();
-      return status.isGranted;
+      if (status.isGranted) return true;
+      if (status.isPermanentlyDenied || status.isRestricted) return false;
+      final photos = await Permission.photos.request();
+      return photos.isGranted;
     }
     if (Platform.isAndroid) {
       final photos = await Permission.photos.request();
@@ -832,14 +842,20 @@ class _TicketPageState extends ConsumerState<TicketPage> {
     final file = File('${dir.path}/$fileName.jpg');
     await file.writeAsBytes(bytes, flush: true);
 
-    if (!Platform.isAndroid) {
-      throw 'Download direto para galeria só está disponível no Android.';
+    bool? ok;
+    if (Platform.isAndroid) {
+      ok = await _galleryChannel.invokeMethod<bool>('saveToGallery', {
+        'path': file.path,
+        'name': '$fileName.jpg',
+      });
+    } else if (Platform.isIOS) {
+      ok = await _galleryChannel.invokeMethod<bool>('saveToGallery', {
+        'bytes': bytes,
+        'name': '$fileName.jpg',
+      });
+    } else {
+      throw 'Download direto para galeria não disponível nesta plataforma.';
     }
-
-    final ok = await _galleryChannel.invokeMethod<bool>('saveToGallery', {
-      'path': file.path,
-      'name': '$fileName.jpg',
-    });
 
     try {
       if (await file.exists()) await file.delete();
