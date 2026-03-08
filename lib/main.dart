@@ -1601,7 +1601,7 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
                       dense: true,
                       contentPadding: EdgeInsets.zero,
                       title: Text(o.customerName ?? o.orderCode),
-                      subtitle: Text('${o.status} • ${o.totalAmount.toStringAsFixed(2)}€'),
+                      subtitle: Text('${o.status} • ${(o.totalAmount ?? 0).toStringAsFixed(2)}€'),
                       onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => StaffOrderDetailPage(orderId: o.id))),
                     )),
                   ],
