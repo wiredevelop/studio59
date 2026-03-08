@@ -41,7 +41,7 @@ final guestSessionProvider = StateProvider<GuestSession?>((_) => null);
 final staffTokenProvider = StateProvider<String?>((_) => null);
 final staffUserProvider = StateProvider<StaffUser?>((_) => null);
 final apiProvider = Provider<ApiService>((ref) => ApiService(ref.watch(baseUrlProvider)));
-final cartProvider = StateNotifierProvider<CartNotifier, Set<int>>((_) => CartNotifier());
+final cartProvider = StateNotifierProvider<CartNotifier, Map<int, CartItem>>((_) => CartNotifier());
 final savedOrdersProvider = StateNotifierProvider<SavedOrdersNotifier, List<String>>((_) => SavedOrdersNotifier());
 
 class Studio59App extends ConsumerWidget {
@@ -577,12 +577,12 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                   final remaining = photos.where((p) => !suggestedIds.contains(p.id)).toList();
 
                   Widget buildPhotoCard(PhotoItem photo) {
-                    final isSelected = selected.contains(photo.id);
+                    final isSelected = selected.containsKey(photo.id);
                     return Card(
                       child: InkWell(
                         onTap: () async {
-                          ref.read(cartProvider.notifier).toggle(photo.id);
-                          final nowSelected = ref.read(cartProvider).contains(photo.id);
+                          ref.read(cartProvider.notifier).toggle(photo);
+                          final nowSelected = ref.read(cartProvider).containsKey(photo.id);
                           await enqueueSelection(widget.eventId, photo.id, nowSelected ? 'selected' : 'unselected');
                         },
                         child: Column(
@@ -669,14 +669,111 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
               const SizedBox(width: 8),
               Expanded(
                 child: FilledButton(
-                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CheckoutPage(eventId: widget.eventId))),
-                  child: Consumer(builder: (context, ref, child) => Text('Carrinho (${ref.watch(cartProvider).length})')),
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CartPage(eventId: widget.eventId))),
+                  child: Consumer(builder: (context, ref, child) {
+                    final count = ref.watch(cartProvider).values.fold<int>(0, (sum, item) => sum + item.quantity);
+                    return Text('Carrinho ($count)');
+                  }),
                 ),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class CartPage extends ConsumerStatefulWidget {
+  final int eventId;
+  const CartPage({super.key, required this.eventId});
+
+  @override
+  ConsumerState<CartPage> createState() => _CartPageState();
+}
+
+class _CartPageState extends ConsumerState<CartPage> {
+  @override
+  Widget build(BuildContext context) {
+    final cart = ref.watch(cartProvider);
+    final session = ref.watch(guestSessionProvider);
+    final pricePerPhoto = session?.pricePerPhoto ?? 0;
+    final items = cart.values.toList();
+    final itemsTotal = items.fold<num>(0, (sum, item) => sum + (item.quantity * pricePerPhoto));
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Carrinho')),
+      body: items.isEmpty
+          ? const Center(child: Text('Carrinho vazio'))
+          : Column(
+              children: [
+                Expanded(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: items.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, i) {
+                      final item = items[i];
+                      return ListTile(
+                        leading: item.previewUrl == null
+                            ? const SizedBox(width: 56, height: 56, child: Icon(Icons.photo))
+                            : Image.network(item.previewUrl!, width: 56, height: 56, fit: BoxFit.cover),
+                        title: Text('Foto ${item.number}'),
+                        subtitle: Text('Quantidade: ${item.quantity}'),
+                        trailing: Wrap(
+                          spacing: 6,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.remove_circle_outline),
+                              onPressed: () async {
+                                final before = item.quantity;
+                                ref.read(cartProvider.notifier).decrement(item.photoId);
+                                if (before == 1) {
+                                  await enqueueSelection(widget.eventId, item.photoId, 'unselected');
+                                }
+                              },
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.add_circle_outline),
+                              onPressed: () => ref.read(cartProvider.notifier).increment(item.photoId),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline),
+                              onPressed: () async {
+                                ref.read(cartProvider.notifier).remove(item.photoId);
+                                await enqueueSelection(widget.eventId, item.photoId, 'unselected');
+                              },
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Total: €${itemsTotal.toStringAsFixed(2)}',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      FilledButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => CheckoutPage(eventId: widget.eventId)),
+                          );
+                        },
+                        child: const Text('Ir para checkout'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
     );
   }
 }
@@ -694,51 +791,126 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
   final phoneCtrl = TextEditingController();
   final emailCtrl = TextEditingController();
   String paymentMethod = 'cash';
+  String productType = 'digital';
+  String? deliveryType;
+  bool wantsFilm = false;
+  final addressCtrl = TextEditingController();
   bool isSubmitting = false;
 
   @override
   Widget build(BuildContext context) {
-    final selected = ref.watch(cartProvider).toList();
+    final cart = ref.watch(cartProvider);
+    final items = cart.values.toList();
     final session = ref.watch(guestSessionProvider);
     final pricePerPhoto = session?.pricePerPhoto ?? 0;
+    final itemsTotal = items.fold<num>(0, (sum, item) => sum + (item.quantity * pricePerPhoto));
+    final filmFee = wantsFilm ? 30.0 : 0.0;
+    final shippingFee = deliveryType == 'shipping' ? 5.0 : 0.0;
+    final extrasTotal = filmFee + shippingFee;
+    final total = itemsTotal + extrasTotal;
+    final eventType = session?.eventType ?? '';
     return Scaffold(
       appBar: AppBar(title: const Text('Checkout')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            Align(alignment: Alignment.centerLeft, child: Text('Fotos selecionadas: ${selected.length}')),
+            Align(alignment: Alignment.centerLeft, child: Text('Fotos selecionadas: ${items.length}')),
             const SizedBox(height: 12),
             TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
             const SizedBox(height: 8),
-            TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Telefone (opcional)', border: OutlineInputBorder())),
+            TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Telemóvel', border: OutlineInputBorder())),
             const SizedBox(height: 8),
             TextField(
               controller: emailCtrl,
               keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(labelText: 'Email (recomendado)', border: OutlineInputBorder()),
+              decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder()),
             ),
             const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              initialValue: paymentMethod,
-              items: const [
-                DropdownMenuItem(value: 'cash', child: Text('Cash')),
-                DropdownMenuItem(value: 'online', child: Text('Online (placeholder)')),
+            Align(alignment: Alignment.centerLeft, child: Text('Produto', style: const TextStyle(fontWeight: FontWeight.w600))),
+            CheckboxListTile(
+              value: productType == 'digital',
+              onChanged: (_) => setState(() {
+                productType = 'digital';
+                deliveryType = null;
+              }),
+              title: const Text('Digital'),
+            ),
+            CheckboxListTile(
+              value: productType == 'paper',
+              onChanged: (_) => setState(() {
+                productType = 'paper';
+                deliveryType = deliveryType ?? 'pickup';
+              }),
+              title: const Text('Papel'),
+            ),
+            CheckboxListTile(
+              value: productType == 'both',
+              onChanged: (_) => setState(() {
+                productType = 'both';
+                deliveryType = deliveryType ?? 'pickup';
+              }),
+              title: const Text('Ambos'),
+            ),
+            if (productType != 'digital') ...[
+              Align(alignment: Alignment.centerLeft, child: Text('Entrega', style: const TextStyle(fontWeight: FontWeight.w600))),
+              CheckboxListTile(
+                value: deliveryType == 'pickup',
+                onChanged: (_) => setState(() => deliveryType = 'pickup'),
+                title: Text(eventType == 'batizado' ? 'Entregar aos pais do bebé' : 'Entregar aos noivos'),
+              ),
+              CheckboxListTile(
+                value: deliveryType == 'shipping',
+                onChanged: (_) => setState(() => deliveryType = 'shipping'),
+                title: const Text('Enviar por correio (+5€)'),
+              ),
+              if (deliveryType == 'shipping') ...[
+                const SizedBox(height: 8),
+                TextField(
+                  controller: addressCtrl,
+                  decoration: const InputDecoration(labelText: 'Morada para envio', border: OutlineInputBorder()),
+                ),
               ],
-              onChanged: (v) => setState(() => paymentMethod = v ?? 'cash'),
-              decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Pagamento'),
+            ],
+            if (eventType == 'casamento' || eventType == 'batizado') ...[
+              const SizedBox(height: 8),
+              CheckboxListTile(
+                value: wantsFilm,
+                onChanged: (v) => setState(() => wantsFilm = v ?? false),
+                title: const Text('Filme (+30€)'),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Align(alignment: Alignment.centerLeft, child: Text('Pagamento', style: const TextStyle(fontWeight: FontWeight.w600))),
+            CheckboxListTile(
+              value: paymentMethod == 'cash',
+              onChanged: (_) => setState(() => paymentMethod = 'cash'),
+              title: const Text('Dinheiro (com fotógrafo)'),
+            ),
+            CheckboxListTile(
+              value: paymentMethod == 'mbway',
+              onChanged: (_) => setState(() => paymentMethod = 'mbway'),
+              title: const Text('MB Way'),
             ),
             const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Total: €${total.toStringAsFixed(2)} (Extras: €${extrasTotal.toStringAsFixed(2)})',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(height: 12),
             FilledButton(
-              onPressed: selected.isEmpty || isSubmitting
+              onPressed: items.isEmpty || isSubmitting
                   ? null
                   : () async {
                       try {
                         setState(() => isSubmitting = true);
                         final session = ref.read(guestSessionProvider);
                         if (session == null) return;
-                        if (nameCtrl.text.trim().isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome obrigatorio.')));
+                        if (nameCtrl.text.trim().isEmpty || phoneCtrl.text.trim().isEmpty || emailCtrl.text.trim().isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome, telemóvel e email são obrigatórios.')));
                           return;
                         }
                         final email = emailCtrl.text.trim();
@@ -746,6 +918,14 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(content: Text('Email invalido. Exemplo: nome@email.com')),
                           );
+                          return;
+                        }
+                        if (productType != 'digital' && deliveryType == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Escolhe o tipo de entrega.')));
+                          return;
+                        }
+                        if (deliveryType == 'shipping' && addressCtrl.text.trim().isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Morada obrigatória para envio.')));
                           return;
                         }
 
@@ -756,8 +936,12 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                           phone: phoneCtrl.text.trim(),
                           email: email,
                           paymentMethod: paymentMethod,
-                          photoIds: selected,
+                          photoItems: items.map((i) => CartItemPayload(photoId: i.photoId, quantity: i.quantity)).toList(),
                           pricePerPhoto: pricePerPhoto,
+                          productType: productType,
+                          deliveryType: deliveryType,
+                          deliveryAddress: addressCtrl.text.trim(),
+                          wantsFilm: wantsFilm,
                         );
                         await ref.read(savedOrdersProvider.notifier).add(code);
                         ref.read(cartProvider.notifier).clear();
@@ -987,13 +1171,19 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                         Text('Estado: ${order.status.toUpperCase()}'),
                         Text('Pagamento: ${order.paymentMethod.toUpperCase()}'),
                         Text('Total: ${order.totalAmount} EUR'),
+                        if (order.productType != null) Text('Produto: ${order.productType}'),
+                        if (order.deliveryType != null) Text('Entrega: ${order.deliveryType}'),
+                        if (order.deliveryAddress != null && order.deliveryAddress!.isNotEmpty) Text('Morada: ${order.deliveryAddress}'),
+                        if (order.wantsFilm) Text('Filme: +${order.filmFee}€'),
+                        if (order.shippingFee > 0) Text('Envio: +${order.shippingFee}€'),
+                        Text('Fotos: ${order.itemsTotal}€ | Extras: ${order.extrasTotal}€'),
                         const SizedBox(height: 8),
                         const Text('Fotos:', style: TextStyle(fontWeight: FontWeight.w700)),
                         Wrap(
                           spacing: 8,
                           runSpacing: 8,
                           children: order.photos
-                              .map((p) => Chip(label: Text('#${p.number}')))
+                              .map((p) => Chip(label: Text('#${p.number} x${p.quantity}')))
                               .toList(),
                         ),
                       ],
@@ -1105,6 +1295,11 @@ class OrderDetailPage extends ConsumerWidget {
               children: [
                 Text('Status: ${o.status.toUpperCase()}', style: const TextStyle(fontWeight: FontWeight.bold)),
                 Text('Total: ${o.totalAmount} EUR'),
+                if (o.productType != null) Text('Produto: ${o.productType}'),
+                if (o.deliveryType != null) Text('Entrega: ${o.deliveryType}'),
+                if (o.deliveryAddress != null && o.deliveryAddress!.isNotEmpty) Text('Morada: ${o.deliveryAddress}'),
+                if (o.wantsFilm) Text('Filme: +${o.filmFee}€'),
+                if (o.shippingFee > 0) Text('Envio: +${o.shippingFee}€'),
                 const SizedBox(height: 12),
                 Card(
                   child: Padding(
@@ -1119,6 +1314,7 @@ class OrderDetailPage extends ConsumerWidget {
                 const SizedBox(height: 8),
                 ...o.photos.map((p) => ListTile(
                   title: Text('Foto ${p.number}'),
+                  subtitle: Text('Quantidade: ${p.quantity}'),
                   trailing: const Icon(Icons.image_outlined),
                 )),
               ],
@@ -2806,16 +3002,60 @@ class _SecureScreenState extends State<SecureScreen> {
   }
 }
 
-class CartNotifier extends StateNotifier<Set<int>> {
+class CartItem {
+  CartItem({required this.photoId, required this.number, this.previewUrl, this.quantity = 1});
+  final int photoId;
+  final String number;
+  final String? previewUrl;
+  final int quantity;
+
+  CartItem copyWith({int? quantity}) => CartItem(
+    photoId: photoId,
+    number: number,
+    previewUrl: previewUrl,
+    quantity: quantity ?? this.quantity,
+  );
+}
+
+class CartItemPayload {
+  CartItemPayload({required this.photoId, required this.quantity});
+  final int photoId;
+  final int quantity;
+}
+
+class CartNotifier extends StateNotifier<Map<int, CartItem>> {
   CartNotifier() : super({});
 
-  void toggle(int id) {
+  void toggle(PhotoItem photo) {
     final next = {...state};
-    if (next.contains(id)) {
-      next.remove(id);
+    if (next.containsKey(photo.id)) {
+      next.remove(photo.id);
     } else {
-      next.add(id);
+      next[photo.id] = CartItem(photoId: photo.id, number: photo.number, previewUrl: photo.previewUrl, quantity: 1);
     }
+    state = next;
+  }
+
+  void increment(int id) {
+    final item = state[id];
+    if (item == null) return;
+    state = {...state, id: item.copyWith(quantity: item.quantity + 1)};
+  }
+
+  void decrement(int id) {
+    final item = state[id];
+    if (item == null) return;
+    final nextQty = item.quantity - 1;
+    if (nextQty <= 0) {
+      final next = {...state}..remove(id);
+      state = next;
+    } else {
+      state = {...state, id: item.copyWith(quantity: nextQty)};
+    }
+  }
+
+  void remove(int id) {
+    final next = {...state}..remove(id);
     state = next;
   }
 
@@ -2955,16 +3195,29 @@ class ApiService {
     required String phone,
     required String email,
     required String paymentMethod,
-    required List<int> photoIds,
+    required List<CartItemPayload> photoItems,
     required num pricePerPhoto,
+    required String productType,
+    required String? deliveryType,
+    required String deliveryAddress,
+    required bool wantsFilm,
   }) async {
+    final itemsTotal = photoItems.fold<num>(0, (sum, item) => sum + (item.quantity * pricePerPhoto));
+    final shippingFee = deliveryType == 'shipping' ? 5.0 : 0.0;
+    final filmFee = wantsFilm ? 30.0 : 0.0;
+    final extrasTotal = shippingFee + filmFee;
+    final totalAmount = itemsTotal + extrasTotal;
     final payload = {
       'event_id': eventId,
       'customer_name': customerName,
       'customer_phone': phone.isEmpty ? null : phone,
       'customer_email': email.isEmpty ? null : email,
       'payment_method': paymentMethod,
-      'photo_ids': photoIds,
+      'product_type': productType,
+      'delivery_type': deliveryType,
+      'delivery_address': deliveryAddress.isEmpty ? null : deliveryAddress,
+      'wants_film': wantsFilm,
+      'photo_items': photoItems.map((i) => {'photo_id': i.photoId, 'quantity': i.quantity}).toList(),
     };
     try {
       final r = await dio.post(
@@ -2982,10 +3235,18 @@ class ApiService {
           'customer_name': customerName,
           'customer_phone': phone.isEmpty ? null : phone,
           'customer_email': email.isEmpty ? null : email,
+          'product_type': productType,
+          'delivery_type': deliveryType,
+          'delivery_address': deliveryAddress.isEmpty ? null : deliveryAddress,
+          'wants_film': wantsFilm,
+          'film_fee': filmFee,
+          'shipping_fee': shippingFee,
+          'extras_total': extrasTotal.toStringAsFixed(2),
+          'items_total': itemsTotal.toStringAsFixed(2),
           'payment_method': paymentMethod,
           'status': 'paid',
-          'total_amount': (photoIds.length * pricePerPhoto).toStringAsFixed(2),
-          'items': photoIds.map((id) => {'photo_id': id, 'price': pricePerPhoto}).toList(),
+          'total_amount': totalAmount.toStringAsFixed(2),
+          'items': photoItems.map((i) => {'photo_id': i.photoId, 'price': pricePerPhoto, 'quantity': i.quantity}).toList(),
           'created_at': DateTime.now().toIso8601String(),
           'updated_at': DateTime.now().toIso8601String(),
         });
@@ -3366,6 +3627,14 @@ class OrderDetail {
     required this.status,
     required this.totalAmount,
     required this.photos,
+    required this.itemsTotal,
+    required this.extrasTotal,
+    required this.shippingFee,
+    required this.filmFee,
+    required this.productType,
+    required this.deliveryType,
+    required this.deliveryAddress,
+    required this.wantsFilm,
   });
   final String orderCode;
   final String customerName;
@@ -3373,6 +3642,14 @@ class OrderDetail {
   final String status;
   final num totalAmount;
   final List<OrderPhoto> photos;
+  final num itemsTotal;
+  final num extrasTotal;
+  final num shippingFee;
+  final num filmFee;
+  final String? productType;
+  final String? deliveryType;
+  final String? deliveryAddress;
+  final bool wantsFilm;
 
   factory OrderDetail.fromJson(Map<String, dynamic> j) => OrderDetail(
     orderCode: j['order_code'] as String? ?? '',
@@ -3381,6 +3658,14 @@ class OrderDetail {
     status: j['status'] as String,
     totalAmount: _toNum(j['total_amount']),
     photos: ((j['photos'] as List).cast<Map<String, dynamic>>()).map(OrderPhoto.fromJson).toList(),
+    itemsTotal: _toNum(j['items_total']),
+    extrasTotal: _toNum(j['extras_total']),
+    shippingFee: _toNum(j['shipping_fee']),
+    filmFee: _toNum(j['film_fee']),
+    productType: j['product_type'] as String?,
+    deliveryType: j['delivery_type'] as String?,
+    deliveryAddress: j['delivery_address'] as String?,
+    wantsFilm: j['wants_film'] == true || j['wants_film'] == 1,
   );
 
   static num _toNum(dynamic value) {
@@ -3394,11 +3679,16 @@ class OrderDetail {
 }
 
 class OrderPhoto {
-  OrderPhoto({required this.id, required this.number});
+  OrderPhoto({required this.id, required this.number, required this.quantity});
   final int id;
   final String number;
+  final int quantity;
 
-  factory OrderPhoto.fromJson(Map<String, dynamic> j) => OrderPhoto(id: j['id'] as int, number: j['number'] as String);
+  factory OrderPhoto.fromJson(Map<String, dynamic> j) => OrderPhoto(
+    id: j['id'] as int,
+    number: j['number'] as String,
+    quantity: j['quantity'] is int ? j['quantity'] as int : int.tryParse(j['quantity']?.toString() ?? '1') ?? 1,
+  );
 }
 
 class StaffOrderItem {
