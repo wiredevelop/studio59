@@ -19,6 +19,8 @@ void main() {
 
 const String kApiBaseUrl = 'https://studio59.wiredevelop.pt/api';
 const Map<String, String> kStaffPermissions = {
+  'clients.read': 'Ver clientes',
+  'clients.write': 'Criar/editar/apagar clientes',
   'dashboard.view': 'Ver dashboard',
   'events.read': 'Ver eventos',
   'events.write': 'Criar/editar/apagar eventos',
