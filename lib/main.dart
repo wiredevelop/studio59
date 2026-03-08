@@ -1199,6 +1199,7 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
                   child: ListTile(
                     title: Text(e.name),
                     subtitle: Text('${e.eventDate} ${e.location ?? ''}'.trim()),
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => StaffEventDetailPage(event: e))),
                     trailing: Wrap(
                       spacing: 6,
                       children: [
@@ -1240,6 +1241,69 @@ class StaffEventFormPage extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<StaffEventFormPage> createState() => _StaffEventFormPageState();
+}
+
+class StaffEventDetailPage extends StatelessWidget {
+  const StaffEventDetailPage({super.key, required this.event});
+  final StaffEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    final meta = event.eventMeta ?? {};
+    return Scaffold(
+      appBar: AppBar(title: const Text('Detalhe do Evento')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(event.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Text('Data: ${event.eventDate}'),
+          if (event.location != null && event.location!.isNotEmpty) Text('Local: ${event.location}'),
+          Text('Tipo: ${event.eventType ?? '-'}'),
+          Text('Preço por foto: ${event.pricePerPhoto}'),
+          const SizedBox(height: 12),
+          if (meta.isNotEmpty) ...[
+            const Text('Detalhes', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            ...meta.entries.map((e) => Text('${_prettyMetaKey(e.key)}: ${e.value}')),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+String _prettyMetaKey(String key) {
+  switch (key) {
+    case 'noivo_nome':
+      return 'Nome do noivo';
+    case 'noiva_nome':
+      return 'Nome da noiva';
+    case 'noivo_contacto':
+      return 'Contacto do noivo';
+    case 'noiva_contacto':
+      return 'Contacto da noiva';
+    case 'noivo_profissao':
+      return 'Profissão do noivo';
+    case 'noiva_profissao':
+      return 'Profissão da noiva';
+    case 'bebe_nome':
+      return 'Nome do bebé';
+    case 'pai_nome':
+      return 'Nome do pai';
+    case 'mae_nome':
+      return 'Nome da mãe';
+    case 'padrinho_nome':
+      return 'Nome do padrinho';
+    case 'madrinha_nome':
+      return 'Nome da madrinha';
+    case 'contacto_pais':
+      return 'Contacto dos pais';
+    case 'morada':
+      return 'Morada';
+    default:
+      return key.replaceAll('_', ' ');
+  }
 }
 
 class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
@@ -1441,6 +1505,40 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                       meta['madrinha_nome'] = madrinhaNomeCtrl.text.trim();
                       meta['contacto_pais'] = contactoPaisCtrl.text.trim();
                       meta['morada'] = batizadoMoradaCtrl.text.trim();
+                    }
+                    if (eventType == 'casamento') {
+                      final required = [
+                        noivoNomeCtrl.text,
+                        noivaNomeCtrl.text,
+                        noivoContactoCtrl.text,
+                        noivaContactoCtrl.text,
+                        noivoProfissaoCtrl.text,
+                        noivaProfissaoCtrl.text,
+                        casamentoMoradaCtrl.text,
+                      ];
+                      if (required.any((v) => v.trim().isEmpty)) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Preenche todos os dados do casamento.')),
+                        );
+                        return;
+                      }
+                    }
+                    if (eventType == 'batizado') {
+                      final required = [
+                        bebeNomeCtrl.text,
+                        paiNomeCtrl.text,
+                        maeNomeCtrl.text,
+                        padrinhoNomeCtrl.text,
+                        madrinhaNomeCtrl.text,
+                        contactoPaisCtrl.text,
+                        batizadoMoradaCtrl.text,
+                      ];
+                      if (required.any((v) => v.trim().isEmpty)) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Preenche todos os dados do batizado.')),
+                        );
+                        return;
+                      }
                     }
                     final payload = StaffEventPayload(
                       name: nameCtrl.text.trim(),
