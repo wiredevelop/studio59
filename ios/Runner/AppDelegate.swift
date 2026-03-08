@@ -40,19 +40,39 @@ import Photos
           return
         }
 
-        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
-          guard status == .authorized || status == .limited else {
-            DispatchQueue.main.async { result(false) }
-            return
+        if #available(iOS 14, *) {
+          PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            guard status == .authorized || status == .limited else {
+              DispatchQueue.main.async { result(false) }
+              return
+            }
+            PHPhotoLibrary.shared().performChanges({
+              PHAssetChangeRequest.creationRequestForAsset(from: image)
+            }) { success, error in
+              DispatchQueue.main.async {
+                if success {
+                  result(true)
+                } else {
+                  result(FlutterError(code: "save_failed", message: "Failed to save photo", details: error?.localizedDescription))
+                }
+              }
+            }
           }
-          PHPhotoLibrary.shared().performChanges({
-            PHAssetChangeRequest.creationRequestForAsset(from: image)
-          }) { success, error in
-            DispatchQueue.main.async {
-              if success {
-                result(true)
-              } else {
-                result(FlutterError(code: "save_failed", message: "Failed to save photo", details: error?.localizedDescription))
+        } else {
+          PHPhotoLibrary.requestAuthorization { status in
+            guard status == .authorized else {
+              DispatchQueue.main.async { result(false) }
+              return
+            }
+            PHPhotoLibrary.shared().performChanges({
+              PHAssetChangeRequest.creationRequestForAsset(from: image)
+            }) { success, error in
+              DispatchQueue.main.async {
+                if success {
+                  result(true)
+                } else {
+                  result(FlutterError(code: "save_failed", message: "Failed to save photo", details: error?.localizedDescription))
+                }
               }
             }
           }
