@@ -12,6 +12,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter_prevent_screen_capture/flutter_prevent_screen_capture.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -1686,6 +1687,36 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
     _reload();
   }
 
+  Future<void> _openPdf(BuildContext context, StaffEvent event) async {
+    final token = ref.read(staffTokenProvider);
+    if (token == null) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(
+        content: SizedBox(
+          height: 48,
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      ),
+    );
+    try {
+      final bytes = await ref.read(apiProvider).staffEventPdf(token, event.id);
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/evento-${event.id}.pdf');
+      await file.writeAsBytes(bytes, flush: true);
+      if (!context.mounted) return;
+      await OpenFilex.open(file.path);
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro a gerar PDF: $e')),
+      );
+    } finally {
+      if (context.mounted) Navigator.pop(context);
+    }
+  }
+
   void _reload() {
     final token = ref.read(staffTokenProvider);
     if (token == null) return;
@@ -1785,6 +1816,10 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
                               _reload();
                             },
                           ),
+                        IconButton(
+                          icon: const Icon(Icons.picture_as_pdf),
+                          onPressed: () => _openPdf(context, e),
+                        ),
                       ],
                     ),
                   ),
@@ -1814,6 +1849,7 @@ class StaffEventDetailPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final meta = event.eventMeta ?? {};
     final user = ref.watch(staffUserProvider);
+    final token = ref.watch(staffTokenProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Detalhe do Evento')),
       body: ListView(
@@ -1838,6 +1874,39 @@ class StaffEventDetailPage extends ConsumerWidget {
               },
               child: const Text('Gerir staff do evento'),
             ),
+          const SizedBox(height: 8),
+          FilledButton.tonal(
+            onPressed: token == null
+                ? null
+                : () async {
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (_) => const AlertDialog(
+                        content: SizedBox(
+                          height: 48,
+                          child: Center(child: CircularProgressIndicator()),
+                        ),
+                      ),
+                    );
+                    try {
+                      final bytes = await ref.read(apiProvider).staffEventPdf(token, event.id);
+                      final dir = await getTemporaryDirectory();
+                      final file = File('${dir.path}/evento-${event.id}.pdf');
+                      await file.writeAsBytes(bytes, flush: true);
+                      if (!context.mounted) return;
+                      await OpenFilex.open(file.path);
+                    } catch (e) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Erro a gerar PDF: $e')),
+                      );
+                    } finally {
+                      if (context.mounted) Navigator.pop(context);
+                    }
+                  },
+            child: const Text('PDF'),
+          ),
           const SizedBox(height: 12),
           if (meta.isNotEmpty) ...[
             const Text('Detalhes', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -4325,6 +4394,19 @@ class ApiService {
     if (r.statusCode != 200) throw _errorFromResponse(r);
     final list = (r.data['data'] as List).cast<Map<String, dynamic>>();
     return list.map(StaffEvent.fromJson).toList();
+  }
+
+  Future<Uint8List> staffEventPdf(String token, int eventId) async {
+    final r = await dio.get(
+      '/events/$eventId/pdf',
+      options: Options(
+        headers: {'Authorization': 'Bearer $token'},
+        responseType: ResponseType.bytes,
+      ),
+    );
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    if (r.data is Uint8List) return r.data as Uint8List;
+    return Uint8List.fromList((r.data as List).cast<int>());
   }
 
   Future<List<StaffEventStaff>> staffEventStaff(String token, int eventId) async {
