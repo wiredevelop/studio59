@@ -2636,7 +2636,7 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
   Future<void> _uploadFile(String token, int eventId, File file) async {
     final fileName = file.path.split('/').last;
     final length = await file.length();
-    const chunkSize = 1024 * 512;
+    const chunkSize = 1024 * 1024 * 2;
     final totalChunks = (length / chunkSize).ceil();
     final uploadId = _generateUploadId();
     final raf = await file.open();
