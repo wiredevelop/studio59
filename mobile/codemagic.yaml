@@ -1,0 +1,23 @@
+workflows:
+  ios-release:
+    name: iOS Release
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      flutter: 3.41.4
+      xcode: 26.0.1
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: pt.studio59.app
+    scripts:
+      - name: Flutter Pub Get
+        script: flutter pub get
+      - name: Build IPA
+        script: |
+          BUILD_NUMBER_OVERRIDE="$(date +%Y%m%d%H%M%S)"
+          echo "Using build number: $BUILD_NUMBER_OVERRIDE"
+          flutter build ipa --release --build-number=$BUILD_NUMBER_OVERRIDE
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log

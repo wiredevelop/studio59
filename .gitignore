@@ -43,3 +43,10 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Repo-specific sensitive/build artifacts
+docs/token git
+docs/*.keystore
+docs/keystore_credentials.txt
+backend/public/app/*.aab
+backend/public/app/*.apk
