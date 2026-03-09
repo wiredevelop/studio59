@@ -44,6 +44,10 @@ final staffUserProvider = StateProvider<StaffUser?>((_) => null);
 final apiProvider = Provider<ApiService>((ref) => ApiService(ref.watch(baseUrlProvider)));
 final cartProvider = StateNotifierProvider<CartNotifier, Map<int, CartItem>>((_) => CartNotifier());
 final savedOrdersProvider = StateNotifierProvider<SavedOrdersNotifier, List<String>>((_) => SavedOrdersNotifier());
+<<<<<<< HEAD
+=======
+final wantsFilmProvider = StateProvider<bool>((_) => false);
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
 
 class Studio59App extends ConsumerWidget {
   const Studio59App({super.key});
@@ -802,6 +806,19 @@ class _CartPageState extends ConsumerState<CartPage> {
     final pricePerPhoto = session?.pricePerPhoto ?? 0;
     final items = cart.values.toList();
     final itemsTotal = items.fold<num>(0, (sum, item) => sum + (item.quantity * pricePerPhoto));
+<<<<<<< HEAD
+=======
+    final eventType = session?.eventType ?? '';
+    final filmEligible = eventType == 'casamento' || eventType == 'batizado';
+    final wantsFilm = ref.watch(wantsFilmProvider);
+    if (!filmEligible && wantsFilm) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ref.read(wantsFilmProvider.notifier).state = false;
+      });
+    }
+    final filmFee = filmEligible && wantsFilm ? 30.0 : 0.0;
+    final total = itemsTotal + filmFee;
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
 
     return Scaffold(
       appBar: AppBar(title: const Text('Carrinho')),
@@ -852,13 +869,30 @@ class _CartPageState extends ConsumerState<CartPage> {
                     },
                   ),
                 ),
+<<<<<<< HEAD
+=======
+                if (filmEligible)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: wantsFilm,
+                      onChanged: (v) => ref.read(wantsFilmProvider.notifier).state = v ?? false,
+                      title: const Text('Adicionar filme (+30€)'),
+                    ),
+                  ),
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
                 Padding(
                   padding: const EdgeInsets.all(12),
                   child: Row(
                     children: [
                       Expanded(
                         child: Text(
+<<<<<<< HEAD
                           'Total: €${itemsTotal.toStringAsFixed(2)}',
+=======
+                          'Total: €${total.toStringAsFixed(2)}',
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
                           style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
                       ),
@@ -895,7 +929,10 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
   String paymentMethod = 'cash';
   String productType = 'digital';
   String? deliveryType;
+<<<<<<< HEAD
   bool wantsFilm = false;
+=======
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
   final addressCtrl = TextEditingController();
   bool isSubmitting = false;
 
@@ -906,11 +943,20 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
     final session = ref.watch(guestSessionProvider);
     final pricePerPhoto = session?.pricePerPhoto ?? 0;
     final itemsTotal = items.fold<num>(0, (sum, item) => sum + (item.quantity * pricePerPhoto));
+<<<<<<< HEAD
+=======
+    final eventType = session?.eventType ?? '';
+    final filmEligible = eventType == 'casamento' || eventType == 'batizado';
+    final wantsFilm = filmEligible && ref.watch(wantsFilmProvider);
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
     final filmFee = wantsFilm ? 30.0 : 0.0;
     final shippingFee = deliveryType == 'shipping' ? 5.0 : 0.0;
     final extrasTotal = filmFee + shippingFee;
     final total = itemsTotal + extrasTotal;
+<<<<<<< HEAD
     final eventType = session?.eventType ?? '';
+=======
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
     return Scaffold(
       appBar: AppBar(title: const Text('Checkout')),
       body: SingleChildScrollView(
@@ -974,12 +1020,20 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                 ),
               ],
             ],
+<<<<<<< HEAD
             if (eventType == 'casamento' || eventType == 'batizado') ...[
               const SizedBox(height: 8),
               CheckboxListTile(
                 value: wantsFilm,
                 onChanged: (v) => setState(() => wantsFilm = v ?? false),
                 title: const Text('Filme (+30€)'),
+=======
+            if (filmEligible) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(wantsFilm ? 'Filme: Sim (+30€)' : 'Filme: Não'),
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
               ),
             ],
             const SizedBox(height: 8),
@@ -1047,6 +1101,10 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                         );
                         await ref.read(savedOrdersProvider.notifier).add(code);
                         ref.read(cartProvider.notifier).clear();
+<<<<<<< HEAD
+=======
+                        ref.read(wantsFilmProvider.notifier).state = false;
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
                         if (!context.mounted) return;
                         if (code.startsWith('OFF-')) {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -1116,11 +1174,24 @@ class _TicketPageState extends ConsumerState<TicketPage> {
 
   Future<bool> _ensureGalleryPermission() async {
     if (Platform.isIOS) {
+<<<<<<< HEAD
       final status = await Permission.photosAddOnly.request();
       if (status.isGranted) return true;
       if (status.isPermanentlyDenied || status.isRestricted) return false;
       final photos = await Permission.photos.request();
       return photos.isGranted;
+=======
+      final photosStatus = await Permission.photos.status;
+      if (photosStatus.isGranted || photosStatus.isLimited) return true;
+      final addOnlyStatus = await Permission.photosAddOnly.status;
+      if (addOnlyStatus.isGranted || addOnlyStatus.isLimited) return true;
+
+      final photos = await Permission.photos.request();
+      if (photos.isGranted || photos.isLimited) return true;
+
+      final addOnly = await Permission.photosAddOnly.request();
+      return addOnly.isGranted || addOnly.isLimited;
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
     }
     if (Platform.isAndroid) {
       final photos = await Permission.photos.request();
@@ -1436,7 +1507,11 @@ class StaffLoginPage extends ConsumerStatefulWidget {
 }
 
 class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
+<<<<<<< HEAD
   final emailCtrl = TextEditingController();
+=======
+  final loginCtrl = TextEditingController();
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
   final passCtrl = TextEditingController();
 
   @override
@@ -1447,14 +1522,22 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+<<<<<<< HEAD
             TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+=======
+            TextField(controller: loginCtrl, decoration: const InputDecoration(labelText: 'Email ou username', border: OutlineInputBorder())),
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
             const SizedBox(height: 8),
             TextField(controller: passCtrl, obscureText: true, decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder())),
             const SizedBox(height: 12),
             FilledButton(
               onPressed: () async {
                 try {
+<<<<<<< HEAD
                   final token = await ref.read(apiProvider).staffLogin(emailCtrl.text.trim(), passCtrl.text.trim());
+=======
+                  final token = await ref.read(apiProvider).staffLogin(loginCtrl.text.trim(), passCtrl.text.trim());
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
                   ref.read(staffTokenProvider.notifier).state = token.token;
                   ref.read(staffUserProvider.notifier).state = token.user;
                   if (!context.mounted) return;
@@ -1485,6 +1568,10 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
     final token = ref.watch(staffTokenProvider);
     final user = ref.watch(staffUserProvider);
     if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+<<<<<<< HEAD
+=======
+    final isPhotographer = user.role == 'photographer';
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
 
     return Scaffold(
       appBar: AppBar(
@@ -1512,7 +1599,11 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
           if (user.hasPermission('events.read'))
             _StaffMenuTile(
               title: 'Eventos',
+<<<<<<< HEAD
               subtitle: 'Criar/editar eventos',
+=======
+              subtitle: isPhotographer ? 'Eventos associados' : 'Criar/editar eventos',
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
               icon: Icons.event,
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffEventsPage())),
             ),
@@ -1533,10 +1624,23 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
           if (user.hasPermission('orders.read'))
             _StaffMenuTile(
               title: 'Pedidos',
+<<<<<<< HEAD
               subtitle: 'Filtrar e atualizar status',
               icon: Icons.receipt_long,
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffOrdersPage())),
             ),
+=======
+              subtitle: isPhotographer ? 'Aprovar pagamentos' : 'Filtrar e atualizar status',
+              icon: Icons.receipt_long,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffOrdersPage())),
+            ),
+          _StaffMenuTile(
+            title: 'Definições',
+            subtitle: 'Perfil e password',
+            icon: Icons.settings,
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffSettingsPage())),
+          ),
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
           if (user.hasPermission('users.manage'))
             _StaffMenuTile(
               title: 'Utilizadores',
@@ -1551,7 +1655,11 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
               icon: Icons.people_outline,
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffClientsPage())),
             ),
+<<<<<<< HEAD
           if (user.hasPermission('events.read'))
+=======
+          if (user.hasPermission('events.read') && !isPhotographer)
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
             _StaffMenuTile(
               title: 'Sincronizar',
               subtitle: 'Exportar/Importar dados offline',
@@ -2831,9 +2939,16 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
     final token = ref.watch(staffTokenProvider);
     final user = ref.watch(staffUserProvider);
     if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+<<<<<<< HEAD
     final canWrite = user.hasPermission('orders.write');
     final canDownload = user.hasPermission('orders.download');
     final canExport = user.hasPermission('orders.export');
+=======
+    final isPhotographer = user.role == 'photographer';
+    final canWrite = user.hasPermission('orders.write');
+    final canDownload = user.hasPermission('orders.download') && !isPhotographer;
+    final canExport = user.hasPermission('orders.export') && !isPhotographer;
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
 
     return Scaffold(
       appBar: AppBar(
@@ -2918,6 +3033,7 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                     if (selected.isNotEmpty && canWrite)
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
+<<<<<<< HEAD
                         child: Row(
                           children: [
                             Expanded(
@@ -2931,16 +3047,50 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                 onChanged: (v) async {
                                   if (v == null) return;
                                   final updated = await ref.read(apiProvider).staffBulkOrderStatus(token, selected.toList(), v);
+=======
+                        child: isPhotographer
+                            ? FilledButton(
+                                onPressed: () async {
+                                  final updated = await ref.read(apiProvider).staffBulkOrderStatus(token, selected.toList(), 'paid');
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
                                   if (!context.mounted) return;
                                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Atualizados $updated pedidos.')));
                                   selected.clear();
                                   setState(() {});
                                 },
+<<<<<<< HEAD
                                 decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Bulk status'),
                               ),
                             ),
                           ],
                         ),
+=======
+                                child: const Text('Marcar pagos (selecionados)'),
+                              )
+                            : Row(
+                                children: [
+                                  Expanded(
+                                    child: DropdownButtonFormField<String>(
+                                      value: 'paid',
+                                      items: const [
+                                        DropdownMenuItem(value: 'pending', child: Text('pending')),
+                                        DropdownMenuItem(value: 'paid', child: Text('paid')),
+                                        DropdownMenuItem(value: 'delivered', child: Text('delivered')),
+                                      ],
+                                      onChanged: (v) async {
+                                        if (v == null) return;
+                                        final updated = await ref.read(apiProvider).staffBulkOrderStatus(token, selected.toList(), v);
+                                        if (!context.mounted) return;
+                                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Atualizados $updated pedidos.')));
+                                        selected.clear();
+                                        setState(() {});
+                                      },
+                                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Bulk status'),
+                                    ),
+                                  ),
+                                ],
+                              ),
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
                       ),
                   ],
                 ),
@@ -2995,7 +3145,11 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                     },
                                     child: const Text('Pago'),
                                   ),
+<<<<<<< HEAD
                                 if (canWrite && o.status == 'paid')
+=======
+                                if (canWrite && o.status == 'paid' && !isPhotographer)
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
                                   OutlinedButton(
                                     onPressed: () async {
                                       await ref.read(apiProvider).markOrderDelivered(token, o.id, eventId: o.eventId ?? eventId);
@@ -3121,7 +3275,13 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
     final user = ref.watch(staffUserProvider);
     if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     final canWrite = user.hasPermission('orders.write');
+<<<<<<< HEAD
     final canDownload = user.hasPermission('orders.download');
+=======
+    final isPhotographer = user.role == 'photographer';
+    final canEdit = canWrite && !isPhotographer;
+    final canDownload = user.hasPermission('orders.download') && !isPhotographer;
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
 
     return Scaffold(
       appBar: AppBar(
@@ -3131,7 +3291,11 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
             onPressed: () => setState(() => _loadDetail(token)),
             icon: const Icon(Icons.refresh),
           ),
+<<<<<<< HEAD
           if (canWrite)
+=======
+          if (canEdit)
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
             IconButton(
               onPressed: () => setState(() => editing = !editing),
               icon: Icon(editing ? Icons.close : Icons.edit),
@@ -3169,6 +3333,21 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                 Text('Cliente: ${order.customerName}'),
                 if ((order.customerEmail ?? '').isNotEmpty) Text('Email: ${order.customerEmail}'),
                 if ((order.customerPhone ?? '').isNotEmpty) Text('Telefone: ${order.customerPhone}'),
+<<<<<<< HEAD
+=======
+                if (isPhotographer && order.status == 'pending')
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: FilledButton(
+                      onPressed: () async {
+                        await ref.read(apiProvider).markOrderPaid(token, order.id);
+                        if (!context.mounted) return;
+                        setState(() => _loadDetail(token));
+                      },
+                      child: const Text('Marcar como pago'),
+                    ),
+                  ),
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
               ] else ...[
                 TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
                 const SizedBox(height: 8),
@@ -3235,6 +3414,105 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
   }
 }
 
+<<<<<<< HEAD
+=======
+class StaffSettingsPage extends ConsumerStatefulWidget {
+  const StaffSettingsPage({super.key});
+
+  @override
+  ConsumerState<StaffSettingsPage> createState() => _StaffSettingsPageState();
+}
+
+class _StaffSettingsPageState extends ConsumerState<StaffSettingsPage> {
+  late final TextEditingController nameCtrl;
+  late final TextEditingController usernameCtrl;
+  late final TextEditingController emailCtrl;
+  late final TextEditingController passwordCtrl;
+  bool saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final user = ref.read(staffUserProvider);
+    nameCtrl = TextEditingController(text: user?.name ?? '');
+    usernameCtrl = TextEditingController(text: user?.username ?? '');
+    emailCtrl = TextEditingController(text: user?.email ?? '');
+    passwordCtrl = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    nameCtrl.dispose();
+    usernameCtrl.dispose();
+    emailCtrl.dispose();
+    passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final token = ref.watch(staffTokenProvider);
+    final user = ref.watch(staffUserProvider);
+    if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Definições')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: ListView(
+          children: [
+            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(controller: usernameCtrl, decoration: const InputDecoration(labelText: 'Username (opcional)', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(
+              controller: passwordCtrl,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Nova password (opcional)', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      final name = nameCtrl.text.trim();
+                      final email = emailCtrl.text.trim();
+                      if (name.isEmpty || email.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome e email são obrigatórios.')));
+                        return;
+                      }
+                      setState(() => saving = true);
+                      try {
+                        final updated = await ref.read(apiProvider).updateProfile(
+                              token,
+                              name: name,
+                              email: email,
+                              username: usernameCtrl.text.trim(),
+                              password: passwordCtrl.text.trim(),
+                            );
+                        ref.read(staffUserProvider.notifier).state = updated;
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Definições atualizadas.')));
+                        passwordCtrl.clear();
+                      } catch (e) {
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                      } finally {
+                        if (mounted) setState(() => saving = false);
+                      }
+                    },
+              child: Text(saving ? 'A guardar...' : 'Guardar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
 class StaffUsersPage extends ConsumerStatefulWidget {
   const StaffUsersPage({super.key});
 
@@ -3316,7 +3594,11 @@ class _StaffUsersPageState extends ConsumerState<StaffUsersPage> {
                 return Card(
                   child: ListTile(
                     title: Text(u.name),
+<<<<<<< HEAD
                     subtitle: Text('${u.email} • ${u.role}'),
+=======
+                    subtitle: Text('${u.username ?? '-'} • ${u.email} • ${u.role}'),
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
                     trailing: Wrap(
                       spacing: 6,
                       children: [
@@ -3365,6 +3647,10 @@ class StaffUserFormPage extends ConsumerStatefulWidget {
 
 class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
   late final TextEditingController nameCtrl;
+<<<<<<< HEAD
+=======
+  late final TextEditingController usernameCtrl;
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
   late final TextEditingController emailCtrl;
   late final TextEditingController passwordCtrl;
   String role = 'staff';
@@ -3375,6 +3661,10 @@ class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
   void initState() {
     super.initState();
     nameCtrl = TextEditingController(text: widget.user?.name ?? '');
+<<<<<<< HEAD
+=======
+    usernameCtrl = TextEditingController(text: widget.user?.username ?? '');
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
     emailCtrl = TextEditingController(text: widget.user?.email ?? '');
     passwordCtrl = TextEditingController();
     role = widget.user?.role ?? 'staff';
@@ -3386,6 +3676,10 @@ class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
   @override
   void dispose() {
     nameCtrl.dispose();
+<<<<<<< HEAD
+=======
+    usernameCtrl.dispose();
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
     emailCtrl.dispose();
     passwordCtrl.dispose();
     super.dispose();
@@ -3404,6 +3698,11 @@ class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
           children: [
             TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
             const SizedBox(height: 8),
+<<<<<<< HEAD
+=======
+            TextField(controller: usernameCtrl, decoration: const InputDecoration(labelText: 'Username (opcional)', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
             TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
             const SizedBox(height: 8),
             TextField(
@@ -3416,6 +3715,10 @@ class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
               value: role,
               items: const [
                 DropdownMenuItem(value: 'staff', child: Text('staff')),
+<<<<<<< HEAD
+=======
+                DropdownMenuItem(value: 'photographer', child: Text('fotografo')),
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
                 DropdownMenuItem(value: 'admin', child: Text('admin')),
               ],
               onChanged: (v) => setState(() => role = v ?? 'staff'),
@@ -3444,6 +3747,10 @@ class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
                   : () async {
                       final payload = StaffUserPayload(
                         name: nameCtrl.text.trim(),
+<<<<<<< HEAD
+=======
+                        username: usernameCtrl.text.trim(),
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
                         email: emailCtrl.text.trim(),
                         role: role,
                         permissions: selectedPermissions.toList(),
@@ -4092,12 +4399,38 @@ class ApiService {
     return _normalizeExternalUrl(rawUrl);
   }
 
+<<<<<<< HEAD
   Future<StaffAuthResponse> staffLogin(String email, String password) async {
     final r = await dio.post('/auth/login', data: {'email': email, 'password': password});
+=======
+  Future<StaffAuthResponse> staffLogin(String login, String password) async {
+    final r = await dio.post('/auth/login', data: {'login': login, 'password': password});
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
     if (r.statusCode != 200) throw _errorFromResponse(r);
     return StaffAuthResponse.fromJson(r.data as Map<String, dynamic>);
   }
 
+<<<<<<< HEAD
+=======
+  Future<StaffUser> updateProfile(
+    String token, {
+    required String name,
+    required String email,
+    String? username,
+    String? password,
+  }) async {
+    final data = <String, dynamic>{
+      'name': name,
+      'email': email,
+      if (username != null && username.isNotEmpty) 'username': username,
+      if (password != null && password.isNotEmpty) 'password': password,
+    };
+    final r = await dio.put('/auth/me', data: data, options: Options(headers: {'Authorization': 'Bearer $token'}));
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    return StaffUser.fromJson((r.data as Map).cast<String, dynamic>());
+  }
+
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
   Future<List<StaffOrderItem>> staffOrders(String token, int eventId, String q, String status) async {
     final r = await dio.get(
       '/events/$eventId/orders',
@@ -4598,12 +4931,27 @@ class StaffAuthResponse {
 }
 
 class StaffUser {
+<<<<<<< HEAD
   StaffUser({required this.id, required this.name, required this.email, required this.role, required this.permissions});
+=======
+  StaffUser({
+    required this.id,
+    required this.name,
+    required this.email,
+    required this.role,
+    required this.permissions,
+    this.username,
+  });
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
   final int id;
   final String name;
   final String email;
   final String role;
   final List<String> permissions;
+<<<<<<< HEAD
+=======
+  final String? username;
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
 
   factory StaffUser.fromJson(Map<String, dynamic> j) => StaffUser(
     id: j['id'] as int,
@@ -4611,9 +4959,29 @@ class StaffUser {
     email: j['email'] as String? ?? '',
     role: j['role'] as String? ?? 'staff',
     permissions: ((j['permissions'] as List?) ?? []).map((e) => e.toString()).toList(),
+<<<<<<< HEAD
   );
 
   bool hasPermission(String permission) => permissions.contains(permission);
+=======
+    username: j['username'] as String?,
+  );
+
+  bool hasPermission(String permission) {
+    if (role == 'admin' && permissions.isEmpty) return true;
+    if (role == 'photographer') {
+      const allowed = {
+        'dashboard.view',
+        'events.read',
+        'uploads.manage',
+        'orders.read',
+        'orders.write',
+      };
+      return allowed.contains(permission);
+    }
+    return permissions.contains(permission);
+  }
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
 }
 
 class StaffUserPayload {
@@ -4622,16 +4990,28 @@ class StaffUserPayload {
     required this.email,
     required this.role,
     required this.permissions,
+<<<<<<< HEAD
+=======
+    this.username,
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
     this.password,
   });
   final String name;
   final String email;
   final String role;
   final List<String> permissions;
+<<<<<<< HEAD
+=======
+  final String? username;
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
   final String? password;
 
   Map<String, dynamic> toJson() => {
     'name': name,
+<<<<<<< HEAD
+=======
+    if (username != null && username!.isNotEmpty) 'username': username,
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
     'email': email,
     'role': role,
     if (password != null && password!.isNotEmpty) 'password': password,
@@ -5041,6 +5421,17 @@ class _StaffSyncPageState extends ConsumerState<StaffSyncPage> {
 
   @override
   Widget build(BuildContext context) {
+<<<<<<< HEAD
+=======
+    final user = ref.watch(staffUserProvider);
+    if (user != null && user.role == 'photographer') {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Sincronizar')),
+        body: const Center(child: Text('Sem acesso.')),
+      );
+    }
+
+>>>>>>> 1e7861d (Apply photographer access + Flutter updates)
     return Scaffold(
       appBar: AppBar(title: const Text('Sincronizar')),
       body: SingleChildScrollView(
