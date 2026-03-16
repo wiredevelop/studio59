@@ -23,6 +23,10 @@ void main() {
   runApp(const ProviderScope(child: Studio59App()));
 }
 
+const Color kBrandBlack = Color(0xFF000000);
+const Color kBrandRose = Color(0xFFDBAB97);
+const Color kBrandRoseSoft = Color(0x33DBAB97);
+
 const String kApiBaseUrl = 'https://studio59.wiredevelop.pt/api';
 const Map<String, String> kStaffPermissions = {
   'clients.read': 'Ver clientes',
@@ -52,10 +56,118 @@ class Studio59App extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final colorScheme = const ColorScheme(
+      brightness: Brightness.dark,
+      primary: kBrandRose,
+      onPrimary: kBrandBlack,
+      secondary: kBrandRose,
+      onSecondary: kBrandBlack,
+      error: kBrandRose,
+      onError: kBrandBlack,
+      background: kBrandBlack,
+      onBackground: kBrandRose,
+      surface: kBrandBlack,
+      onSurface: kBrandRose,
+      outline: kBrandRose,
+    );
+
     return MaterialApp(
       title: 'Studio 59',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.black),
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: colorScheme,
+        scaffoldBackgroundColor: kBrandBlack,
+        fontFamily: '.SF Pro Text',
+        fontFamilyFallback: const ['SF Pro Text', 'SF Pro Display', 'Helvetica Neue', 'Arial'],
+        pageTransitionsTheme: const PageTransitionsTheme(
+          builders: {
+            TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.linux: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.windows: CupertinoPageTransitionsBuilder(),
+          },
+        ),
+        cupertinoOverrideTheme: const CupertinoThemeData(
+          brightness: Brightness.dark,
+          primaryColor: kBrandRose,
+          scaffoldBackgroundColor: kBrandBlack,
+          barBackgroundColor: kBrandBlack,
+          textTheme: CupertinoTextThemeData(primaryColor: kBrandRose),
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: kBrandBlack,
+          foregroundColor: kBrandRose,
+          elevation: 0,
+          centerTitle: true,
+        ),
+        cardTheme: CardTheme(
+          color: kBrandBlack,
+          elevation: 8,
+          shadowColor: kBrandRose.withOpacity(0.2),
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: kBrandRose),
+          ),
+        ),
+        dividerTheme: const DividerThemeData(color: kBrandRose),
+        iconTheme: const IconThemeData(color: kBrandRose),
+        textTheme: ThemeData.dark().textTheme.apply(bodyColor: kBrandRose, displayColor: kBrandRose),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: kBrandBlack,
+          hintStyle: TextStyle(color: kBrandRose.withOpacity(0.6)),
+          labelStyle: const TextStyle(color: kBrandRose),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: kBrandRose),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: kBrandRose, width: 1.5),
+          ),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: kBrandBlack,
+            foregroundColor: kBrandRose,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: const BorderSide(color: kBrandRose),
+            ),
+            elevation: 6,
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: kBrandRose,
+            side: const BorderSide(color: kBrandRose),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
+        textButtonTheme: TextButtonThemeData(
+          style: TextButton.styleFrom(foregroundColor: kBrandRose),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: kBrandRose,
+            foregroundColor: kBrandBlack,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
+        snackBarTheme: const SnackBarThemeData(
+          backgroundColor: kBrandBlack,
+          contentTextStyle: TextStyle(color: kBrandRose),
+          actionTextColor: kBrandRose,
+        ),
+        dialogTheme: const DialogTheme(
+          backgroundColor: kBrandBlack,
+          titleTextStyle: TextStyle(color: kBrandRose, fontSize: 18, fontWeight: FontWeight.w600),
+          contentTextStyle: TextStyle(color: kBrandRose),
+        ),
+      ),
       home: const HomePage(),
     );
   }
@@ -242,12 +354,13 @@ void showQrDialog(BuildContext context, {required String title, required String 
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              color: Colors.white,
+              color: kBrandRose,
               padding: const EdgeInsets.all(8),
               child: QrImageView(
                 data: url,
                 size: 220,
-                backgroundColor: Colors.white,
+                backgroundColor: kBrandRose,
+                foregroundColor: kBrandBlack,
               ),
             ),
             const SizedBox(height: 8),
@@ -476,7 +589,7 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                                 style: TextStyle(
                                   fontSize: size.width * 0.12,
                                   fontWeight: FontWeight.w800,
-                                  color: Colors.white,
+                                  color: kBrandRose.withOpacity(0.7),
                                   letterSpacing: 4,
                                 ),
                               ),
@@ -668,7 +781,7 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                                           style: TextStyle(
                                             fontSize: 22,
                                             fontWeight: FontWeight.w800,
-                                            color: Colors.white,
+                                            color: kBrandRose.withOpacity(0.7),
                                             letterSpacing: 2,
                                           ),
                                         ),
@@ -687,7 +800,7 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                                     },
                                     child: Icon(
                                       isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
-                                      color: isSelected ? Colors.greenAccent : Colors.white,
+                                      color: isSelected ? kBrandRose : kBrandRose.withOpacity(0.6),
                                       size: 22,
                                     ),
                                   ),
@@ -1269,9 +1382,9 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: isPaid ? Colors.green.shade50 : Colors.amber.shade50,
+                    color: isPaid ? kBrandRoseSoft : kBrandBlack,
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: isPaid ? Colors.green.shade300 : Colors.amber.shade300),
+                    border: Border.all(color: kBrandRose),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -4015,12 +4128,12 @@ class _SecureScreenState extends State<SecureScreen> {
         IgnorePointer(child: widget.child),
         Positioned.fill(
           child: Container(
-            color: Colors.black.withOpacity(0.9),
+            color: kBrandBlack.withOpacity(0.9),
             alignment: Alignment.center,
             child: const Text(
               'Conteúdo protegido\nCaptura de ecrã detetada',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700),
+              style: TextStyle(color: kBrandRose, fontSize: 22, fontWeight: FontWeight.w700),
             ),
           ),
         ),
