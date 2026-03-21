@@ -50,3 +50,12 @@ docs/*.keystore
 docs/keystore_credentials.txt
 backend/public/app/*.aab
 backend/public/app/*.apk
+
+# Local scripts / data / caches
+commit_mobile.sh
+docs/Studio.xlsx
+docs/equipa_trabalho_tokens.csv
+docs/studio59-dump-*.sql.gz
+docs/studio59-schema-*.sql
+ex codex
+mobile/android/.kotlin/
