@@ -5,6 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -94,7 +95,7 @@ class Studio59App extends ConsumerWidget {
           primaryColor: kBrandRose,
           scaffoldBackgroundColor: kBrandBlack,
           barBackgroundColor: kBrandBlack,
-          textTheme: const CupertinoTextThemeData(primaryColor: kBrandRose),
+          textTheme: CupertinoTextThemeData(primaryColor: kBrandRose),
         ),
         appBarTheme: const AppBarTheme(
           backgroundColor: kBrandBlack,
@@ -210,8 +211,14 @@ class _HomePageState extends ConsumerState<HomePage> {
     return showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Senha do Evento'),
-        content: TextField(controller: c, obscureText: true, autofocus: true),
+        title: const Text('PIN do Evento'),
+        content: TextField(
+          controller: c,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
+          decoration: const InputDecoration(hintText: '4 dígitos'),
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
           FilledButton(onPressed: () => Navigator.pop(context, c.text.trim()), child: const Text('Entrar')),
@@ -691,6 +698,8 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                         children: [
                           if (session.eventType != null && session.eventType!.isNotEmpty) Text('Tipo: ${session.eventType}'),
                           if (session.eventDate != null && session.eventDate!.isNotEmpty) Text('Data: ${session.eventDate}'),
+                          if (session.basePrice != null) Text('Preço base: ${session.basePrice}'),
+                          Text('Preço por foto: ${session.pricePerPhoto}'),
                           const SizedBox(height: 8),
                           ...session.eventMeta.entries.map((e) => Text('${_prettyMetaKey(e.key)}: ${e.value}')),
                         ],
@@ -1894,10 +1903,17 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
               itemCount: events.length,
               itemBuilder: (_, i) {
                 final e = events[i];
+                final report = (e.reportNumber ?? e.legacyReportNumber)?.trim();
+                final subtitleParts = <String>[
+                  if (report != null && report.isNotEmpty) 'Nº $report',
+                  if (e.eventDate.isNotEmpty) e.eventDate,
+                  if (e.location != null && e.location!.isNotEmpty) e.location!,
+                ];
+                final subtitle = subtitleParts.isEmpty ? '' : subtitleParts.join(' • ');
                 return Card(
                   child: ListTile(
                     title: Text(e.name),
-                    subtitle: Text('${e.eventDate} ${e.location ?? ''}'.trim()),
+                    subtitle: Text(subtitle),
                     onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => StaffEventDetailPage(event: e))),
                     trailing: Wrap(
                       spacing: 6,
@@ -1970,9 +1986,12 @@ class StaffEventDetailPage extends ConsumerWidget {
         children: [
           Text(event.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
+          if ((event.reportNumber ?? event.legacyReportNumber)?.isNotEmpty == true)
+            Text('Nº reportagem: ${event.reportNumber ?? event.legacyReportNumber}'),
           Text('Data: ${event.eventDate}'),
           if (event.eventTime != null && event.eventTime!.isNotEmpty) Text('Hora: ${event.eventTime}'),
           Text('Tipo: ${event.eventType ?? '-'}'),
+          if (event.basePrice != null) Text('Preço base: ${event.basePrice}'),
           Text('Preço por foto: ${event.pricePerPhoto}'),
           if (event.accessPin != null && event.accessPin!.isNotEmpty) Text('PIN: ${event.accessPin}'),
           if (event.notes != null && event.notes!.isNotEmpty) Text('Notas: ${event.notes}'),
@@ -2046,10 +2065,26 @@ String _prettyMetaKey(String key) {
       return 'Profissão do noivo';
     case 'noiva_profissao':
       return 'Profissão da noiva';
+    case 'noivo_instagram':
+      return 'Instagram do noivo';
+    case 'noiva_instagram':
+      return 'Instagram da noiva';
+    case 'noivo_filho_de_1':
+      return 'Filho de (pai)';
+    case 'noivo_filho_de_2':
+      return 'Filho de (mãe)';
+    case 'noiva_filho_de_1':
+      return 'Filha de (pai)';
+    case 'noiva_filho_de_2':
+      return 'Filha de (mãe)';
     case 'noivo_morada':
       return 'Morada do noivo';
     case 'noiva_morada':
       return 'Morada da noiva';
+    case 'noivo_coordenadas':
+      return 'Coordenadas do noivo';
+    case 'noiva_coordenadas':
+      return 'Coordenadas da noiva';
     case 'missa_hora':
       return 'Hora da missa';
     case 'casa_noivo_chegada':
@@ -2062,14 +2097,24 @@ String _prettyMetaKey(String key) {
       return 'Casa da noiva: saída';
     case 'igreja_local':
       return 'Igreja';
+    case 'igreja_localidade':
+      return 'Localidade (igreja)';
     case 'quinta_local':
       return 'Quinta';
+    case 'almoco_localidade':
+      return 'Localidade do almoço';
     case 'instagram_noivos':
       return 'Instagram dos noivos';
     case 'instagram_pais':
       return 'Instagram dos pais';
     case 'numero_convidados':
       return 'Número de convidados';
+    case 'data_entrega':
+      return 'Data de entrega';
+    case 'estar_na_loja_as':
+      return 'Estar na loja às';
+    case 'equipa_de_trabalho':
+      return 'Equipa de trabalho';
     case 'tipo_pacote':
       return 'Tipo de pacote';
     case 'bebe_nome':
@@ -2093,6 +2138,8 @@ String _prettyMetaKey(String key) {
 
 class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   late final TextEditingController nameCtrl;
+  late final TextEditingController reportNumberCtrl;
+  late final TextEditingController basePriceCtrl;
   late final TextEditingController dateCtrl;
   late final TextEditingController timeCtrl;
   late final TextEditingController pinCtrl;
@@ -2106,17 +2153,29 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   late final TextEditingController noivaProfissaoCtrl;
   late final TextEditingController noivoMoradaCtrl;
   late final TextEditingController noivaMoradaCtrl;
+  late final TextEditingController noivoInstagramCtrl;
+  late final TextEditingController noivaInstagramCtrl;
+  late final TextEditingController noivoFilhoDe1Ctrl;
+  late final TextEditingController noivoFilhoDe2Ctrl;
+  late final TextEditingController noivaFilhoDe1Ctrl;
+  late final TextEditingController noivaFilhoDe2Ctrl;
+  late final TextEditingController noivoCoordenadasCtrl;
+  late final TextEditingController noivaCoordenadasCtrl;
   late final TextEditingController missaHoraCtrl;
   late final TextEditingController igrejaLocalCtrl;
+  late final TextEditingController igrejaLocalidadeCtrl;
   late final TextEditingController quintaLocalCtrl;
+  late final TextEditingController almocoLocalidadeCtrl;
   late final TextEditingController numeroConvidadosCtrl;
   late final TextEditingController tipoPacoteCtrl;
-  late final TextEditingController instagramNoivosCtrl;
   late final TextEditingController instagramPaisCtrl;
   late final TextEditingController casaNoivoChegadaCtrl;
   late final TextEditingController casaNoivoSaidaCtrl;
   late final TextEditingController casaNoivaChegadaCtrl;
   late final TextEditingController casaNoivaSaidaCtrl;
+  late final TextEditingController dataEntregaCtrl;
+  late final TextEditingController estarNaLojaCtrl;
+  late final TextEditingController equipaTrabalhoCtrl;
   late final TextEditingController bebeNomeCtrl;
   late final TextEditingController paiNomeCtrl;
   late final TextEditingController maeNomeCtrl;
@@ -2132,14 +2191,20 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   void initState() {
     super.initState();
     nameCtrl = TextEditingController(text: widget.event?.name ?? '');
+    reportNumberCtrl = TextEditingController(
+      text: widget.event?.legacyReportNumber?.isNotEmpty == true
+          ? widget.event!.legacyReportNumber!
+          : (widget.event?.reportNumber ?? ''),
+    );
+    basePriceCtrl = TextEditingController(
+      text: widget.event?.basePrice != null ? widget.event!.basePrice!.toString() : '0',
+    );
     dateCtrl = TextEditingController(text: widget.event?.eventDate ?? '');
     timeCtrl = TextEditingController(text: widget.event?.eventTime ?? '');
     pinCtrl = TextEditingController(
-      text: widget.event?.accessPin?.isNotEmpty == true
-          ? widget.event!.accessPin!
-          : 'Gerado automaticamente ao guardar',
+      text: widget.event?.accessPin?.isNotEmpty == true ? widget.event!.accessPin! : '',
     );
-    priceCtrl = TextEditingController(text: widget.event?.pricePerPhoto.toString() ?? '0');
+    priceCtrl = TextEditingController(text: widget.event?.pricePerPhoto.toString() ?? '5');
     notesCtrl = TextEditingController(text: widget.event?.notes ?? '');
     eventType = widget.event?.eventType ?? '';
     isLocked = widget.event?.isLocked ?? false;
@@ -2152,17 +2217,31 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     noivaProfissaoCtrl = TextEditingController(text: meta['noiva_profissao']?.toString() ?? '');
     noivoMoradaCtrl = TextEditingController(text: meta['noivo_morada']?.toString() ?? '');
     noivaMoradaCtrl = TextEditingController(text: meta['noiva_morada']?.toString() ?? '');
+    noivoInstagramCtrl = TextEditingController(
+      text: meta['noivo_instagram']?.toString() ?? meta['instagram_noivos']?.toString() ?? '',
+    );
+    noivaInstagramCtrl = TextEditingController(text: meta['noiva_instagram']?.toString() ?? '');
+    noivoFilhoDe1Ctrl = TextEditingController(text: meta['noivo_filho_de_1']?.toString() ?? '');
+    noivoFilhoDe2Ctrl = TextEditingController(text: meta['noivo_filho_de_2']?.toString() ?? '');
+    noivaFilhoDe1Ctrl = TextEditingController(text: meta['noiva_filho_de_1']?.toString() ?? '');
+    noivaFilhoDe2Ctrl = TextEditingController(text: meta['noiva_filho_de_2']?.toString() ?? '');
+    noivoCoordenadasCtrl = TextEditingController(text: meta['noivo_coordenadas']?.toString() ?? '');
+    noivaCoordenadasCtrl = TextEditingController(text: meta['noiva_coordenadas']?.toString() ?? '');
     missaHoraCtrl = TextEditingController(text: meta['missa_hora']?.toString() ?? '');
     igrejaLocalCtrl = TextEditingController(text: meta['igreja_local']?.toString() ?? '');
+    igrejaLocalidadeCtrl = TextEditingController(text: meta['igreja_localidade']?.toString() ?? '');
     quintaLocalCtrl = TextEditingController(text: meta['quinta_local']?.toString() ?? '');
+    almocoLocalidadeCtrl = TextEditingController(text: meta['almoco_localidade']?.toString() ?? '');
     numeroConvidadosCtrl = TextEditingController(text: meta['numero_convidados']?.toString() ?? '');
     tipoPacoteCtrl = TextEditingController(text: meta['tipo_pacote']?.toString() ?? '');
-    instagramNoivosCtrl = TextEditingController(text: meta['instagram_noivos']?.toString() ?? '');
     instagramPaisCtrl = TextEditingController(text: meta['instagram_pais']?.toString() ?? '');
     casaNoivoChegadaCtrl = TextEditingController(text: meta['casa_noivo_chegada']?.toString() ?? '');
     casaNoivoSaidaCtrl = TextEditingController(text: meta['casa_noivo_saida']?.toString() ?? '');
     casaNoivaChegadaCtrl = TextEditingController(text: meta['casa_noiva_chegada']?.toString() ?? '');
     casaNoivaSaidaCtrl = TextEditingController(text: meta['casa_noiva_saida']?.toString() ?? '');
+    dataEntregaCtrl = TextEditingController(text: meta['data_entrega']?.toString() ?? '');
+    estarNaLojaCtrl = TextEditingController(text: meta['estar_na_loja_as']?.toString() ?? '');
+    equipaTrabalhoCtrl = TextEditingController(text: meta['equipa_de_trabalho']?.toString() ?? '');
     bebeNomeCtrl = TextEditingController(text: meta['bebe_nome']?.toString() ?? '');
     paiNomeCtrl = TextEditingController(text: meta['pai_nome']?.toString() ?? '');
     maeNomeCtrl = TextEditingController(text: meta['mae_nome']?.toString() ?? '');
@@ -2175,6 +2254,8 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   @override
   void dispose() {
     nameCtrl.dispose();
+    reportNumberCtrl.dispose();
+    basePriceCtrl.dispose();
     dateCtrl.dispose();
     timeCtrl.dispose();
     pinCtrl.dispose();
@@ -2188,17 +2269,29 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     noivaProfissaoCtrl.dispose();
     noivoMoradaCtrl.dispose();
     noivaMoradaCtrl.dispose();
+    noivoInstagramCtrl.dispose();
+    noivaInstagramCtrl.dispose();
+    noivoFilhoDe1Ctrl.dispose();
+    noivoFilhoDe2Ctrl.dispose();
+    noivaFilhoDe1Ctrl.dispose();
+    noivaFilhoDe2Ctrl.dispose();
+    noivoCoordenadasCtrl.dispose();
+    noivaCoordenadasCtrl.dispose();
     missaHoraCtrl.dispose();
     igrejaLocalCtrl.dispose();
+    igrejaLocalidadeCtrl.dispose();
     quintaLocalCtrl.dispose();
+    almocoLocalidadeCtrl.dispose();
     numeroConvidadosCtrl.dispose();
     tipoPacoteCtrl.dispose();
-    instagramNoivosCtrl.dispose();
     instagramPaisCtrl.dispose();
     casaNoivoChegadaCtrl.dispose();
     casaNoivoSaidaCtrl.dispose();
     casaNoivaChegadaCtrl.dispose();
     casaNoivaSaidaCtrl.dispose();
+    dataEntregaCtrl.dispose();
+    estarNaLojaCtrl.dispose();
+    equipaTrabalhoCtrl.dispose();
     bebeNomeCtrl.dispose();
     paiNomeCtrl.dispose();
     maeNomeCtrl.dispose();
@@ -2248,6 +2341,45 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     timeCtrl.text = '$hh:$mm';
   }
 
+  Future<void> _pickDateInto(TextEditingController ctrl) async {
+    DateTime initialDate = DateTime.now();
+    final existing = DateTime.tryParse(ctrl.text.trim());
+    if (existing != null) {
+      initialDate = existing;
+    }
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(2020, 1, 1),
+      lastDate: DateTime(2100, 12, 31),
+    );
+    if (picked == null) return;
+    final y = picked.year.toString().padLeft(4, '0');
+    final m = picked.month.toString().padLeft(2, '0');
+    final d = picked.day.toString().padLeft(2, '0');
+    ctrl.text = '$y-$m-$d';
+  }
+
+  Future<void> _pickTimeInto(TextEditingController ctrl) async {
+    final now = TimeOfDay.now();
+    TimeOfDay initial = now;
+    if (ctrl.text.trim().isNotEmpty) {
+      final parts = ctrl.text.trim().split(':');
+      if (parts.length >= 2) {
+        final h = int.tryParse(parts[0]);
+        final m = int.tryParse(parts[1]);
+        if (h != null && m != null) {
+          initial = TimeOfDay(hour: h, minute: m);
+        }
+      }
+    }
+    final picked = await showTimePicker(context: context, initialTime: initial);
+    if (picked == null) return;
+    final hh = picked.hour.toString().padLeft(2, '0');
+    final mm = picked.minute.toString().padLeft(2, '0');
+    ctrl.text = '$hh:$mm';
+  }
+
   bool _isTodayOrPast(String dateValue) {
     final parsed = DateTime.tryParse(dateValue);
     if (parsed == null) return false;
@@ -2269,6 +2401,11 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
         child: Column(
           children: [
             TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(
+              controller: reportNumberCtrl,
+              decoration: const InputDecoration(labelText: 'Nº reportagem', border: OutlineInputBorder()),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: dateCtrl,
@@ -2304,8 +2441,14 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
             ),
             const SizedBox(height: 8),
             TextField(
+              controller: basePriceCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'Preço base', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 8),
+            TextField(
               controller: priceCtrl,
-              keyboardType: TextInputType.number,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(labelText: 'Preço por foto', border: OutlineInputBorder()),
             ),
             const SizedBox(height: 8),
@@ -2313,8 +2456,9 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               controller: pinCtrl,
               readOnly: true,
               decoration: const InputDecoration(
-                labelText: 'PIN do evento (4 dígitos)',
+                labelText: 'Código do evento (PIN)',
                 border: OutlineInputBorder(),
+                hintText: 'Gerado automaticamente ao guardar',
               ),
             ),
             const SizedBox(height: 8),
@@ -2331,12 +2475,24 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
             const SizedBox(height: 8),
             TextField(
               controller: missaHoraCtrl,
-              decoration: const InputDecoration(labelText: 'Hora da missa (HH:mm)', border: OutlineInputBorder()),
+              readOnly: true,
+              onTap: () => _pickTimeInto(missaHoraCtrl),
+              decoration: const InputDecoration(labelText: 'Hora da missa', border: OutlineInputBorder()),
             ),
             const SizedBox(height: 8),
             TextField(controller: igrejaLocalCtrl, decoration: const InputDecoration(labelText: 'Igreja', border: OutlineInputBorder())),
             const SizedBox(height: 8),
+            TextField(
+              controller: igrejaLocalidadeCtrl,
+              decoration: const InputDecoration(labelText: 'Localidade (igreja)', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 8),
             TextField(controller: quintaLocalCtrl, decoration: const InputDecoration(labelText: 'Quinta', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(
+              controller: almocoLocalidadeCtrl,
+              decoration: const InputDecoration(labelText: 'Localidade do almoço', border: OutlineInputBorder()),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: numeroConvidadosCtrl,
@@ -2344,12 +2500,40 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               decoration: const InputDecoration(labelText: 'Número de convidados', border: OutlineInputBorder()),
             ),
             const SizedBox(height: 8),
+            TextField(
+              controller: dataEntregaCtrl,
+              readOnly: true,
+              onTap: () => _pickDateInto(dataEntregaCtrl),
+              decoration: const InputDecoration(
+                labelText: 'Data de entrega',
+                border: OutlineInputBorder(),
+                suffixIcon: Icon(Icons.calendar_today),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: estarNaLojaCtrl,
+              readOnly: true,
+              onTap: () => _pickTimeInto(estarNaLojaCtrl),
+              decoration: const InputDecoration(
+                labelText: 'Estar na loja às',
+                border: OutlineInputBorder(),
+                suffixIcon: Icon(Icons.access_time),
+              ),
+            ),
+            const SizedBox(height: 8),
             TextField(controller: tipoPacoteCtrl, decoration: const InputDecoration(labelText: 'Tipo de pacote (informativo)', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(controller: equipaTrabalhoCtrl, decoration: const InputDecoration(labelText: 'Equipa de trabalho', border: OutlineInputBorder())),
             const SizedBox(height: 12),
             if (eventType == 'casamento') ...[
               TextField(controller: noivoNomeCtrl, decoration: const InputDecoration(labelText: 'Nome do noivo', border: OutlineInputBorder())),
               const SizedBox(height: 8),
               TextField(controller: noivaNomeCtrl, decoration: const InputDecoration(labelText: 'Nome da noiva', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivoInstagramCtrl, decoration: const InputDecoration(labelText: 'Instagram do noivo', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivaInstagramCtrl, decoration: const InputDecoration(labelText: 'Instagram da noiva', border: OutlineInputBorder())),
               const SizedBox(height: 8),
               TextField(controller: noivoContactoCtrl, decoration: const InputDecoration(labelText: 'Contacto do noivo', border: OutlineInputBorder())),
               const SizedBox(height: 8),
@@ -2359,30 +2543,48 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               const SizedBox(height: 8),
               TextField(controller: noivaProfissaoCtrl, decoration: const InputDecoration(labelText: 'Profissão da noiva', border: OutlineInputBorder())),
               const SizedBox(height: 8),
+              TextField(controller: noivoFilhoDe1Ctrl, decoration: const InputDecoration(labelText: 'Filho de (pai)', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivoFilhoDe2Ctrl, decoration: const InputDecoration(labelText: 'Filho de (mãe)', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivaFilhoDe1Ctrl, decoration: const InputDecoration(labelText: 'Filha de (pai)', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivaFilhoDe2Ctrl, decoration: const InputDecoration(labelText: 'Filha de (mãe)', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
               TextField(controller: noivoMoradaCtrl, decoration: const InputDecoration(labelText: 'Morada do noivo', border: OutlineInputBorder())),
               const SizedBox(height: 8),
               TextField(controller: noivaMoradaCtrl, decoration: const InputDecoration(labelText: 'Morada da noiva', border: OutlineInputBorder())),
               const SizedBox(height: 8),
-              TextField(controller: instagramNoivosCtrl, decoration: const InputDecoration(labelText: 'Instagram dos noivos', border: OutlineInputBorder())),
+              TextField(controller: noivoCoordenadasCtrl, decoration: const InputDecoration(labelText: 'Coordenadas do noivo', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivaCoordenadasCtrl, decoration: const InputDecoration(labelText: 'Coordenadas da noiva', border: OutlineInputBorder())),
               const SizedBox(height: 8),
               TextField(
                 controller: casaNoivoChegadaCtrl,
-                decoration: const InputDecoration(labelText: 'Casa do noivo: hora de chegada (HH:mm)', border: OutlineInputBorder()),
+                readOnly: true,
+                onTap: () => _pickTimeInto(casaNoivoChegadaCtrl),
+                decoration: const InputDecoration(labelText: 'Casa do noivo: hora de chegada', border: OutlineInputBorder()),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: casaNoivoSaidaCtrl,
-                decoration: const InputDecoration(labelText: 'Casa do noivo: hora de saída (HH:mm)', border: OutlineInputBorder()),
+                readOnly: true,
+                onTap: () => _pickTimeInto(casaNoivoSaidaCtrl),
+                decoration: const InputDecoration(labelText: 'Casa do noivo: hora de saída', border: OutlineInputBorder()),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: casaNoivaChegadaCtrl,
-                decoration: const InputDecoration(labelText: 'Casa da noiva: hora de chegada (HH:mm)', border: OutlineInputBorder()),
+                readOnly: true,
+                onTap: () => _pickTimeInto(casaNoivaChegadaCtrl),
+                decoration: const InputDecoration(labelText: 'Casa da noiva: hora de chegada', border: OutlineInputBorder()),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: casaNoivaSaidaCtrl,
-                decoration: const InputDecoration(labelText: 'Casa da noiva: hora de saída (HH:mm)', border: OutlineInputBorder()),
+                readOnly: true,
+                onTap: () => _pickTimeInto(casaNoivaSaidaCtrl),
+                decoration: const InputDecoration(labelText: 'Casa da noiva: hora de saída', border: OutlineInputBorder()),
               ),
               const SizedBox(height: 8),
             ],
@@ -2417,6 +2619,7 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                   ? null
                   : () async {
                     final price = num.tryParse(priceCtrl.text.trim()) ?? 0;
+                    final basePrice = num.tryParse(basePriceCtrl.text.trim()) ?? 0;
                     final meta = Map<String, dynamic>.from(widget.event?.eventMeta ?? {});
                     void setMeta(String key, TextEditingController ctrl) {
                       final value = ctrl.text.trim();
@@ -2433,9 +2636,17 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                       'noiva_contacto',
                       'noivo_profissao',
                       'noiva_profissao',
+                      'noivo_instagram',
+                      'noiva_instagram',
+                      'instagram_noivos',
+                      'noivo_filho_de_1',
+                      'noivo_filho_de_2',
+                      'noiva_filho_de_1',
+                      'noiva_filho_de_2',
                       'noivo_morada',
                       'noiva_morada',
-                      'instagram_noivos',
+                      'noivo_coordenadas',
+                      'noiva_coordenadas',
                       'casa_noivo_chegada',
                       'casa_noivo_saida',
                       'casa_noiva_chegada',
@@ -2454,22 +2665,34 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
 
                     setMeta('missa_hora', missaHoraCtrl);
                     setMeta('igreja_local', igrejaLocalCtrl);
+                    setMeta('igreja_localidade', igrejaLocalidadeCtrl);
                     setMeta('quinta_local', quintaLocalCtrl);
+                    setMeta('almoco_localidade', almocoLocalidadeCtrl);
                     setMeta('numero_convidados', numeroConvidadosCtrl);
+                    setMeta('data_entrega', dataEntregaCtrl);
+                    setMeta('estar_na_loja_as', estarNaLojaCtrl);
                     setMeta('tipo_pacote', tipoPacoteCtrl);
+                    setMeta('equipa_de_trabalho', equipaTrabalhoCtrl);
                     if (eventType == 'casamento') {
                       for (final key in baptKeys) {
                         meta.remove(key);
                       }
                       setMeta('noivo_nome', noivoNomeCtrl);
                       setMeta('noiva_nome', noivaNomeCtrl);
+                      setMeta('noivo_instagram', noivoInstagramCtrl);
+                      setMeta('noiva_instagram', noivaInstagramCtrl);
                       setMeta('noivo_contacto', noivoContactoCtrl);
                       setMeta('noiva_contacto', noivaContactoCtrl);
                       setMeta('noivo_profissao', noivoProfissaoCtrl);
                       setMeta('noiva_profissao', noivaProfissaoCtrl);
+                      setMeta('noivo_filho_de_1', noivoFilhoDe1Ctrl);
+                      setMeta('noivo_filho_de_2', noivoFilhoDe2Ctrl);
+                      setMeta('noiva_filho_de_1', noivaFilhoDe1Ctrl);
+                      setMeta('noiva_filho_de_2', noivaFilhoDe2Ctrl);
                       setMeta('noivo_morada', noivoMoradaCtrl);
                       setMeta('noiva_morada', noivaMoradaCtrl);
-                      setMeta('instagram_noivos', instagramNoivosCtrl);
+                      setMeta('noivo_coordenadas', noivoCoordenadasCtrl);
+                      setMeta('noiva_coordenadas', noivaCoordenadasCtrl);
                       setMeta('casa_noivo_chegada', casaNoivoChegadaCtrl);
                       setMeta('casa_noivo_saida', casaNoivoSaidaCtrl);
                       setMeta('casa_noiva_chegada', casaNoivaChegadaCtrl);
@@ -2488,53 +2711,20 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                       setMeta('morada', batizadoMoradaCtrl);
                       setMeta('instagram_pais', instagramPaisCtrl);
                     }
-                    if (eventType == 'casamento') {
-                      final required = [
-                        noivoNomeCtrl.text,
-                        noivaNomeCtrl.text,
-                        noivoContactoCtrl.text,
-                        noivaContactoCtrl.text,
-                        noivoProfissaoCtrl.text,
-                        noivaProfissaoCtrl.text,
-                        noivoMoradaCtrl.text,
-                        noivaMoradaCtrl.text,
-                      ];
-                      if (required.any((v) => v.trim().isEmpty)) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Preenche todos os dados do casamento.')),
-                        );
-                        return;
-                      }
-                    }
-                    if (eventType == 'batizado') {
-                      final required = [
-                        bebeNomeCtrl.text,
-                        paiNomeCtrl.text,
-                        maeNomeCtrl.text,
-                        padrinhoNomeCtrl.text,
-                        madrinhaNomeCtrl.text,
-                        contactoPaisCtrl.text,
-                        batizadoMoradaCtrl.text,
-                      ];
-                      if (required.any((v) => v.trim().isEmpty)) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Preenche todos os dados do batizado.')),
-                        );
-                        return;
-                      }
-                    }
                     final payload = StaffEventPayload(
                       name: nameCtrl.text.trim(),
+                      legacyReportNumber: reportNumberCtrl.text.trim(),
                       eventDate: dateCtrl.text.trim(),
                       eventTime: timeCtrl.text.trim(),
                       pricePerPhoto: price,
+                      basePrice: basePrice,
                       eventType: eventType,
                       eventMeta: meta,
                       notes: notesCtrl.text.trim(),
                       isLocked: isLocked,
                     );
-                      if (payload.name.isEmpty || payload.eventDate.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome e data são obrigatórios.')));
+                      if (payload.eventDate.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Data é obrigatória.')));
                         return;
                       }
                       try {
@@ -4269,8 +4459,8 @@ class ApiService {
     return list.map(EventItem.fromJson).toList();
   }
 
-  Future<GuestSession> enterEvent(int id, String password) async {
-    final r = await dio.post('/public/events/$id/enter', data: {'password': password});
+  Future<GuestSession> enterEvent(int id, String pin) async {
+    final r = await dio.post('/public/events/$id/enter', data: {'pin': pin});
     if (r.statusCode != 200) throw _errorFromResponse(r);
     return GuestSession.fromJson(r.data);
   }
@@ -4829,6 +5019,7 @@ class GuestSession {
     required this.token,
     required this.eventId,
     required this.eventName,
+    this.basePrice,
     required this.pricePerPhoto,
     required this.eventType,
     required this.eventMeta,
@@ -4839,6 +5030,7 @@ class GuestSession {
   final String token;
   final int eventId;
   final String eventName;
+  final num? basePrice;
   final num pricePerPhoto;
   final String? eventType;
   final Map<String, dynamic> eventMeta;
@@ -4852,6 +5044,11 @@ class GuestSession {
       token: j['event_session_token'] as String,
       eventId: e['id'] as int,
       eventName: e['name'] as String,
+      basePrice: e['base_price'] == null
+          ? null
+          : (e['base_price'] is num
+              ? e['base_price'] as num
+              : num.tryParse(e['base_price'].toString())),
       pricePerPhoto: e['price_per_photo'] is num ? e['price_per_photo'] as num : num.tryParse(e['price_per_photo']?.toString() ?? '') ?? 0,
       eventType: e['event_type'] as String?,
       eventMeta: e['event_meta'] is Map<String, dynamic> ? Map<String, dynamic>.from(e['event_meta']) : <String, dynamic>{},
@@ -5093,12 +5290,14 @@ class StaffEvent {
   StaffEvent({
     required this.id,
     required this.name,
+    this.legacyReportNumber,
+    this.reportNumber,
     required this.eventDate,
     this.eventTime,
     required this.pricePerPhoto,
+    this.basePrice,
     required this.isActiveToday,
     this.location,
-    this.accessPassword,
     this.eventType,
     this.eventMeta,
     this.qrToken,
@@ -5108,12 +5307,14 @@ class StaffEvent {
   });
   final int id;
   final String name;
+  final String? legacyReportNumber;
+  final String? reportNumber;
   final String eventDate;
   final String? eventTime;
   final num pricePerPhoto;
+  final num? basePrice;
   final bool isActiveToday;
   final String? location;
-  final String? accessPassword;
   final String? eventType;
   final Map<String, dynamic>? eventMeta;
   final String? qrToken;
@@ -5124,12 +5325,18 @@ class StaffEvent {
   factory StaffEvent.fromJson(Map<String, dynamic> j) => StaffEvent(
     id: j['id'] as int,
     name: j['name'] as String? ?? '',
+    legacyReportNumber: j['legacy_report_number']?.toString(),
+    reportNumber: j['report_number']?.toString(),
     eventDate: j['event_date'] as String? ?? '',
     eventTime: j['event_time'] as String?,
     pricePerPhoto: j['price_per_photo'] is num ? j['price_per_photo'] as num : num.tryParse(j['price_per_photo']?.toString() ?? '') ?? 0,
+    basePrice: j['base_price'] == null
+        ? null
+        : (j['base_price'] is num
+            ? j['base_price'] as num
+            : num.tryParse(j['base_price'].toString())),
     isActiveToday: j['is_active_today'] == true || j['is_active_today'] == 1,
     location: j['location'] as String?,
-    accessPassword: j['access_password'] as String?,
     eventType: j['event_type'] as String?,
     eventMeta: j['event_meta'] is Map<String, dynamic> ? Map<String, dynamic>.from(j['event_meta']) : null,
     qrToken: j['qr_token'] as String?,
@@ -5162,18 +5369,22 @@ class StaffEventStaff {
 class StaffEventPayload {
   StaffEventPayload({
     required this.name,
+    this.legacyReportNumber,
     required this.eventDate,
     required this.eventTime,
     required this.pricePerPhoto,
+    this.basePrice,
     required this.eventType,
     required this.eventMeta,
     required this.notes,
     required this.isLocked,
   });
   final String name;
+  final String? legacyReportNumber;
   final String eventDate;
   final String eventTime;
   final num pricePerPhoto;
+  final num? basePrice;
   final String eventType;
   final Map<String, dynamic> eventMeta;
   final String notes;
@@ -5181,9 +5392,12 @@ class StaffEventPayload {
 
   Map<String, dynamic> toJson() => {
     'name': name,
+    if (legacyReportNumber != null && legacyReportNumber!.trim().isNotEmpty)
+      'legacy_report_number': legacyReportNumber!.trim(),
     'event_date': eventDate,
     if (eventTime.trim().isNotEmpty) 'event_time': eventTime.trim(),
     'price_per_photo': pricePerPhoto,
+    if (basePrice != null) 'base_price': basePrice,
     'event_type': eventType.isEmpty ? null : eventType,
     'event_meta': eventMeta,
     if (notes.trim().isNotEmpty) 'notes': notes.trim(),
