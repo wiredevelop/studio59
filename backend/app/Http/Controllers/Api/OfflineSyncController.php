@@ -28,6 +28,7 @@ class OfflineSyncController extends Controller
                 'qr_token',
                 'qr_enabled',
                 'is_locked',
+                'base_price',
                 'price_per_photo',
                 'event_type',
                 'event_meta',

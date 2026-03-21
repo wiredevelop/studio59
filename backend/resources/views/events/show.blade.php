@@ -9,6 +9,7 @@
         @if(auth()->user()->hasPermission('uploads.manage'))
             <a href="{{ route('uploads.index', $event) }}" class="bg-black text-white px-3 py-2 rounded">Upload PROVAS</a>
         @endif
+        <a href="{{ route('events.pdf', $event) }}" target="_blank" class="border px-3 py-2 rounded bg-white">PDF</a>
         <a href="{{ route('events.index') }}" class="border px-3 py-2 rounded bg-white">Voltar</a>
     </div>
 </div>
@@ -40,12 +41,79 @@
     <div class="text-xs text-gray-500 mt-2">QR ativo: {{ $event->qr_enabled ? 'Sim' : 'Não' }} | Bloqueado: {{ $event->is_locked ? 'Sim' : 'Não' }}</div>
 </div>
 
+<div class="bg-white border rounded p-4 mb-4">
+    <div class="text-sm font-semibold mb-2">Preços</div>
+    <div class="grid md:grid-cols-2 gap-2 text-sm">
+        <div><strong>Preço base:</strong> {{ $event->base_price !== null ? number_format($event->base_price, 2).'€' : '—' }}</div>
+        <div><strong>Preço por foto:</strong> {{ number_format($event->price_per_photo, 2).'€' }}</div>
+    </div>
+</div>
+
 @if($event->event_meta)
+@php
+    $type = $event->event_type ?? '';
+    $commonFields = [
+        'missa_hora',
+        'igreja_local',
+        'igreja_localidade',
+        'quinta_local',
+        'almoco_localidade',
+        'numero_convidados',
+        'data_entrega',
+        'estar_na_loja_as',
+    ];
+    $casamentoFields = [
+        'noivo_nome',
+        'noiva_nome',
+        'noivo_contacto',
+        'noiva_contacto',
+        'noivo_profissao',
+        'noiva_profissao',
+        'noivo_morada',
+        'noiva_morada',
+        'noivo_instagram',
+        'noiva_instagram',
+        'noivo_coordenadas',
+        'noiva_coordenadas',
+        'noivo_filho_de_1',
+        'noivo_filho_de_2',
+        'noiva_filho_de_1',
+        'noiva_filho_de_2',
+        'casa_noivo_chegada',
+        'casa_noivo_saida',
+        'casa_noiva_chegada',
+        'casa_noiva_saida',
+        'cliente_noivo_num',
+        'cliente_noiva_num',
+    ];
+    $batizadoFields = [
+        'bebe_nome',
+        'pai_nome',
+        'mae_nome',
+        'padrinho_nome',
+        'madrinha_nome',
+        'contacto_pais',
+        'instagram_pais',
+        'morada',
+        'casa_bebe_hora',
+        'coordenadas',
+        'cliente_batizado_num',
+    ];
+    $baseFields = $type === 'casamento' ? $casamentoFields : $batizadoFields;
+    $serviceFields = collect($event->event_meta)
+        ->keys()
+        ->filter(fn ($k) => str_starts_with($k, 'servico_'))
+        ->values()
+        ->all();
+    $fields = array_values(array_unique(array_merge($baseFields, $commonFields, $serviceFields)));
+@endphp
 <div class="bg-white border rounded p-4 mb-4">
     <div class="text-sm font-semibold mb-2">Detalhes do Evento</div>
     <div class="grid md:grid-cols-2 gap-2 text-sm">
-        @foreach($event->event_meta as $k => $v)
-            <div><strong>{{ ucfirst(str_replace('_', ' ', $k)) }}:</strong> {{ $v }}</div>
+        @foreach($fields as $k)
+            @if(array_key_exists($k, $event->event_meta))
+                <div><strong>{{ ucfirst(str_replace('_', ' ', $k)) }}:</strong> {{ $event->event_meta[$k] }}</div>
+            @endif
         @endforeach
     </div>
 </div>

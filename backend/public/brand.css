@@ -1,0 +1,412 @@
+:root {
+  --brand-black: #000000;
+  --brand-rose: #dbab97;
+  --brand-white: #ffffff;
+  --brand-surface: #0b0b0b;
+  --brand-surface-2: #121212;
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: var(--brand-black) !important;
+  background-image: radial-gradient(900px 500px at 15% -10%, rgba(219, 171, 151, 0.12), transparent 60%),
+    radial-gradient(800px 420px at 85% 10%, rgba(219, 171, 151, 0.1), transparent 60%);
+  color: var(--brand-rose) !important;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+body * {
+  border-color: var(--brand-rose) !important;
+}
+
+a,
+button,
+input,
+textarea,
+select,
+label,
+summary {
+  color: var(--brand-rose) !important;
+}
+
+input,
+textarea,
+select,
+button {
+  background-color: var(--brand-black) !important;
+  caret-color: var(--brand-rose);
+}
+
+::placeholder {
+  color: rgba(219, 171, 151, 0.7) !important;
+}
+
+[class*="bg-"] {
+  background-color: var(--brand-black) !important;
+}
+
+[class*="bg-"].bg-white,
+.bg-white {
+  background-color: var(--brand-surface) !important;
+  color: var(--brand-rose) !important;
+  border-color: rgba(219, 171, 151, 0.35) !important;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35), 0 2px 10px rgba(219, 171, 151, 0.16) !important;
+  backdrop-filter: blur(10px);
+}
+
+.bg-gray-50,
+.bg-gray-100,
+.bg-gray-200 {
+  background-color: rgba(219, 171, 151, 0.08) !important;
+}
+
+.bg-gray-800,
+.bg-gray-900 {
+  background-color: var(--brand-surface-2) !important;
+}
+
+[class*="text-"] {
+  color: var(--brand-rose) !important;
+}
+
+[class*="text-"].text-white,
+.text-white {
+  color: var(--brand-white) !important;
+}
+
+[class*="text-"].text-black,
+.text-black {
+  color: var(--brand-rose) !important;
+}
+
+[class*="text-"].text-gray-500,
+[class*="text-"].text-gray-600,
+[class*="text-"].text-gray-700,
+.text-gray-500,
+.text-gray-600,
+.text-gray-700 {
+  color: rgba(219, 171, 151, 0.7) !important;
+}
+
+[class*="border-"] {
+  border-color: var(--brand-rose) !important;
+}
+
+[class*="border-"].border-white,
+.border-white {
+  border-color: rgba(219, 171, 151, 0.45) !important;
+}
+
+[class*="border-"].border-black,
+.border-black {
+  border-color: var(--brand-rose) !important;
+}
+
+[class*="ring-"] {
+  --tw-ring-color: var(--brand-rose) !important;
+}
+
+[class*="divide-"] {
+  border-color: var(--brand-rose) !important;
+}
+
+/* iOS-style login */
+.ios-login {
+  min-height: calc(100vh - 48px);
+  width: 100%;
+  margin: 0;
+  padding: 28px 20px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  overflow: hidden;
+  background: radial-gradient(1200px 600px at 10% 0%, rgba(219, 171, 151, 0.12), transparent 55%),
+    radial-gradient(900px 500px at 90% 30%, rgba(219, 171, 151, 0.16), transparent 60%),
+    var(--brand-black);
+}
+
+.ios-orb {
+  position: absolute;
+  width: 320px;
+  height: 320px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 30%, rgba(219, 171, 151, 0.4), rgba(219, 171, 151, 0.05));
+  filter: blur(18px);
+  opacity: 0.6;
+  animation: ios-drift 18s ease-in-out infinite;
+}
+
+.ios-orb.ios-orb-1 {
+  top: -120px;
+  left: -80px;
+}
+
+.ios-orb.ios-orb-2 {
+  bottom: -140px;
+  right: -60px;
+  animation-delay: 2s;
+}
+
+.ios-shell {
+  width: min(92vw, 420px);
+  display: grid;
+  gap: 18px;
+  position: relative;
+  z-index: 1;
+}
+
+.ios-brand {
+  text-align: center;
+  letter-spacing: 0.2em;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--brand-rose);
+  text-transform: uppercase;
+}
+
+.ios-card {
+  background: var(--brand-surface);
+  color: var(--brand-rose);
+  border-radius: 20px;
+  padding: 28px;
+  border: 1px solid rgba(219, 171, 151, 0.35);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.45), 0 2px 10px rgba(219, 171, 151, 0.2);
+  backdrop-filter: blur(10px);
+  animation: ios-rise 0.8s ease-out both;
+}
+
+.ios-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--brand-rose);
+  margin-bottom: 6px;
+}
+
+.ios-subtitle {
+  font-size: 13px;
+  color: rgba(219, 171, 151, 0.7);
+  margin-bottom: 20px;
+}
+
+.ios-form {
+  display: grid;
+  gap: 14px;
+}
+
+.ios-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(219, 171, 151, 0.8);
+}
+
+.ios-input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(219, 171, 151, 0.6);
+  background: #0b0b0b;
+  color: var(--brand-rose);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.ios-input:focus {
+  outline: none;
+  border-color: var(--brand-rose);
+  box-shadow: 0 0 0 3px rgba(219, 171, 151, 0.25);
+  transform: translateY(-1px);
+}
+
+.ios-actions {
+  display: grid;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.ios-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  border-radius: 14px;
+  padding: 12px 16px;
+  font-weight: 600;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.ios-btn-primary {
+  background: var(--brand-black);
+  color: var(--brand-rose);
+  border: 1px solid rgba(219, 171, 151, 0.7);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.35);
+}
+
+.ios-btn-primary:hover {
+  background: var(--brand-rose);
+  color: var(--brand-black);
+  transform: translateY(-1px);
+}
+
+.ios-btn-secondary {
+  background: var(--brand-black);
+  color: var(--brand-rose);
+  border: 1px solid rgba(219, 171, 151, 0.6);
+}
+
+.ios-btn-secondary:hover {
+  background: var(--brand-white);
+  color: var(--brand-black);
+  border-color: var(--brand-white);
+  transform: translateY(-1px);
+}
+
+.ios-note {
+  text-align: center;
+  font-size: 11px;
+  color: rgba(219, 171, 151, 0.7);
+  margin-top: 6px;
+}
+
+/* Global iOS-like polish */
+button,
+a,
+input,
+textarea,
+select {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+button:hover,
+a:hover {
+  transform: translateY(-1px);
+}
+
+button:active,
+a:active {
+  transform: translateY(0);
+}
+
+input,
+textarea,
+select {
+  border-radius: 14px !important;
+  border: 1px solid rgba(219, 171, 151, 0.55) !important;
+  background-color: var(--brand-surface) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+button,
+[role="button"],
+.btn,
+a.rounded,
+button.rounded {
+  border-radius: 14px !important;
+}
+
+.shadow,
+.shadow-sm,
+.shadow-md,
+.shadow-lg,
+.shadow-xl {
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(219, 171, 151, 0.18) !important;
+}
+
+.border,
+.border-t,
+.border-b,
+.border-l,
+.border-r {
+  border-color: rgba(219, 171, 151, 0.55) !important;
+}
+
+/* Allow white only on buttons/interactive */
+a.bg-white,
+button.bg-white,
+input.bg-white,
+select.bg-white,
+textarea.bg-white {
+  background-color: var(--brand-white) !important;
+  color: var(--brand-black) !important;
+  border-color: var(--brand-white) !important;
+}
+
+a.bg-white.text-black,
+button.bg-white.text-black {
+  color: var(--brand-black) !important;
+}
+
+/* Nav pills */
+nav a,
+nav button {
+  background: rgba(219, 171, 151, 0.12) !important;
+  color: var(--brand-rose) !important;
+  border: 1px solid rgba(219, 171, 151, 0.5) !important;
+  border-radius: 999px !important;
+  padding: 6px 14px !important;
+}
+
+nav a *,
+nav button * {
+  color: var(--brand-rose) !important;
+}
+
+nav a.bg-white,
+nav button.bg-white,
+nav a.bg-white.text-black,
+nav button.bg-white.text-black {
+  background: rgba(219, 171, 151, 0.12) !important;
+  color: var(--brand-rose) !important;
+  border: 1px solid rgba(219, 171, 151, 0.5) !important;
+}
+
+nav a.bg-white *,
+nav button.bg-white * {
+  color: var(--brand-rose) !important;
+}
+
+nav a.text-black,
+nav button.text-black {
+  color: var(--brand-rose) !important;
+}
+
+nav a.text-black *,
+nav button.text-black * {
+  color: var(--brand-rose) !important;
+}
+
+nav a:hover,
+nav button:hover {
+  background: var(--brand-white) !important;
+  color: var(--brand-black) !important;
+  border-color: var(--brand-white) !important;
+}
+
+nav a:hover *,
+nav button:hover * {
+  color: var(--brand-black) !important;
+}
+
+@keyframes ios-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes ios-drift {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(18px, -12px);
+  }
+}

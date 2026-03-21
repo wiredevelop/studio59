@@ -34,11 +34,14 @@ class GuestController extends Controller
     public function enter(Request $request, Event $event)
     {
         $request->validate([
-            'password' => ['required', 'string'],
+            'pin' => ['required', 'string'],
         ]);
 
-        if (! hash_equals($event->access_password, $request->string('password')->toString())) {
-            return back()->withErrors(['Senha inválida.'])->withInput();
+        $pin = trim($request->string('pin')->toString());
+        $accessPin = (string) ($event->access_pin ?? '');
+
+        if (! hash_equals($accessPin, $pin)) {
+            return back()->withErrors(['PIN inválido.'])->withInput();
         }
 
         session()->put($this->sessionKey($event->id), true);
@@ -74,6 +77,24 @@ class GuestController extends Controller
             'event' => $event,
             'photos' => $photos,
             'search' => $search,
+        ]);
+    }
+
+    public function cart(Event $event)
+    {
+        $this->ensureSession($event);
+
+        return view('guest.cart', [
+            'event' => $event,
+        ]);
+    }
+
+    public function checkout(Event $event)
+    {
+        $this->ensureSession($event);
+
+        return view('guest.checkout', [
+            'event' => $event,
         ]);
     }
 
@@ -212,14 +233,49 @@ class GuestController extends Controller
 
         $validated = $request->validate([
             'customer_name' => ['required', 'string', 'max:255'],
-            'customer_phone' => ['nullable', 'string', 'max:80'],
-            'customer_email' => ['nullable', 'email', 'max:255'],
-            'payment_method' => ['required', 'in:cash,online'],
-            'photo_ids' => ['required', 'array', 'min:1'],
+            'customer_phone' => ['required', 'string', 'max:80'],
+            'customer_email' => ['required', 'email', 'max:255'],
+            'payment_method' => ['required', 'in:cash,mbway'],
+            'product_type' => ['required', 'in:digital,paper,both'],
+            'delivery_type' => ['nullable', 'in:pickup,shipping'],
+            'delivery_address' => ['nullable', 'string', 'max:255'],
+            'wants_film' => ['nullable', 'boolean'],
+            'photo_ids' => ['nullable', 'array'],
             'photo_ids.*' => ['integer', 'exists:photos,id'],
+            'photo_items' => ['nullable', 'array'],
+            'photo_items.*.photo_id' => ['required_with:photo_items', 'integer', 'exists:photos,id'],
+            'photo_items.*.quantity' => ['nullable', 'integer', 'min:1'],
         ]);
 
-        $photoIds = collect($validated['photo_ids'])->unique()->values();
+        if ($validated['product_type'] !== 'digital' && empty($validated['delivery_type'])) {
+            return back()->withErrors(['Escolhe o tipo de entrega.'])->withInput();
+        }
+        if (($validated['delivery_type'] ?? '') === 'shipping' && empty($validated['delivery_address'])) {
+            return back()->withErrors(['Morada obrigatória para envio.'])->withInput();
+        }
+
+        $photoItemsPayload = $request->input('photo_items');
+        $photoIds = collect($validated['photo_ids'] ?? []);
+        $photoItems = collect();
+
+        if (is_array($photoItemsPayload) && ! empty($photoItemsPayload)) {
+            $photoItems = collect($photoItemsPayload)
+                ->map(fn ($item) => [
+                    'photo_id' => (int) ($item['photo_id'] ?? 0),
+                    'quantity' => max(1, (int) ($item['quantity'] ?? 1)),
+                ])
+                ->filter(fn ($item) => $item['photo_id'] > 0)
+                ->values();
+            $photoIds = $photoItems->pluck('photo_id')->unique()->values();
+        } else {
+            $photoIds = $photoIds->unique()->values();
+            $photoItems = $photoIds->map(fn ($id) => ['photo_id' => (int) $id, 'quantity' => 1])->values();
+        }
+
+        if ($photoIds->isEmpty()) {
+            return back()->withErrors(['Seleciona pelo menos 1 foto.'])->withInput();
+        }
+
         $photos = Photo::query()
             ->where('event_id', $event->id)
             ->where('status', 'active')
@@ -230,24 +286,48 @@ class GuestController extends Controller
             return back()->withErrors(['Algumas fotos não pertencem ao evento.']);
         }
 
-        $order = DB::transaction(function () use ($event, $validated, $photos) {
+        $order = DB::transaction(function () use ($event, $validated, $photos, $photoItems) {
             $price = (float) $event->price_per_photo;
+            $quantities = $photoItems->keyBy('photo_id');
+            $itemsTotal = 0;
+            foreach ($photos as $photo) {
+                $qty = (int) ($quantities[$photo->id]['quantity'] ?? 1);
+                $itemsTotal += $qty * $price;
+            }
+
+            $deliveryType = $validated['delivery_type'] ?? null;
+            $productType = $validated['product_type'];
+            $wantsFilm = (bool) ($validated['wants_film'] ?? false);
+            $shippingFee = $deliveryType === 'shipping' ? 5.00 : 0.00;
+            $filmFee = $wantsFilm ? 30.00 : 0.00;
+            $extrasTotal = $shippingFee + $filmFee;
+            $total = $itemsTotal + $extrasTotal;
 
             $order = Order::create([
                 'event_id' => $event->id,
                 'order_code' => $this->newOrderCode(),
                 'customer_name' => $validated['customer_name'],
-                'customer_phone' => $validated['customer_phone'] ?? null,
-                'customer_email' => $validated['customer_email'] ?? null,
+                'customer_phone' => $validated['customer_phone'],
+                'customer_email' => $validated['customer_email'],
+                'product_type' => $productType,
+                'delivery_type' => $deliveryType,
+                'delivery_address' => $validated['delivery_address'] ?? null,
+                'wants_film' => $wantsFilm,
+                'film_fee' => $filmFee,
+                'shipping_fee' => $shippingFee,
+                'extras_total' => $extrasTotal,
+                'items_total' => $itemsTotal,
                 'payment_method' => $validated['payment_method'],
                 'status' => 'pending',
-                'total_amount' => $photos->count() * $price,
+                'total_amount' => $total,
             ]);
 
             foreach ($photos as $photo) {
+                $qty = (int) ($quantities[$photo->id]['quantity'] ?? 1);
                 $order->items()->create([
                     'photo_id' => $photo->id,
                     'price' => $price,
+                    'quantity' => $qty,
                 ]);
             }
 
@@ -261,9 +341,8 @@ class GuestController extends Controller
             'photo_count' => $order->items()->count(),
         ]);
 
-        return redirect()->route('guest.catalog', $event)
-            ->with('ok', 'Pedido '.$order->order_code.' criado com sucesso.')
-            ->with('clear_guest_cart', true);
+        return redirect()->route('guest.order.show', $order->order_code)
+            ->with('ok', 'Pedido '.$order->order_code.' criado com sucesso.');
     }
 
     public function order(string $orderCode)

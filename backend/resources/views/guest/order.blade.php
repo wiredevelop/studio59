@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Studio 59 - Pedido</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/brand.css">
 </head>
 <body class="bg-gray-100 min-h-screen">
 <main class="max-w-2xl mx-auto p-6">
@@ -26,5 +27,25 @@
         <a href="{{ route('guest.events') }}" class="inline-block mt-2 border rounded px-3 py-2 bg-white">Voltar aos eventos</a>
     </div>
 </main>
+<script>
+const ordersKey = 'studio59_orders';
+const eventId = {{ $order->event_id }};
+const cartKey = `studio59_cart_${eventId}`;
+const wantsFilmKey = `studio59_wants_film_${eventId}`;
+const orderCode = '{{ $order->order_code }}';
+
+const readOrders = () => {
+    try { return JSON.parse(localStorage.getItem(ordersKey) || '[]'); } catch (_) { return []; }
+};
+const writeOrders = (codes) => localStorage.setItem(ordersKey, JSON.stringify(codes));
+
+const codes = readOrders();
+if (!codes.includes(orderCode)) {
+    codes.unshift(orderCode);
+    writeOrders(codes);
+}
+localStorage.removeItem(cartKey);
+localStorage.removeItem(wantsFilmKey);
+</script>
 </body>
 </html>

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Studio 59 - Downloads</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/brand.css">
 </head>
 <body class="bg-gray-100 min-h-screen">
 <main class="max-w-5xl mx-auto p-6">

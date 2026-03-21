@@ -28,6 +28,8 @@ Route::prefix('/guest')->name('guest.')->group(function () {
     Route::post('/events/{event}/enter', [GuestController::class, 'enter'])->name('enter.submit');
     Route::post('/events/{event}/reset', [GuestController::class, 'reset'])->name('reset');
     Route::get('/events/{event}/catalog', [GuestController::class, 'catalog'])->name('catalog');
+    Route::get('/events/{event}/cart', [GuestController::class, 'cart'])->name('cart');
+    Route::get('/events/{event}/checkout', [GuestController::class, 'checkout'])->name('checkout');
     Route::post('/events/{event}/catalog/face-search', [GuestController::class, 'faceSearch'])->name('catalog.faceSearch');
     Route::post('/events/{event}/order', [GuestController::class, 'storeOrder'])->name('order.store');
     Route::get('/orders/{orderCode}', [GuestController::class, 'order'])->name('order.show');
@@ -78,6 +80,9 @@ Route::middleware(['auth', 'nocache'])->group(function () {
     Route::get('/events/{event}', [EventController::class, 'show'])
         ->middleware('permission:events.read')
         ->name('events.show');
+    Route::get('/events/{event}/pdf', [EventController::class, 'pdf'])
+        ->middleware('permission:events.read')
+        ->name('events.pdf');
     Route::get('/events/{event}/edit', [EventController::class, 'edit'])
         ->middleware('permission:events.write')
         ->name('events.edit');

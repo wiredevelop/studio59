@@ -7,6 +7,7 @@
     <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="icon" href="/favicon.png" type="image/png">
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/brand.css">
 </head>
 <body class="bg-gray-100 min-h-screen">
 <nav class="bg-black text-white p-4">

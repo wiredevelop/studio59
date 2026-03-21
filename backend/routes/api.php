@@ -37,13 +37,16 @@ Route::middleware(['auth:sanctum', 'role:admin,staff,photographer'])->group(func
 
     Route::middleware('permission:events.read')->group(function () {
         Route::get('/events', [StaffEventController::class, 'index'])->name('api.events.index');
+        Route::get('/events/lookup', [StaffEventController::class, 'lookup']);
         Route::get('/events/{event}', [StaffEventController::class, 'show'])->name('api.events.show');
+        Route::get('/events/{event}/pdf', [StaffEventController::class, 'pdf'])->name('api.events.pdf');
         Route::get('/events/{event}/staff', [StaffEventController::class, 'staffIndex']);
     });
     Route::middleware('permission:events.write')->group(function () {
         Route::post('/events', [StaffEventController::class, 'store'])->name('api.events.store');
         Route::put('/events/{event}', [StaffEventController::class, 'update'])->name('api.events.update');
         Route::delete('/events/{event}', [StaffEventController::class, 'destroy'])->name('api.events.destroy');
+        Route::get('/staff/users', [StaffEventController::class, 'staffUsersAll']);
         Route::get('/events/{event}/staff/users', [StaffEventController::class, 'staffUsers']);
         Route::post('/events/{event}/staff', [StaffEventController::class, 'staffAssign']);
         Route::delete('/events/{event}/staff/{user}', [StaffEventController::class, 'staffRemove']);

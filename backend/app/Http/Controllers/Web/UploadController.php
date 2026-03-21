@@ -168,7 +168,8 @@ class UploadController extends Controller
 
         $photo = DB::transaction(function () use ($event, $assembledFullPath, $checksum) {
             $nextNumber = str_pad((string) ((int) (Photo::where('event_id', $event->id)->lockForUpdate()->max('number') ?? 0) + 1), 4, '0', STR_PAD_LEFT);
-            $originalPath = 'events/'.$event->id.'/originals/'.$nextNumber.'.jpg';
+            $baseDir = $this->eventPhotoBaseDir($event);
+            $originalPath = $baseDir.'/originais/'.$nextNumber.'.jpg';
             Storage::disk('local')->makeDirectory(dirname($originalPath));
             Storage::disk('local')->put($originalPath, file_get_contents($assembledFullPath));
 
@@ -182,13 +183,13 @@ class UploadController extends Controller
                 'size' => Storage::disk('local')->size($originalPath),
                 'width' => $w,
                 'height' => $h,
-                'status' => 'active',
+                'status' => 'draft',
                 'preview_status' => 'pending',
                 'preview_error' => null,
                 'checksum' => $checksum,
             ]);
 
-            GeneratePhotoPreview::dispatchSync($photo->id);
+            GeneratePhotoPreview::dispatch($photo->id);
             Audit::log('photo.uploaded', Photo::class, $photo->id, [
                 'event_id' => $event->id,
                 'number' => $photo->number,
@@ -207,6 +208,14 @@ class UploadController extends Controller
         $clean = Str::of($fileName)->replaceMatches('/[^A-Za-z0-9._-]/', '_')->toString();
 
         return (string) Str::of($clean)->limit(180, '');
+    }
+
+    private function eventPhotoBaseDir(Event $event): string
+    {
+        $report = $event->internal_code ?: 'EVENTO_'.$event->id;
+        $safe = Str::of($report)->replaceMatches('/[^A-Za-z0-9._-]/', '_')->toString();
+
+        return 'EVENTOS/'.$safe;
     }
 
     private function ensureEventAccess(Event $event): void

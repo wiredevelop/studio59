@@ -29,8 +29,12 @@ class PublicEventController extends Controller
     {
         $event = Event::findOrFail($id);
 
-        if (! hash_equals($event->access_password, $request->string('password')->toString())) {
-            return response()->json(['message' => 'Invalid password'], 422);
+        $pinInput = trim($request->string('pin')->toString());
+        if ($pinInput === '') {
+            $pinInput = trim($request->string('password')->toString());
+        }
+        if (! hash_equals((string) $event->access_pin, $pinInput)) {
+            return response()->json(['message' => 'Invalid PIN'], 422);
         }
 
         $plainToken = Str::random(64);
@@ -49,6 +53,7 @@ class PublicEventController extends Controller
                 'event_meta' => $event->event_meta,
                 'event_date' => optional($event->event_date)->format('Y-m-d'),
                 'location' => $event->location,
+                'base_price' => $event->base_price,
                 'price_per_photo' => $event->price_per_photo,
                 'qr_token' => $event->qr_token,
             ],
@@ -93,6 +98,7 @@ class PublicEventController extends Controller
                 'event_meta' => $event->event_meta,
                 'event_date' => optional($event->event_date)->format('Y-m-d'),
                 'location' => $event->location,
+                'base_price' => $event->base_price,
                 'price_per_photo' => $event->price_per_photo,
                 'qr_token' => $event->qr_token,
             ],
@@ -125,6 +131,7 @@ class PublicEventController extends Controller
                 'event_meta' => $event->event_meta,
                 'event_date' => optional($event->event_date)->format('Y-m-d'),
                 'location' => $event->location,
+                'base_price' => $event->base_price,
                 'price_per_photo' => $event->price_per_photo,
                 'qr_token' => $event->qr_token,
             ],

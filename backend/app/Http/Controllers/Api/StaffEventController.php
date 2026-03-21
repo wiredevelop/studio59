@@ -6,10 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\EventStoreRequest;
 use App\Http\Requests\EventUpdateRequest;
 use App\Models\Event;
-use App\Models\EventPasswordHistory;
 use App\Support\Audit;
+use App\Support\EventPdf;
+use App\Support\TeamAssignment;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use App\Models\Photo;
 use App\Models\EventStaff;
@@ -28,17 +28,133 @@ class StaffEventController extends Controller
     public function index(Request $request)
     {
         $user = $request->user();
-        $query = Event::orderByDesc('event_date');
+        $query = Event::query();
         if ($user && $user->role === 'photographer') {
             $query->visibleTo($user);
         }
 
+        $query = $this->applyEventFilters($query, $request);
+        $query->orderByDesc('event_date')->orderByDesc('id');
+
         return response()->json($query->paginate(20));
+    }
+
+    public function lookup(Request $request)
+    {
+        $user = $request->user();
+        $query = Event::query();
+        if ($user && $user->role === 'photographer') {
+            $query->visibleTo($user);
+        }
+
+        $query = $this->applyEventFilters($query, $request);
+        $query->orderByDesc('event_date')->orderByDesc('id');
+
+        $ids = $query->pluck('id');
+        if ($ids->isEmpty()) {
+            return response()->json([
+                'event' => null,
+                'prev_id' => null,
+                'next_id' => null,
+                'total' => 0,
+            ]);
+        }
+
+        $currentId = (int) $request->query('current_id', 0);
+        $index = $currentId ? $ids->search($currentId) : null;
+        if ($index === false || $index === null) {
+            $index = 0;
+            $currentId = (int) $ids->first();
+        }
+
+        $prevId = $index > 0 ? (int) $ids[$index - 1] : null;
+        $nextId = $index < ($ids->count() - 1) ? (int) $ids[$index + 1] : null;
+
+        $event = Event::find($currentId);
+
+        return response()->json([
+            'event' => $event,
+            'prev_id' => $prevId,
+            'next_id' => $nextId,
+            'total' => $ids->count(),
+        ]);
+    }
+
+    private function applyEventFilters($query, Request $request)
+    {
+        $eventType = trim((string) $request->query('event_type', ''));
+        $internalCode = trim((string) $request->query('internal_code', ''));
+        $accessPin = trim((string) $request->query('access_pin', ''));
+        $eventDate = trim((string) $request->query('event_date', ''));
+        $eventTime = trim((string) $request->query('event_time', ''));
+        $pricePerPhoto = trim((string) $request->query('price_per_photo', ''));
+        $basePrice = trim((string) $request->query('base_price', ''));
+        $q = trim((string) $request->query('q', ''));
+        $meta = $request->query('meta', []);
+
+        if ($eventType !== '') {
+            $query->where('event_type', 'like', '%'.$eventType.'%');
+        }
+        if ($internalCode !== '') {
+            $query->where(function ($inner) use ($internalCode) {
+                $inner->where('internal_code', 'like', '%'.$internalCode.'%')
+                    ->orWhere('legacy_report_number', 'like', '%'.$internalCode.'%');
+            });
+        }
+        if ($accessPin !== '') {
+            $query->where('access_pin', 'like', '%'.$accessPin.'%');
+        }
+        if ($eventDate !== '') {
+            $query->whereDate('event_date', $eventDate);
+        }
+        if ($eventTime !== '') {
+            $query->where('event_time', 'like', '%'.$eventTime.'%');
+        }
+        if ($pricePerPhoto !== '') {
+            $query->where('price_per_photo', $pricePerPhoto);
+        }
+        if ($basePrice !== '') {
+            $query->where('base_price', $basePrice);
+        }
+        if ($q !== '') {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('name', 'like', '%'.$q.'%')
+                    ->orWhere('internal_code', 'like', '%'.$q.'%')
+                    ->orWhere('legacy_report_number', 'like', '%'.$q.'%')
+                    ->orWhere('service_raw', 'like', '%'.$q.'%')
+                    ->orWhere('bride_name', 'like', '%'.$q.'%')
+                    ->orWhere('groom_name', 'like', '%'.$q.'%')
+                    ->orWhere('access_pin', 'like', '%'.$q.'%');
+            });
+        }
+        if (is_array($meta)) {
+            foreach ($meta as $key => $value) {
+                $val = trim((string) $value);
+                if ($val === '' || $key === '') {
+                    continue;
+                }
+                $query->where('event_meta->'.$key, 'like', '%'.$val.'%');
+            }
+        }
+
+        return $query;
     }
 
     public function store(EventStoreRequest $request)
     {
         $validated = $request->validated();
+        $meta = $validated['event_meta'] ?? [];
+        if (array_key_exists('foto_noivos', $meta)) {
+            unset($meta['foto_noivos']);
+            $validated['event_meta'] = $meta;
+        }
+        if (empty($validated['name'])) {
+            $validated['name'] = $this->buildEventName(
+                $validated['event_type'] ?? null,
+                $validated['event_date'] ?? null,
+                $meta
+            );
+        }
         if (empty($validated['internal_code'])) {
             $validated['internal_code'] = $this->generateInternalCode(
                 $validated['event_type'] ?? null,
@@ -53,15 +169,18 @@ class StaffEventController extends Controller
         $validated['access_mode'] = 'both';
         $validated['status'] = $this->statusForDate($validated['event_date'] ?? now());
         $validated['is_active_today'] = $this->isActiveTodayForDate($validated['event_date'] ?? now());
-        if (empty($validated['access_password'])) {
-            $validated['access_password'] = Str::random(16);
-        }
-        if (empty($validated['access_pin'])) {
+        if (! empty($validated['access_pin'])) {
+            $exists = Event::query()->where('access_pin', $validated['access_pin'])->exists();
+            if ($exists) {
+                $validated['access_pin'] = $this->generateAccessPin($validated['event_date'] ?? now());
+            }
+        } else {
             $validated['access_pin'] = $this->generateAccessPin($validated['event_date'] ?? now());
         }
 
         $event = Event::create($validated + ['created_by' => $request->user()->id]);
-        $staffIds = $validated['staff_ids'] ?? [];
+        $teamIds = TeamAssignment::resolveUserIds($meta['equipa_de_trabalho'] ?? null);
+        $staffIds = array_values(array_unique(array_merge($validated['staff_ids'] ?? [], $teamIds)));
         foreach ($staffIds as $userId) {
             EventStaff::updateOrCreate(
                 ['event_id' => $event->id, 'user_id' => $userId],
@@ -72,12 +191,9 @@ class StaffEventController extends Controller
                 ]
             );
         }
-        EventPasswordHistory::create([
-            'event_id' => $event->id,
-            'password_hash' => Hash::make($event->access_password),
-            'changed_by' => $request->user()->id,
-        ]);
+        $this->ensureClientNumbers($event);
         Audit::log('api.event.created', Event::class, $event->id);
+        EventPdf::generate($event);
 
         return response()->json($event, 201);
     }
@@ -88,9 +204,33 @@ class StaffEventController extends Controller
         return response()->json($event);
     }
 
+    public function pdf(Event $event)
+    {
+        $this->ensureEventAccess($event);
+        $path = EventPdf::generate($event);
+
+        return response()->file(Storage::disk('local')->path($path), [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="evento-'.$event->id.'.pdf"',
+        ]);
+    }
+
     public function update(EventUpdateRequest $request, Event $event)
     {
         $validated = $request->validated();
+        $meta = $validated['event_meta'] ?? ($event->event_meta ?? []);
+        if (array_key_exists('foto_noivos', $meta)) {
+            unset($meta['foto_noivos']);
+            $validated['event_meta'] = $meta;
+        }
+        if (empty($validated['name'])) {
+            $validated['name'] = $this->buildEventName(
+                $validated['event_type'] ?? $event->event_type,
+                $validated['event_date'] ?? $event->event_date,
+                $meta,
+                $event->name
+            );
+        }
         if (empty($event->internal_code) && empty($validated['internal_code'])) {
             $validated['internal_code'] = $this->generateInternalCode(
                 $validated['event_type'] ?? $event->event_type,
@@ -101,26 +241,35 @@ class StaffEventController extends Controller
         if (empty($event->qr_token) && empty($validated['qr_token'])) {
             $validated['qr_token'] = Str::random(48);
         }
-        if (empty($event->access_pin) && empty($validated['access_pin'])) {
+        if (! empty($event->access_pin)) {
+            unset($validated['access_pin']);
+        } elseif (empty($validated['access_pin'])) {
             $validated['access_pin'] = $this->generateAccessPin($validated['event_date'] ?? $event->event_date ?? now());
+        } else {
+            $exists = Event::query()
+                ->where('access_pin', $validated['access_pin'])
+                ->where('id', '<>', $event->id)
+                ->exists();
+            if ($exists) {
+                $validated['access_pin'] = $this->generateAccessPin($validated['event_date'] ?? $event->event_date ?? now());
+            }
         }
         $validated['qr_enabled'] = true;
         $validated['access_mode'] = 'both';
         $validated['status'] = $this->statusForDate($validated['event_date'] ?? $event->event_date ?? now());
         $validated['is_active_today'] = $this->isActiveTodayForDate($validated['event_date'] ?? $event->event_date ?? now());
-        $hasPassword = array_key_exists('access_password', $validated);
-        $passwordChanged = $hasPassword && $validated['access_password'] !== $event->access_password;
         $event->update($validated);
+        $teamIds = TeamAssignment::resolveUserIds($meta['equipa_de_trabalho'] ?? null);
+        $staffIds = array_values(array_unique(array_merge(
+            $event->staff()->pluck('user_id')->all(),
+            $validated['staff_ids'] ?? [],
+            $teamIds
+        )));
+        $this->syncStaff($event, $staffIds);
+        $this->ensureClientNumbers($event);
 
-        if ($passwordChanged) {
-            EventPasswordHistory::create([
-                'event_id' => $event->id,
-                'password_hash' => Hash::make($event->access_password),
-                'changed_by' => $request->user()->id,
-            ]);
-        }
-
-        Audit::log('api.event.updated', Event::class, $event->id, ['password_changed' => $passwordChanged]);
+        Audit::log('api.event.updated', Event::class, $event->id);
+        EventPdf::generate($event);
 
         return response()->json($event);
     }
@@ -228,14 +377,9 @@ class StaffEventController extends Controller
 
     private function generateAccessPin($eventDate): string
     {
-        $date = $eventDate instanceof Carbon ? $eventDate : Carbon::parse($eventDate);
-        $start = $date->toDateString();
-        $end = $date->copy()->addDay()->toDateString();
-
         for ($i = 0; $i < 40; $i++) {
             $pin = (string) random_int(1000, 9999);
             $exists = Event::query()
-                ->whereBetween('event_date', [$start, $end])
                 ->where('access_pin', $pin)
                 ->exists();
             if (! $exists) {
@@ -265,9 +409,9 @@ class StaffEventController extends Controller
         $validated = $request->validate([
             'upload_id' => ['required', 'string', 'max:100'],
             'chunk_index' => ['required', 'integer', 'min:0'],
-            'total_chunks' => ['required', 'integer', 'min:1', 'max:20000'],
+            'total_chunks' => ['required', 'integer', 'min:1', 'max:40000'],
             'file_name' => ['required', 'string', 'max:200'],
-            'chunk' => ['required', 'file', 'max:51200'],
+            'chunk' => ['required', 'file', 'max:102400'],
         ]);
 
         $uploadId = $validated['upload_id'];
@@ -394,9 +538,19 @@ class StaffEventController extends Controller
     {
         $this->ensureEventAccess($event);
         $users = User::query()
-            ->where('role', 'photographer')
+            ->whereNotNull('username')
             ->orderBy('name')
-            ->get(['id', 'name', 'email', 'role']);
+            ->get(['id', 'name', 'username', 'email', 'role']);
+
+        return response()->json(['data' => $users]);
+    }
+
+    public function staffUsersAll()
+    {
+        $users = User::query()
+            ->whereNotNull('username')
+            ->orderBy('name')
+            ->get(['id', 'name', 'username', 'email', 'role']);
 
         return response()->json(['data' => $users]);
     }
@@ -562,6 +716,88 @@ class StaffEventController extends Controller
         }
 
         return $type.'-'.$date.'-'.Str::upper(Str::random(4));
+    }
+
+    private function buildEventName($eventType, $eventDate, array $meta, ?string $fallback = null): string
+    {
+        $typeLabel = $eventType ? Str::upper($eventType) : 'EVENTO';
+        $dateLabel = $eventDate ? Carbon::parse($eventDate)->format('Y-m-d') : null;
+        $names = '';
+        if ($eventType === 'casamento') {
+            $noivo = trim((string) ($meta['noivo_nome'] ?? ''));
+            $noiva = trim((string) ($meta['noiva_nome'] ?? ''));
+            if ($noivo && $noiva) {
+                $names = $noivo.' & '.$noiva;
+            } else {
+                $names = trim($noivo.' '.$noiva);
+            }
+        } elseif ($eventType === 'batizado') {
+            $names = trim((string) ($meta['bebe_nome'] ?? ''));
+        }
+
+        $parts = array_filter([$typeLabel, $names, $dateLabel]);
+        return $parts ? implode(' - ', $parts) : ($fallback ?: 'Evento');
+    }
+
+    private function ensureClientNumbers(Event $event): void
+    {
+        $meta = $event->event_meta ?? [];
+        $type = $event->event_type;
+        $date = $event->event_date ? Carbon::parse($event->event_date)->format('Ymd') : Carbon::now()->format('Ymd');
+        $changed = false;
+
+        $makeNumber = function (string $suffix) use ($date): string {
+            $rand = random_int(100, 999);
+            return $date.$suffix.$rand;
+        };
+
+        if ($type === 'casamento') {
+            if (empty($meta['cliente_noivo_num'])) {
+                $meta['cliente_noivo_num'] = $makeNumber('1');
+                $changed = true;
+            }
+            if (empty($meta['cliente_noiva_num'])) {
+                $meta['cliente_noiva_num'] = $makeNumber('2');
+                $changed = true;
+            }
+            if ($meta['cliente_noivo_num'] === $meta['cliente_noiva_num']) {
+                $meta['cliente_noiva_num'] = $makeNumber('2');
+                $changed = true;
+            }
+        } elseif ($type === 'batizado') {
+            if (empty($meta['cliente_batizado_num'])) {
+                $meta['cliente_batizado_num'] = $makeNumber('B');
+                $changed = true;
+            }
+        }
+
+        if ($changed) {
+            $event->update(['event_meta' => $meta]);
+        }
+    }
+
+    private function syncStaff(Event $event, array $staffIds): void
+    {
+        $existing = $event->staff()->pluck('user_id')->all();
+        $toAdd = array_diff($staffIds, $existing);
+        $toRemove = array_diff($existing, $staffIds);
+
+        if ($toRemove) {
+            EventStaff::where('event_id', $event->id)
+                ->whereIn('user_id', $toRemove)
+                ->delete();
+        }
+
+        foreach ($toAdd as $userId) {
+            EventStaff::updateOrCreate(
+                ['event_id' => $event->id, 'user_id' => $userId],
+                [
+                    'role' => 'photographer',
+                    'status' => 'assigned',
+                    'invited_at' => now(),
+                ]
+            );
+        }
     }
 
     private function statusForDate($eventDate): string

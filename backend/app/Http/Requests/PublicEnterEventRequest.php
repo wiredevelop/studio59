@@ -14,7 +14,19 @@ class PublicEnterEventRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'password' => ['required', 'string', 'max:255'],
+            'pin' => ['nullable', 'string', 'regex:/^\\d{4}$/'],
+            'password' => ['nullable', 'string', 'regex:/^\\d{4}$/'],
         ];
+    }
+
+    public function withValidator($validator): void
+    {
+        $validator->after(function ($validator) {
+            $pin = trim((string) $this->input('pin', ''));
+            $password = trim((string) $this->input('password', ''));
+            if ($pin === '' && $password === '') {
+                $validator->errors()->add('pin', 'PIN obrigatório.');
+            }
+        });
     }
 }

@@ -43,64 +43,51 @@ class GeneratePhotoPreview implements ShouldQueue
 
             $srcWidth = imagesx($src);
             $srcHeight = imagesy($src);
-            $maxSide = 2000;
-
-            if ($srcWidth >= $srcHeight) {
-                $newWidth = min($srcWidth, $maxSide);
-                $newHeight = (int) round(($srcHeight / $srcWidth) * $newWidth);
-            } else {
-                $newHeight = min($srcHeight, $maxSide);
-                $newWidth = (int) round(($srcWidth / $srcHeight) * $newHeight);
-            }
-
-            $canvas = imagecreatetruecolor($newWidth, $newHeight);
-            imagecopyresampled($canvas, $src, 0, 0, 0, 0, $newWidth, $newHeight, $srcWidth, $srcHeight);
+            $canvas = imagecreatetruecolor($srcWidth, $srcHeight);
+            imagecopy($canvas, $src, 0, 0, 0, 0, $srcWidth, $srcHeight);
             imagedestroy($src);
 
-            $wmText = sprintf(
-                'STUDIO 59 | %s | %s | %s',
-                $photo->event->name,
-                $photo->event->event_date->format('Y-m-d'),
-                $photo->number
-            );
+            $wmText = 'STUDIO 59';
 
             $fontPath = $this->resolveFontPath();
 
             if ($fontPath) {
+                $fontSize = max(24, min(72, (int) round($srcWidth * 0.03)));
                 $colorLight = imagecolorallocatealpha($canvas, 255, 255, 255, 100);
-                for ($x = -300; $x < $newWidth + 300; $x += 280) {
-                    for ($y = -100; $y < $newHeight + 200; $y += 180) {
-                        imagettftext($canvas, 18, -30, $x, $y, $colorLight, $fontPath, $wmText);
+                for ($x = -300; $x < $srcWidth + 300; $x += 280) {
+                    for ($y = -100; $y < $srcHeight + 200; $y += 180) {
+                        imagettftext($canvas, $fontSize, -30, $x, $y, $colorLight, $fontPath, $wmText);
                     }
                 }
 
                 $shadow = imagecolorallocatealpha($canvas, 0, 0, 0, 55);
                 $strong = imagecolorallocatealpha($canvas, 255, 255, 255, 20);
                 $boxPadding = 16;
-                $fontSize = 20;
-                $bbox = imagettfbbox($fontSize, 0, $fontPath, $wmText);
+                $badgeSize = max(26, min(60, (int) round($srcWidth * 0.02)));
+                $bbox = imagettfbbox($badgeSize, 0, $fontPath, $wmText);
                 $textW = abs($bbox[2] - $bbox[0]);
                 $textH = abs($bbox[7] - $bbox[1]);
-                $x1 = $newWidth - $textW - ($boxPadding * 2) - 20;
-                $y1 = $newHeight - $textH - ($boxPadding * 2) - 20;
-                imagefilledrectangle($canvas, $x1, $y1, $newWidth - 20, $newHeight - 20, $shadow);
-                imagettftext($canvas, $fontSize, 0, $x1 + $boxPadding, $newHeight - 20 - $boxPadding, $strong, $fontPath, $wmText);
+                $x1 = $srcWidth - $textW - ($boxPadding * 2) - 20;
+                $y1 = $srcHeight - $textH - ($boxPadding * 2) - 20;
+                imagefilledrectangle($canvas, $x1, $y1, $srcWidth - 20, $srcHeight - 20, $shadow);
+                imagettftext($canvas, $badgeSize, 0, $x1 + $boxPadding, $srcHeight - 20 - $boxPadding, $strong, $fontPath, $wmText);
             } else {
                 $color = imagecolorallocatealpha($canvas, 255, 255, 255, 75);
-                imagestring($canvas, 5, 20, $newHeight - 30, $wmText, $color);
+                imagestring($canvas, 5, 20, $srcHeight - 30, $wmText, $color);
             }
 
-            $previewPath = 'events/'.$photo->event_id.'/previews/'.$photo->number.'.jpg';
+            $previewPath = $photo->preview_path ?: $this->defaultPreviewPath($photo);
             Storage::disk('local')->makeDirectory(dirname($previewPath));
 
             $targetPath = Storage::disk('local')->path($previewPath);
-            imagejpeg($canvas, $targetPath, 65);
+            imagejpeg($canvas, $targetPath, 90);
             imagedestroy($canvas);
 
             $photo->update([
                 'preview_path' => $previewPath,
                 'preview_status' => 'ready',
                 'preview_error' => null,
+                'status' => 'active',
             ]);
         } catch (Throwable $e) {
             $photo->update([
@@ -125,5 +112,16 @@ class GeneratePhotoPreview implements ShouldQueue
         }
 
         return null;
+    }
+
+    private function defaultPreviewPath(Photo $photo): string
+    {
+        $original = $photo->original_path;
+        if (str_starts_with($original, 'EVENTOS/')) {
+            $eventDir = dirname(dirname($original));
+            return $eventDir.'/galeria/'.$photo->number.'.jpg';
+        }
+
+        return 'events/'.$photo->event_id.'/previews/'.$photo->number.'.jpg';
     }
 }

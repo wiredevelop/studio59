@@ -27,8 +27,9 @@ class DatabaseSeeder extends Seeder
             ['name' => 'Demo', 'event_date' => now('Europe/Lisbon')->toDateString()],
             [
                 'location' => 'Lisboa',
-                'access_password' => '1234',
+                'access_pin' => '1234',
                 'is_active_today' => true,
+                'base_price' => 0.00,
                 'price_per_photo' => 2.50,
                 'created_by' => $admin->id,
             ]
