@@ -5,7 +5,6 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -211,8 +210,14 @@ class _HomePageState extends ConsumerState<HomePage> {
     return showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Senha do Evento'),
-        content: TextField(controller: c, obscureText: true, autofocus: true),
+        title: const Text('PIN do Evento'),
+        content: TextField(
+          controller: c,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
+          decoration: const InputDecoration(hintText: '4 dígitos'),
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
           FilledButton(onPressed: () => Navigator.pop(context, c.text.trim()), child: const Text('Entrar')),
@@ -669,36 +674,62 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
       child: Scaffold(
         appBar: AppBar(
           title: Text(session.eventName),
+          actions: [
+            if (session.qrToken != null && session.qrToken!.isNotEmpty)
+              IconButton(
+                onPressed: () {
+                  final url = ref.read(apiProvider).publicQrUrl(session.qrToken!);
+                  showQrDialog(context, title: 'QR Code do Evento', url: url);
+                },
+                icon: const Icon(Icons.qr_code_2),
+                tooltip: 'QR do evento',
+              ),
+            IconButton(
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Detalhes do Evento'),
+                    content: SizedBox(
+                      width: double.maxFinite,
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          if (session.eventType != null && session.eventType!.isNotEmpty) Text('Tipo: ${session.eventType}'),
+                          if (session.eventDate != null && session.eventDate!.isNotEmpty) Text('Data: ${session.eventDate}'),
+                          if (session.basePrice != null) Text('Preço base: ${session.basePrice}'),
+                          Text('Preço por foto: ${session.pricePerPhoto}'),
+                          const SizedBox(height: 8),
+                          ...session.eventMeta.entries.map((e) => Text('${_prettyMetaKey(e.key)}: ${e.value}')),
+                        ],
+                      ),
+                    ),
+                    actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fechar'))],
+                  ),
+                );
+              },
+              icon: const Icon(Icons.info_outline),
+              tooltip: 'Detalhes',
+            ),
+            IconButton(
+              onPressed: faceSearching ? null : () => _startFaceSearch(session),
+              icon: faceSearching
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.face_retouching_natural),
+              tooltip: 'Pesquisa facial',
+            ),
+            IconButton(
+              onPressed: () {
+                ref.read(cartProvider.notifier).clear();
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Novo convidado pronto. Carrinho limpo.')));
+              },
+              icon: const Icon(Icons.cleaning_services),
+              tooltip: 'Novo convidado / limpar sessao',
+            ),
+          ],
         ),
         body: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: faceSearching ? null : () => _startFaceSearch(session),
-                      child: faceSearching
-                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Text('Pesquisa facial'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () {
-                        ref.read(cartProvider.notifier).clear();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Novo convidado pronto. Carrinho limpo.')),
-                        );
-                      },
-                      child: const Text('Novo convidado / limpar sessão'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
             Padding(
               padding: const EdgeInsets.all(8),
               child: TextField(
@@ -736,13 +767,8 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                             child: Stack(
                               children: [
                                 Positioned.fill(
-                                  child: GestureDetector(
-                                    onTap: () async {
-                                      ref.read(cartProvider.notifier).toggle(photo);
-                                      final nowSelected = ref.read(cartProvider).containsKey(photo.id);
-                                      await enqueueSelection(widget.eventId, photo.id, nowSelected ? 'selected' : 'unselected');
-                                    },
-                                    onDoubleTap: () => _openPhotoPreview(photo),
+                                  child: InkWell(
+                                    onTap: () => _openPhotoPreview(photo),
                                     child: photo.previewUrl == null
                                         ? const Center(child: Text('preview...'))
                                         : Image.network(
@@ -774,18 +800,16 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                                 Positioned(
                                   right: 6,
                                   top: 6,
-                                  child: AnimatedOpacity(
-                                    duration: const Duration(milliseconds: 160),
-                                    opacity: isSelected ? 1 : 0,
-                                    child: Container(
-                                      width: 24,
-                                      height: 24,
-                                      decoration: BoxDecoration(
-                                        color: kBrandBlack.withOpacity(0.6),
-                                        borderRadius: BorderRadius.circular(99),
-                                        border: Border.all(color: kBrandRose),
-                                      ),
-                                      child: const Icon(Icons.check, size: 16, color: kBrandRose),
+                                  child: InkWell(
+                                    onTap: () async {
+                                      ref.read(cartProvider.notifier).toggle(photo);
+                                      final nowSelected = ref.read(cartProvider).containsKey(photo.id);
+                                      await enqueueSelection(widget.eventId, photo.id, nowSelected ? 'selected' : 'unselected');
+                                    },
+                                    child: Icon(
+                                      isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+                                      color: isSelected ? kBrandRose : kBrandRose.withOpacity(0.6),
+                                      size: 22,
                                     ),
                                   ),
                                 ),
@@ -798,13 +822,13 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Text(photo.number, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                TextButton(
+                                IconButton(
+                                  icon: Icon(isSelected ? Icons.check_circle : Icons.circle_outlined),
                                   onPressed: () async {
                                     ref.read(cartProvider.notifier).toggle(photo);
                                     final nowSelected = ref.read(cartProvider).containsKey(photo.id);
                                     await enqueueSelection(widget.eventId, photo.id, nowSelected ? 'selected' : 'unselected');
                                   },
-                                  child: Text(isSelected ? 'Remover' : 'Selecionar'),
                                 ),
                               ],
                             ),
@@ -859,12 +883,25 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
         ),
         bottomNavigationBar: Padding(
           padding: const EdgeInsets.all(8),
-          child: FilledButton(
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CartPage(eventId: widget.eventId))),
-            child: Consumer(builder: (context, ref, child) {
-              final count = ref.watch(cartProvider).values.fold<int>(0, (sum, item) => sum + item.quantity);
-              return Text('Carrinho ($count)');
-            }),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyOrdersPage())),
+                  child: const Text('Os meus pedidos'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CartPage(eventId: widget.eventId))),
+                  child: Consumer(builder: (context, ref, child) {
+                    final count = ref.watch(cartProvider).values.fold<int>(0, (sum, item) => sum + item.quantity);
+                    return Text('Carrinho ($count)');
+                  }),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1862,14 +1899,20 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
             }
             return ListView.builder(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(12),
               itemCount: events.length,
               itemBuilder: (_, i) {
                 final e = events[i];
+                final report = (e.reportNumber ?? e.legacyReportNumber)?.trim();
+                final subtitleParts = <String>[
+                  if (report != null && report.isNotEmpty) 'Nº $report',
+                  if (e.eventDate.isNotEmpty) e.eventDate,
+                  if (e.location != null && e.location!.isNotEmpty) e.location!,
+                ];
+                final subtitle = subtitleParts.isEmpty ? '' : subtitleParts.join(' • ');
                 return Card(
                   child: ListTile(
-                    title: Text((e.internalCode != null && e.internalCode!.isNotEmpty) ? e.internalCode! : e.name),
-                    subtitle: Text('${(e.eventType ?? '').toUpperCase()} ${e.eventDate} ${e.location ?? ''}'.trim()),
+                    title: Text(e.name),
+                    subtitle: Text(subtitle),
                     onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => StaffEventDetailPage(event: e))),
                     trailing: Wrap(
                       spacing: 6,
@@ -1940,86 +1983,66 @@ class StaffEventDetailPage extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          SectionCard(
-            title: 'Resumo',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  (event.internalCode != null && event.internalCode!.isNotEmpty) ? event.internalCode! : event.name,
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                if (event.internalCode != null && event.internalCode!.isNotEmpty) Text('Nº reportagem: ${event.internalCode}'),
-                Text('Data: ${event.eventDate}'),
-                if (event.eventTime != null && event.eventTime!.isNotEmpty) Text('Hora: ${event.eventTime}'),
-                Text('Tipo: ${event.eventType ?? '-'}'),
-                if (event.basePrice != null) Text('Preço base: ${event.basePrice}'),
-                Text('Preço por foto: ${event.pricePerPhoto}'),
-                if (event.accessPin != null && event.accessPin!.isNotEmpty) Text('PIN: ${event.accessPin}'),
-                if (event.notes != null && event.notes!.isNotEmpty) Text('Notas: ${event.notes}'),
-              ],
+          Text(event.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          if ((event.reportNumber ?? event.legacyReportNumber)?.isNotEmpty == true)
+            Text('Nº reportagem: ${event.reportNumber ?? event.legacyReportNumber}'),
+          Text('Data: ${event.eventDate}'),
+          if (event.eventTime != null && event.eventTime!.isNotEmpty) Text('Hora: ${event.eventTime}'),
+          Text('Tipo: ${event.eventType ?? '-'}'),
+          if (event.basePrice != null) Text('Preço base: ${event.basePrice}'),
+          Text('Preço por foto: ${event.pricePerPhoto}'),
+          if (event.accessPin != null && event.accessPin!.isNotEmpty) Text('PIN: ${event.accessPin}'),
+          if (event.notes != null && event.notes!.isNotEmpty) Text('Notas: ${event.notes}'),
+          const SizedBox(height: 12),
+          if (user != null && user.hasPermission('events.write'))
+            FilledButton.tonal(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => StaffEventStaffPage(event: event)),
+                );
+              },
+              child: const Text('Gerir staff do evento'),
             ),
+          const SizedBox(height: 8),
+          FilledButton.tonal(
+            onPressed: token == null
+                ? null
+                : () async {
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (_) => const AlertDialog(
+                        content: SizedBox(
+                          height: 48,
+                          child: Center(child: CircularProgressIndicator()),
+                        ),
+                      ),
+                    );
+                    try {
+                      final bytes = await ref.read(apiProvider).staffEventPdf(token, event.id);
+                      final dir = await getTemporaryDirectory();
+                      final file = File('${dir.path}/evento-${event.id}.pdf');
+                      await file.writeAsBytes(bytes, flush: true);
+                      if (!context.mounted) return;
+                      await OpenFilex.open(file.path);
+                    } catch (e) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Erro a gerar PDF: $e')),
+                      );
+                    } finally {
+                      if (context.mounted) Navigator.pop(context);
+                    }
+                  },
+            child: const Text('PDF'),
           ),
           const SizedBox(height: 12),
-          SectionCard(
-            title: 'Ações',
-            child: Wrap(
-              spacing: 8,
-              children: [
-                if (user != null && user.hasPermission('events.write'))
-                  FilledButton.tonal(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => StaffEventStaffPage(event: event)),
-                      );
-                    },
-                    child: const Text('Gerir staff do evento'),
-                  ),
-                FilledButton.tonal(
-                  onPressed: token == null
-                      ? null
-                      : () async {
-                          showDialog(
-                            context: context,
-                            barrierDismissible: false,
-                            builder: (_) => const AlertDialog(
-                              content: SizedBox(
-                                height: 48,
-                                child: Center(child: CircularProgressIndicator()),
-                              ),
-                            ),
-                          );
-                          try {
-                            final bytes = await ref.read(apiProvider).staffEventPdf(token, event.id);
-                            final dir = await getTemporaryDirectory();
-                            final file = File('${dir.path}/evento-${event.id}.pdf');
-                            await file.writeAsBytes(bytes, flush: true);
-                            if (!context.mounted) return;
-                            await OpenFilex.open(file.path);
-                          } catch (e) {
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Erro a gerar PDF: $e')),
-                            );
-                          } finally {
-                            if (context.mounted) Navigator.pop(context);
-                          }
-                        },
-                  child: const Text('PDF'),
-                ),
-              ],
-            ),
-          ),
           if (meta.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            SectionCard(
-              title: 'Detalhes',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: meta.entries.map((e) => Text('${_prettyMetaKey(e.key)}: ${e.value}')).toList(),
-              ),
-            ),
+            const Text('Detalhes', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            ...meta.entries.map((e) => Text('${_prettyMetaKey(e.key)}: ${e.value}')),
           ],
         ],
       ),
@@ -2041,22 +2064,22 @@ String _prettyMetaKey(String key) {
       return 'Profissão do noivo';
     case 'noiva_profissao':
       return 'Profissão da noiva';
-    case 'noivo_morada':
-      return 'Morada do noivo';
-    case 'noiva_morada':
-      return 'Morada da noiva';
     case 'noivo_instagram':
       return 'Instagram do noivo';
     case 'noiva_instagram':
       return 'Instagram da noiva';
     case 'noivo_filho_de_1':
-      return 'Noivo filho de (pai)';
+      return 'Filho de (pai)';
     case 'noivo_filho_de_2':
-      return 'Noivo filho de (mãe)';
+      return 'Filho de (mãe)';
     case 'noiva_filho_de_1':
-      return 'Noiva filha de (pai)';
+      return 'Filha de (pai)';
     case 'noiva_filho_de_2':
-      return 'Noiva filha de (mãe)';
+      return 'Filha de (mãe)';
+    case 'noivo_morada':
+      return 'Morada do noivo';
+    case 'noiva_morada':
+      return 'Morada da noiva';
     case 'noivo_coordenadas':
       return 'Coordenadas do noivo';
     case 'noiva_coordenadas':
@@ -2074,21 +2097,23 @@ String _prettyMetaKey(String key) {
     case 'igreja_local':
       return 'Igreja';
     case 'igreja_localidade':
-      return 'Localidade da igreja';
+      return 'Localidade (igreja)';
     case 'quinta_local':
       return 'Quinta';
     case 'almoco_localidade':
       return 'Localidade do almoço';
     case 'instagram_noivos':
       return 'Instagram dos noivos';
-    case 'data_entrega':
-      return 'Data de entrega';
-    case 'estar_na_loja_as':
-      return 'Estar na loja às';
     case 'instagram_pais':
       return 'Instagram dos pais';
     case 'numero_convidados':
       return 'Número de convidados';
+    case 'data_entrega':
+      return 'Data de entrega';
+    case 'estar_na_loja_as':
+      return 'Estar na loja às';
+    case 'equipa_de_trabalho':
+      return 'Equipa de trabalho';
     case 'tipo_pacote':
       return 'Tipo de pacote';
     case 'bebe_nome':
@@ -2105,54 +2130,6 @@ String _prettyMetaKey(String key) {
       return 'Contacto dos pais';
     case 'morada':
       return 'Morada';
-    case 'servico_save_the_date':
-      return 'Serviço: Save the date';
-    case 'servico_fotos_love_story':
-      return 'Serviço: Fotos love story';
-    case 'servico_video_love_story':
-      return 'Serviço: Video love story';
-    case 'servico_projectar_love_story':
-      return 'Serviço: Projectar love story';
-    case 'servico_combo_beleza_love_story':
-      return 'Serviço: Combo beleza love story';
-    case 'servico_album_digital_30_5':
-      return 'Serviço: Album digital 30x5';
-    case 'servico_combo_beleza_ttd':
-      return 'Serviço: Combo beleza TTD';
-    case 'servico_album_digital':
-      return 'Serviço: Album digital';
-    case 'servico_album_convidados':
-      return 'Serviço: Album convidados';
-    case 'servico_albuns_40_20':
-      return 'Serviço: Albuns 40x20';
-    case 'servico_same_day_edit':
-      return 'Serviço: Same day edit';
-    case 'servico_projectar_same_day_edit':
-      return 'Serviço: Projectar same day edit';
-    case 'servico_galeria_digital_convidados':
-      return 'Serviço: Galeria digital convidados';
-    case 'servico_foto_lembranca_qr':
-      return 'Serviço: Foto lembrança QR';
-    case 'servico_impressao_100_11x22_7':
-      return 'Serviço: Impressão 100 11x22,7';
-    case 'servico_video_depois_do_sim':
-      return 'Serviço: Video depois do sim';
-    case 'servico_num_profissionais':
-      return 'Serviço: Nº profissionais';
-    case 'servico_condicoes_minimas':
-      return 'Serviço: Condições mínimas';
-    case 'servico_prazo_entrega':
-      return 'Serviço: Prazo de entrega';
-    case 'servico_tela':
-      return 'Serviço: Tela';
-    case 'servico_musicas':
-      return 'Serviço: Músicas';
-    case 'servico_usb':
-      return 'Serviço: USB';
-    case 'servico_drone':
-      return 'Serviço: Drone';
-    case 'servico_extras':
-      return 'Serviço: Extras';
     default:
       return key.replaceAll('_', ' ');
   }
@@ -2160,12 +2137,11 @@ String _prettyMetaKey(String key) {
 
 class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   late final TextEditingController nameCtrl;
-  late final TextEditingController internalCodeCtrl;
+  late final TextEditingController reportNumberCtrl;
   late final TextEditingController basePriceCtrl;
   late final TextEditingController dateCtrl;
   late final TextEditingController timeCtrl;
   late final TextEditingController pinCtrl;
-  late final TextEditingController accessPasswordCtrl;
   late final TextEditingController priceCtrl;
   late final TextEditingController notesCtrl;
   late final TextEditingController noivoNomeCtrl;
@@ -2176,28 +2152,29 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   late final TextEditingController noivaProfissaoCtrl;
   late final TextEditingController noivoMoradaCtrl;
   late final TextEditingController noivaMoradaCtrl;
-  late final TextEditingController missaHoraCtrl;
-  late final TextEditingController igrejaLocalCtrl;
-  late final TextEditingController quintaLocalCtrl;
-  late final TextEditingController numeroConvidadosCtrl;
-  late final TextEditingController tipoPacoteCtrl;
   late final TextEditingController noivoInstagramCtrl;
   late final TextEditingController noivaInstagramCtrl;
-  late final TextEditingController instagramPaisCtrl;
   late final TextEditingController noivoFilhoDe1Ctrl;
   late final TextEditingController noivoFilhoDe2Ctrl;
   late final TextEditingController noivaFilhoDe1Ctrl;
   late final TextEditingController noivaFilhoDe2Ctrl;
   late final TextEditingController noivoCoordenadasCtrl;
   late final TextEditingController noivaCoordenadasCtrl;
+  late final TextEditingController missaHoraCtrl;
+  late final TextEditingController igrejaLocalCtrl;
+  late final TextEditingController igrejaLocalidadeCtrl;
+  late final TextEditingController quintaLocalCtrl;
+  late final TextEditingController almocoLocalidadeCtrl;
+  late final TextEditingController numeroConvidadosCtrl;
+  late final TextEditingController tipoPacoteCtrl;
+  late final TextEditingController instagramPaisCtrl;
   late final TextEditingController casaNoivoChegadaCtrl;
   late final TextEditingController casaNoivoSaidaCtrl;
   late final TextEditingController casaNoivaChegadaCtrl;
   late final TextEditingController casaNoivaSaidaCtrl;
-  late final TextEditingController igrejaLocalidadeCtrl;
-  late final TextEditingController almocoLocalidadeCtrl;
   late final TextEditingController dataEntregaCtrl;
   late final TextEditingController estarNaLojaCtrl;
+  late final TextEditingController equipaTrabalhoCtrl;
   late final TextEditingController bebeNomeCtrl;
   late final TextEditingController paiNomeCtrl;
   late final TextEditingController maeNomeCtrl;
@@ -2205,30 +2182,6 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   late final TextEditingController madrinhaNomeCtrl;
   late final TextEditingController contactoPaisCtrl;
   late final TextEditingController batizadoMoradaCtrl;
-  late final TextEditingController servicoNumProfissionaisCtrl;
-  late final TextEditingController servicoCondicoesMinimasCtrl;
-  late final TextEditingController servicoPrazoEntregaCtrl;
-  late final TextEditingController servicoTelaCtrl;
-  late final TextEditingController servicoMusicasCtrl;
-  late final TextEditingController servicoUsbCtrl;
-  late final TextEditingController servicoExtrasCtrl;
-  bool servicoSaveTheDate = false;
-  bool servicoFotosLoveStory = false;
-  bool servicoVideoLoveStory = false;
-  bool servicoProjectarLoveStory = false;
-  bool servicoComboBelezaLoveStory = false;
-  bool servicoAlbumDigital305 = false;
-  bool servicoComboBelezaTtd = false;
-  bool servicoAlbumDigital = false;
-  bool servicoAlbumConvidados = false;
-  bool servicoAlbuns4020 = false;
-  bool servicoSameDayEdit = false;
-  bool servicoProjectarSameDayEdit = false;
-  bool servicoGaleriaDigitalConvidados = false;
-  bool servicoFotoLembrancaQr = false;
-  bool servicoImpressao100 = false;
-  bool servicoVideoDepoisSim = false;
-  bool servicoDrone = false;
   bool saving = false;
   String eventType = '';
   bool isLocked = false;
@@ -2237,21 +2190,20 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   void initState() {
     super.initState();
     nameCtrl = TextEditingController(text: widget.event?.name ?? '');
-    internalCodeCtrl = TextEditingController(text: widget.event?.internalCode ?? '');
-    basePriceCtrl = TextEditingController(text: widget.event?.basePrice?.toString() ?? '0');
+    reportNumberCtrl = TextEditingController(
+      text: widget.event?.legacyReportNumber?.isNotEmpty == true
+          ? widget.event!.legacyReportNumber!
+          : (widget.event?.reportNumber ?? ''),
+    );
+    basePriceCtrl = TextEditingController(
+      text: widget.event?.basePrice != null ? widget.event!.basePrice!.toString() : '0',
+    );
     dateCtrl = TextEditingController(text: widget.event?.eventDate ?? '');
     timeCtrl = TextEditingController(text: widget.event?.eventTime ?? '');
     pinCtrl = TextEditingController(
-      text: widget.event?.accessPin?.isNotEmpty == true
-          ? widget.event!.accessPin!
-          : 'Gerado automaticamente ao guardar',
+      text: widget.event?.accessPin?.isNotEmpty == true ? widget.event!.accessPin! : '',
     );
-    accessPasswordCtrl = TextEditingController(
-      text: widget.event?.accessPassword?.isNotEmpty == true
-          ? widget.event!.accessPassword!
-          : 'Gerado automaticamente ao guardar',
-    );
-    priceCtrl = TextEditingController(text: widget.event?.pricePerPhoto.toString() ?? '0');
+    priceCtrl = TextEditingController(text: widget.event?.pricePerPhoto.toString() ?? '5');
     notesCtrl = TextEditingController(text: widget.event?.notes ?? '');
     eventType = widget.event?.eventType ?? '';
     isLocked = widget.event?.isLocked ?? false;
@@ -2264,28 +2216,31 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     noivaProfissaoCtrl = TextEditingController(text: meta['noiva_profissao']?.toString() ?? '');
     noivoMoradaCtrl = TextEditingController(text: meta['noivo_morada']?.toString() ?? '');
     noivaMoradaCtrl = TextEditingController(text: meta['noiva_morada']?.toString() ?? '');
-    missaHoraCtrl = TextEditingController(text: meta['missa_hora']?.toString() ?? '');
-    igrejaLocalCtrl = TextEditingController(text: meta['igreja_local']?.toString() ?? '');
-    quintaLocalCtrl = TextEditingController(text: meta['quinta_local']?.toString() ?? '');
-    numeroConvidadosCtrl = TextEditingController(text: meta['numero_convidados']?.toString() ?? '');
-    tipoPacoteCtrl = TextEditingController(text: meta['tipo_pacote']?.toString() ?? '');
-    noivoInstagramCtrl = TextEditingController(text: meta['noivo_instagram']?.toString() ?? '');
+    noivoInstagramCtrl = TextEditingController(
+      text: meta['noivo_instagram']?.toString() ?? meta['instagram_noivos']?.toString() ?? '',
+    );
     noivaInstagramCtrl = TextEditingController(text: meta['noiva_instagram']?.toString() ?? '');
-    instagramPaisCtrl = TextEditingController(text: meta['instagram_pais']?.toString() ?? '');
     noivoFilhoDe1Ctrl = TextEditingController(text: meta['noivo_filho_de_1']?.toString() ?? '');
     noivoFilhoDe2Ctrl = TextEditingController(text: meta['noivo_filho_de_2']?.toString() ?? '');
     noivaFilhoDe1Ctrl = TextEditingController(text: meta['noiva_filho_de_1']?.toString() ?? '');
     noivaFilhoDe2Ctrl = TextEditingController(text: meta['noiva_filho_de_2']?.toString() ?? '');
     noivoCoordenadasCtrl = TextEditingController(text: meta['noivo_coordenadas']?.toString() ?? '');
     noivaCoordenadasCtrl = TextEditingController(text: meta['noiva_coordenadas']?.toString() ?? '');
+    missaHoraCtrl = TextEditingController(text: meta['missa_hora']?.toString() ?? '');
+    igrejaLocalCtrl = TextEditingController(text: meta['igreja_local']?.toString() ?? '');
+    igrejaLocalidadeCtrl = TextEditingController(text: meta['igreja_localidade']?.toString() ?? '');
+    quintaLocalCtrl = TextEditingController(text: meta['quinta_local']?.toString() ?? '');
+    almocoLocalidadeCtrl = TextEditingController(text: meta['almoco_localidade']?.toString() ?? '');
+    numeroConvidadosCtrl = TextEditingController(text: meta['numero_convidados']?.toString() ?? '');
+    tipoPacoteCtrl = TextEditingController(text: meta['tipo_pacote']?.toString() ?? '');
+    instagramPaisCtrl = TextEditingController(text: meta['instagram_pais']?.toString() ?? '');
     casaNoivoChegadaCtrl = TextEditingController(text: meta['casa_noivo_chegada']?.toString() ?? '');
     casaNoivoSaidaCtrl = TextEditingController(text: meta['casa_noivo_saida']?.toString() ?? '');
     casaNoivaChegadaCtrl = TextEditingController(text: meta['casa_noiva_chegada']?.toString() ?? '');
     casaNoivaSaidaCtrl = TextEditingController(text: meta['casa_noiva_saida']?.toString() ?? '');
-    igrejaLocalidadeCtrl = TextEditingController(text: meta['igreja_localidade']?.toString() ?? '');
-    almocoLocalidadeCtrl = TextEditingController(text: meta['almoco_localidade']?.toString() ?? '');
     dataEntregaCtrl = TextEditingController(text: meta['data_entrega']?.toString() ?? '');
     estarNaLojaCtrl = TextEditingController(text: meta['estar_na_loja_as']?.toString() ?? '');
+    equipaTrabalhoCtrl = TextEditingController(text: meta['equipa_de_trabalho']?.toString() ?? '');
     bebeNomeCtrl = TextEditingController(text: meta['bebe_nome']?.toString() ?? '');
     paiNomeCtrl = TextEditingController(text: meta['pai_nome']?.toString() ?? '');
     maeNomeCtrl = TextEditingController(text: meta['mae_nome']?.toString() ?? '');
@@ -2293,42 +2248,16 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     madrinhaNomeCtrl = TextEditingController(text: meta['madrinha_nome']?.toString() ?? '');
     contactoPaisCtrl = TextEditingController(text: meta['contacto_pais']?.toString() ?? '');
     batizadoMoradaCtrl = TextEditingController(text: meta['morada']?.toString() ?? '');
-    servicoNumProfissionaisCtrl = TextEditingController(text: meta['servico_num_profissionais']?.toString() ?? '');
-    servicoCondicoesMinimasCtrl = TextEditingController(text: meta['servico_condicoes_minimas']?.toString() ?? '');
-    servicoPrazoEntregaCtrl = TextEditingController(text: meta['servico_prazo_entrega']?.toString() ?? '');
-    servicoTelaCtrl = TextEditingController(text: meta['servico_tela']?.toString() ?? '');
-    servicoMusicasCtrl = TextEditingController(text: meta['servico_musicas']?.toString() ?? '');
-    servicoUsbCtrl = TextEditingController(text: meta['servico_usb']?.toString() ?? '');
-    servicoExtrasCtrl = TextEditingController(text: meta['servico_extras']?.toString() ?? '');
-    bool readBool(dynamic v) => v == true || v == 1 || v == '1';
-    servicoSaveTheDate = readBool(meta['servico_save_the_date']);
-    servicoFotosLoveStory = readBool(meta['servico_fotos_love_story']);
-    servicoVideoLoveStory = readBool(meta['servico_video_love_story']);
-    servicoProjectarLoveStory = readBool(meta['servico_projectar_love_story']);
-    servicoComboBelezaLoveStory = readBool(meta['servico_combo_beleza_love_story']);
-    servicoAlbumDigital305 = readBool(meta['servico_album_digital_30_5']);
-    servicoComboBelezaTtd = readBool(meta['servico_combo_beleza_ttd']);
-    servicoAlbumDigital = readBool(meta['servico_album_digital']);
-    servicoAlbumConvidados = readBool(meta['servico_album_convidados']);
-    servicoAlbuns4020 = readBool(meta['servico_albuns_40_20']);
-    servicoSameDayEdit = readBool(meta['servico_same_day_edit']);
-    servicoProjectarSameDayEdit = readBool(meta['servico_projectar_same_day_edit']);
-    servicoGaleriaDigitalConvidados = readBool(meta['servico_galeria_digital_convidados']);
-    servicoFotoLembrancaQr = readBool(meta['servico_foto_lembranca_qr']);
-    servicoImpressao100 = readBool(meta['servico_impressao_100_11x22_7']);
-    servicoVideoDepoisSim = readBool(meta['servico_video_depois_do_sim']);
-    servicoDrone = readBool(meta['servico_drone']);
   }
 
   @override
   void dispose() {
     nameCtrl.dispose();
-    internalCodeCtrl.dispose();
+    reportNumberCtrl.dispose();
     basePriceCtrl.dispose();
     dateCtrl.dispose();
     timeCtrl.dispose();
     pinCtrl.dispose();
-    accessPasswordCtrl.dispose();
     priceCtrl.dispose();
     notesCtrl.dispose();
     noivoNomeCtrl.dispose();
@@ -2339,28 +2268,29 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     noivaProfissaoCtrl.dispose();
     noivoMoradaCtrl.dispose();
     noivaMoradaCtrl.dispose();
-    missaHoraCtrl.dispose();
-    igrejaLocalCtrl.dispose();
-    quintaLocalCtrl.dispose();
-    numeroConvidadosCtrl.dispose();
-    tipoPacoteCtrl.dispose();
     noivoInstagramCtrl.dispose();
     noivaInstagramCtrl.dispose();
-    instagramPaisCtrl.dispose();
     noivoFilhoDe1Ctrl.dispose();
     noivoFilhoDe2Ctrl.dispose();
     noivaFilhoDe1Ctrl.dispose();
     noivaFilhoDe2Ctrl.dispose();
     noivoCoordenadasCtrl.dispose();
     noivaCoordenadasCtrl.dispose();
+    missaHoraCtrl.dispose();
+    igrejaLocalCtrl.dispose();
+    igrejaLocalidadeCtrl.dispose();
+    quintaLocalCtrl.dispose();
+    almocoLocalidadeCtrl.dispose();
+    numeroConvidadosCtrl.dispose();
+    tipoPacoteCtrl.dispose();
+    instagramPaisCtrl.dispose();
     casaNoivoChegadaCtrl.dispose();
     casaNoivoSaidaCtrl.dispose();
     casaNoivaChegadaCtrl.dispose();
     casaNoivaSaidaCtrl.dispose();
-    igrejaLocalidadeCtrl.dispose();
-    almocoLocalidadeCtrl.dispose();
     dataEntregaCtrl.dispose();
     estarNaLojaCtrl.dispose();
+    equipaTrabalhoCtrl.dispose();
     bebeNomeCtrl.dispose();
     paiNomeCtrl.dispose();
     maeNomeCtrl.dispose();
@@ -2368,13 +2298,6 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     madrinhaNomeCtrl.dispose();
     contactoPaisCtrl.dispose();
     batizadoMoradaCtrl.dispose();
-    servicoNumProfissionaisCtrl.dispose();
-    servicoCondicoesMinimasCtrl.dispose();
-    servicoPrazoEntregaCtrl.dispose();
-    servicoTelaCtrl.dispose();
-    servicoMusicasCtrl.dispose();
-    servicoUsbCtrl.dispose();
-    servicoExtrasCtrl.dispose();
     super.dispose();
   }
 
@@ -2476,13 +2399,10 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text('Dados base', style: TextStyle(fontWeight: FontWeight.w600)),
-            ),
+            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
             const SizedBox(height: 8),
             TextField(
-              controller: internalCodeCtrl,
+              controller: reportNumberCtrl,
               decoration: const InputDecoration(labelText: 'Nº reportagem', border: OutlineInputBorder()),
             ),
             const SizedBox(height: 8),
@@ -2508,6 +2428,7 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               ),
             ),
             const SizedBox(height: 8),
+            const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               value: eventType.isEmpty ? null : eventType,
               decoration: const InputDecoration(labelText: 'Tipo Evento', border: OutlineInputBorder()),
@@ -2532,19 +2453,11 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
             const SizedBox(height: 8),
             TextField(
               controller: pinCtrl,
-              keyboardType: TextInputType.number,
+              readOnly: true,
               decoration: const InputDecoration(
                 labelText: 'Código do evento (PIN)',
                 border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: accessPasswordCtrl,
-              readOnly: true,
-              decoration: const InputDecoration(
-                labelText: 'Senha do evento (catálogo)',
-                border: OutlineInputBorder(),
+                hintText: 'Gerado automaticamente ao guardar',
               ),
             ),
             const SizedBox(height: 8),
@@ -2556,7 +2469,7 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
             const SizedBox(height: 8),
             const Align(
               alignment: Alignment.centerLeft,
-              child: Text('Missa e locais', style: TextStyle(fontWeight: FontWeight.w600)),
+              child: Text('Detalhes adicionais', style: TextStyle(fontWeight: FontWeight.w600)),
             ),
             const SizedBox(height: 8),
             TextField(
@@ -2578,11 +2491,6 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
             TextField(
               controller: almocoLocalidadeCtrl,
               decoration: const InputDecoration(labelText: 'Localidade do almoço', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 8),
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text('Entrega e equipa', style: TextStyle(fontWeight: FontWeight.w600)),
             ),
             const SizedBox(height: 8),
             TextField(
@@ -2614,75 +2522,68 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
             ),
             const SizedBox(height: 8),
             TextField(controller: tipoPacoteCtrl, decoration: const InputDecoration(labelText: 'Tipo de pacote (informativo)', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(controller: equipaTrabalhoCtrl, decoration: const InputDecoration(labelText: 'Equipa de trabalho', border: OutlineInputBorder())),
             const SizedBox(height: 12),
             if (eventType == 'casamento') ...[
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Dados do casamento', style: TextStyle(fontWeight: FontWeight.w600)),
-              ),
-              const SizedBox(height: 8),
-              const Align(alignment: Alignment.centerLeft, child: Text('Noivo', style: TextStyle(fontWeight: FontWeight.w500))),
-              const SizedBox(height: 6),
               TextField(controller: noivoNomeCtrl, decoration: const InputDecoration(labelText: 'Nome do noivo', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivaNomeCtrl, decoration: const InputDecoration(labelText: 'Nome da noiva', border: OutlineInputBorder())),
               const SizedBox(height: 8),
               TextField(controller: noivoInstagramCtrl, decoration: const InputDecoration(labelText: 'Instagram do noivo', border: OutlineInputBorder())),
               const SizedBox(height: 8),
-              TextField(controller: noivoContactoCtrl, decoration: const InputDecoration(labelText: 'Telemóvel do noivo', border: OutlineInputBorder())),
+              TextField(controller: noivaInstagramCtrl, decoration: const InputDecoration(labelText: 'Instagram da noiva', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivoContactoCtrl, decoration: const InputDecoration(labelText: 'Contacto do noivo', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivaContactoCtrl, decoration: const InputDecoration(labelText: 'Contacto da noiva', border: OutlineInputBorder())),
               const SizedBox(height: 8),
               TextField(controller: noivoProfissaoCtrl, decoration: const InputDecoration(labelText: 'Profissão do noivo', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivaProfissaoCtrl, decoration: const InputDecoration(labelText: 'Profissão da noiva', border: OutlineInputBorder())),
               const SizedBox(height: 8),
               TextField(controller: noivoFilhoDe1Ctrl, decoration: const InputDecoration(labelText: 'Filho de (pai)', border: OutlineInputBorder())),
               const SizedBox(height: 8),
               TextField(controller: noivoFilhoDe2Ctrl, decoration: const InputDecoration(labelText: 'Filho de (mãe)', border: OutlineInputBorder())),
               const SizedBox(height: 8),
+              TextField(controller: noivaFilhoDe1Ctrl, decoration: const InputDecoration(labelText: 'Filha de (pai)', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivaFilhoDe2Ctrl, decoration: const InputDecoration(labelText: 'Filha de (mãe)', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
               TextField(controller: noivoMoradaCtrl, decoration: const InputDecoration(labelText: 'Morada do noivo', border: OutlineInputBorder())),
               const SizedBox(height: 8),
+              TextField(controller: noivaMoradaCtrl, decoration: const InputDecoration(labelText: 'Morada da noiva', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
               TextField(controller: noivoCoordenadasCtrl, decoration: const InputDecoration(labelText: 'Coordenadas do noivo', border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              TextField(controller: noivaCoordenadasCtrl, decoration: const InputDecoration(labelText: 'Coordenadas da noiva', border: OutlineInputBorder())),
               const SizedBox(height: 8),
               TextField(
                 controller: casaNoivoChegadaCtrl,
                 readOnly: true,
                 onTap: () => _pickTimeInto(casaNoivoChegadaCtrl),
-                decoration: const InputDecoration(labelText: 'Casa do noivo: chegada', border: OutlineInputBorder()),
+                decoration: const InputDecoration(labelText: 'Casa do noivo: hora de chegada', border: OutlineInputBorder()),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: casaNoivoSaidaCtrl,
                 readOnly: true,
                 onTap: () => _pickTimeInto(casaNoivoSaidaCtrl),
-                decoration: const InputDecoration(labelText: 'Casa do noivo: saída', border: OutlineInputBorder()),
+                decoration: const InputDecoration(labelText: 'Casa do noivo: hora de saída', border: OutlineInputBorder()),
               ),
-              const SizedBox(height: 12),
-              const Align(alignment: Alignment.centerLeft, child: Text('Noiva', style: TextStyle(fontWeight: FontWeight.w500))),
-              const SizedBox(height: 6),
-              TextField(controller: noivaNomeCtrl, decoration: const InputDecoration(labelText: 'Nome da noiva', border: OutlineInputBorder())),
-              const SizedBox(height: 8),
-              TextField(controller: noivaInstagramCtrl, decoration: const InputDecoration(labelText: 'Instagram da noiva', border: OutlineInputBorder())),
-              const SizedBox(height: 8),
-              TextField(controller: noivaContactoCtrl, decoration: const InputDecoration(labelText: 'Telemóvel da noiva', border: OutlineInputBorder())),
-              const SizedBox(height: 8),
-              TextField(controller: noivaProfissaoCtrl, decoration: const InputDecoration(labelText: 'Profissão da noiva', border: OutlineInputBorder())),
-              const SizedBox(height: 8),
-              TextField(controller: noivaFilhoDe1Ctrl, decoration: const InputDecoration(labelText: 'Filha de (pai)', border: OutlineInputBorder())),
-              const SizedBox(height: 8),
-              TextField(controller: noivaFilhoDe2Ctrl, decoration: const InputDecoration(labelText: 'Filha de (mãe)', border: OutlineInputBorder())),
-              const SizedBox(height: 8),
-              TextField(controller: noivaMoradaCtrl, decoration: const InputDecoration(labelText: 'Morada da noiva', border: OutlineInputBorder())),
-              const SizedBox(height: 8),
-              TextField(controller: noivaCoordenadasCtrl, decoration: const InputDecoration(labelText: 'Coordenadas da noiva', border: OutlineInputBorder())),
               const SizedBox(height: 8),
               TextField(
                 controller: casaNoivaChegadaCtrl,
                 readOnly: true,
                 onTap: () => _pickTimeInto(casaNoivaChegadaCtrl),
-                decoration: const InputDecoration(labelText: 'Casa da noiva: chegada', border: OutlineInputBorder()),
+                decoration: const InputDecoration(labelText: 'Casa da noiva: hora de chegada', border: OutlineInputBorder()),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: casaNoivaSaidaCtrl,
                 readOnly: true,
                 onTap: () => _pickTimeInto(casaNoivaSaidaCtrl),
-                decoration: const InputDecoration(labelText: 'Casa da noiva: saída', border: OutlineInputBorder()),
+                decoration: const InputDecoration(labelText: 'Casa da noiva: hora de saída', border: OutlineInputBorder()),
               ),
               const SizedBox(height: 8),
             ],
@@ -2704,150 +2605,6 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               TextField(controller: instagramPaisCtrl, decoration: const InputDecoration(labelText: 'Instagram dos pais', border: OutlineInputBorder())),
               const SizedBox(height: 8),
             ],
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text('Informações do serviço', style: TextStyle(fontWeight: FontWeight.w600)),
-            ),
-            const SizedBox(height: 8),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoSaveTheDate,
-              onChanged: (v) => setState(() => servicoSaveTheDate = v ?? false),
-              title: const Text('Save the date'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoFotosLoveStory,
-              onChanged: (v) => setState(() => servicoFotosLoveStory = v ?? false),
-              title: const Text('Fotos love story'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoVideoLoveStory,
-              onChanged: (v) => setState(() => servicoVideoLoveStory = v ?? false),
-              title: const Text('Video love story'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoProjectarLoveStory,
-              onChanged: (v) => setState(() => servicoProjectarLoveStory = v ?? false),
-              title: const Text('Projectar love story'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoComboBelezaLoveStory,
-              onChanged: (v) => setState(() => servicoComboBelezaLoveStory = v ?? false),
-              title: const Text('Combo beleza love story'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoAlbumDigital305,
-              onChanged: (v) => setState(() => servicoAlbumDigital305 = v ?? false),
-              title: const Text('Album digital 30x5'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoComboBelezaTtd,
-              onChanged: (v) => setState(() => servicoComboBelezaTtd = v ?? false),
-              title: const Text('Combo beleza TTD'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoAlbumDigital,
-              onChanged: (v) => setState(() => servicoAlbumDigital = v ?? false),
-              title: const Text('Album digital'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoAlbumConvidados,
-              onChanged: (v) => setState(() => servicoAlbumConvidados = v ?? false),
-              title: const Text('Album convidados'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoAlbuns4020,
-              onChanged: (v) => setState(() => servicoAlbuns4020 = v ?? false),
-              title: const Text('Albuns 40x20'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoSameDayEdit,
-              onChanged: (v) => setState(() => servicoSameDayEdit = v ?? false),
-              title: const Text('Same day edit'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoProjectarSameDayEdit,
-              onChanged: (v) => setState(() => servicoProjectarSameDayEdit = v ?? false),
-              title: const Text('Projectar same day edit'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoGaleriaDigitalConvidados,
-              onChanged: (v) => setState(() => servicoGaleriaDigitalConvidados = v ?? false),
-              title: const Text('Galeria digital convidados'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoFotoLembrancaQr,
-              onChanged: (v) => setState(() => servicoFotoLembrancaQr = v ?? false),
-              title: const Text('Foto lembrança QR'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoImpressao100,
-              onChanged: (v) => setState(() => servicoImpressao100 = v ?? false),
-              title: const Text('Impressão 100 11x22,7'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoVideoDepoisSim,
-              onChanged: (v) => setState(() => servicoVideoDepoisSim = v ?? false),
-              title: const Text('Video depois do sim'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: servicoDrone,
-              onChanged: (v) => setState(() => servicoDrone = v ?? false),
-              title: const Text('Drone'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: servicoNumProfissionaisCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Nº de profissionais', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: servicoCondicoesMinimasCtrl,
-              decoration: const InputDecoration(labelText: 'Condições mínimas', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: servicoPrazoEntregaCtrl,
-              decoration: const InputDecoration(labelText: 'Prazo de entrega', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: servicoTelaCtrl,
-              decoration: const InputDecoration(labelText: 'Tela', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: servicoMusicasCtrl,
-              decoration: const InputDecoration(labelText: 'Músicas', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: servicoUsbCtrl,
-              decoration: const InputDecoration(labelText: 'USB', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: servicoExtrasCtrl,
-              decoration: const InputDecoration(labelText: 'Extras', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 8),
             if (widget.event != null && _isTodayOrPast(dateCtrl.text)) ...[
               SwitchListTile(
                 value: isLocked,
@@ -2862,13 +2619,6 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                   : () async {
                     final price = num.tryParse(priceCtrl.text.trim()) ?? 0;
                     final basePrice = num.tryParse(basePriceCtrl.text.trim()) ?? 0;
-                    final rawPin = pinCtrl.text.trim();
-                    final pin = RegExp(r'^\\d{4}$').hasMatch(rawPin) ? rawPin : null;
-                    final internalCode = internalCodeCtrl.text.trim().isEmpty ? null : internalCodeCtrl.text.trim();
-                    if (rawPin.isNotEmpty && pin == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('PIN deve ter 4 dígitos.')));
-                      return;
-                    }
                     final meta = Map<String, dynamic>.from(widget.event?.eventMeta ?? {});
                     void setMeta(String key, TextEditingController ctrl) {
                       final value = ctrl.text.trim();
@@ -2887,6 +2637,7 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                       'noiva_profissao',
                       'noivo_instagram',
                       'noiva_instagram',
+                      'instagram_noivos',
                       'noivo_filho_de_1',
                       'noivo_filho_de_2',
                       'noiva_filho_de_1',
@@ -2920,11 +2671,11 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                     setMeta('data_entrega', dataEntregaCtrl);
                     setMeta('estar_na_loja_as', estarNaLojaCtrl);
                     setMeta('tipo_pacote', tipoPacoteCtrl);
+                    setMeta('equipa_de_trabalho', equipaTrabalhoCtrl);
                     if (eventType == 'casamento') {
                       for (final key in baptKeys) {
                         meta.remove(key);
                       }
-                      meta.remove('instagram_noivos');
                       setMeta('noivo_nome', noivoNomeCtrl);
                       setMeta('noiva_nome', noivaNomeCtrl);
                       setMeta('noivo_instagram', noivoInstagramCtrl);
@@ -2959,73 +2710,13 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                       setMeta('morada', batizadoMoradaCtrl);
                       setMeta('instagram_pais', instagramPaisCtrl);
                     }
-                    meta['servico_save_the_date'] = servicoSaveTheDate;
-                    meta['servico_fotos_love_story'] = servicoFotosLoveStory;
-                    meta['servico_video_love_story'] = servicoVideoLoveStory;
-                    meta['servico_projectar_love_story'] = servicoProjectarLoveStory;
-                    meta['servico_combo_beleza_love_story'] = servicoComboBelezaLoveStory;
-                    meta['servico_album_digital_30_5'] = servicoAlbumDigital305;
-                    meta['servico_combo_beleza_ttd'] = servicoComboBelezaTtd;
-                    meta['servico_album_digital'] = servicoAlbumDigital;
-                    meta['servico_album_convidados'] = servicoAlbumConvidados;
-                    meta['servico_albuns_40_20'] = servicoAlbuns4020;
-                    meta['servico_same_day_edit'] = servicoSameDayEdit;
-                    meta['servico_projectar_same_day_edit'] = servicoProjectarSameDayEdit;
-                    meta['servico_galeria_digital_convidados'] = servicoGaleriaDigitalConvidados;
-                    meta['servico_foto_lembranca_qr'] = servicoFotoLembrancaQr;
-                    meta['servico_impressao_100_11x22_7'] = servicoImpressao100;
-                    meta['servico_video_depois_do_sim'] = servicoVideoDepoisSim;
-                    meta['servico_drone'] = servicoDrone;
-                    setMeta('servico_num_profissionais', servicoNumProfissionaisCtrl);
-                    setMeta('servico_condicoes_minimas', servicoCondicoesMinimasCtrl);
-                    setMeta('servico_prazo_entrega', servicoPrazoEntregaCtrl);
-                    setMeta('servico_tela', servicoTelaCtrl);
-                    setMeta('servico_musicas', servicoMusicasCtrl);
-                    setMeta('servico_usb', servicoUsbCtrl);
-                    setMeta('servico_extras', servicoExtrasCtrl);
-                    if (eventType == 'casamento') {
-                      final required = [
-                        noivoNomeCtrl.text,
-                        noivaNomeCtrl.text,
-                        noivoContactoCtrl.text,
-                        noivaContactoCtrl.text,
-                        noivoProfissaoCtrl.text,
-                        noivaProfissaoCtrl.text,
-                        noivoMoradaCtrl.text,
-                        noivaMoradaCtrl.text,
-                      ];
-                      if (required.any((v) => v.trim().isEmpty)) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Preenche todos os dados do casamento.')),
-                        );
-                        return;
-                      }
-                    }
-                    if (eventType == 'batizado') {
-                      final required = [
-                        bebeNomeCtrl.text,
-                        paiNomeCtrl.text,
-                        maeNomeCtrl.text,
-                        padrinhoNomeCtrl.text,
-                        madrinhaNomeCtrl.text,
-                        contactoPaisCtrl.text,
-                        batizadoMoradaCtrl.text,
-                      ];
-                      if (required.any((v) => v.trim().isEmpty)) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Preenche todos os dados do batizado.')),
-                        );
-                        return;
-                      }
-                    }
                     final payload = StaffEventPayload(
                       name: nameCtrl.text.trim(),
+                      legacyReportNumber: reportNumberCtrl.text.trim(),
                       eventDate: dateCtrl.text.trim(),
                       eventTime: timeCtrl.text.trim(),
                       pricePerPhoto: price,
                       basePrice: basePrice,
-                      internalCode: internalCode,
-                      accessPin: pin,
                       eventType: eventType,
                       eventMeta: meta,
                       notes: notesCtrl.text.trim(),
@@ -3033,14 +2724,6 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                     );
                       if (payload.eventDate.isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Data é obrigatória.')));
-                        return;
-                      }
-                      if (eventType.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Seleciona o tipo de evento.')));
-                        return;
-                      }
-                      if (basePrice < 0 || price < 0) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Preços inválidos.')));
                         return;
                       }
                       try {
@@ -3125,97 +2808,87 @@ class _StaffEventStaffPageState extends ConsumerState<StaffEventStaffPage> {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              SectionCard(
-                title: 'Associar staff',
-                child: Column(
-                  children: [
-                    DropdownButtonFormField<int>(
-                      value: selectedUserId,
-                      items: users.map((u) => DropdownMenuItem(value: u.id, child: Text('${u.name} (${u.role})'))).toList(),
-                      onChanged: (v) => setState(() => selectedUserId = v),
-                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Utilizador'),
-                    ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      value: role,
-                      items: const [
-                        DropdownMenuItem(value: 'photographer', child: Text('Fotógrafo')),
-                        DropdownMenuItem(value: 'assistant', child: Text('Assistente')),
-                        DropdownMenuItem(value: 'sales', child: Text('Vendas')),
-                      ],
-                      onChanged: (v) => setState(() => role = v ?? 'photographer'),
-                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Função'),
-                    ),
-                    const SizedBox(height: 8),
-                    SwitchListTile(
-                      value: sendInvite,
-                      onChanged: (v) => setState(() => sendInvite = v),
-                      title: const Text('Enviar convite'),
-                    ),
-                    if (sendInvite) ...[
-                      DropdownButtonFormField<String>(
-                        value: channel,
-                        items: const [
-                          DropdownMenuItem(value: 'email', child: Text('Email')),
-                          DropdownMenuItem(value: 'whatsapp', child: Text('WhatsApp')),
-                        ],
-                        onChanged: (v) => setState(() => channel = v ?? 'email'),
-                        decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Canal'),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: messageCtrl,
-                        maxLines: 2,
-                        decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Mensagem (opcional)'),
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    FilledButton(
-                      onPressed: selectedUserId == null
-                          ? null
-                          : () async {
-                              await ref.read(apiProvider).staffAssignEventStaff(
-                                    token,
-                                    widget.event.id,
-                                    [selectedUserId!],
-                                    role: role,
-                                    sendInvite: sendInvite,
-                                    channel: channel,
-                                    message: messageCtrl.text.trim(),
-                                  );
-                              if (!mounted) return;
-                              setState(() {});
-                            },
-                      child: const Text('Associar'),
-                    ),
-                  ],
-                ),
+              const Text('Associar staff', style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<int>(
+                value: selectedUserId,
+                items: users.map((u) => DropdownMenuItem(value: u.id, child: Text('${u.name} (${u.role})'))).toList(),
+                onChanged: (v) => setState(() => selectedUserId = v),
+                decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Utilizador'),
               ),
-              const SizedBox(height: 12),
-              SectionCard(
-                title: 'Staff associado',
-                child: Column(
-                  children: [
-                    if (staff.isEmpty) const Text('Sem staff associado.'),
-                    ...staff.map((s) {
-                      return Card(
-                        child: ListTile(
-                          title: Text('${s.user.name} (${s.user.role})'),
-                          subtitle: Text('${s.role} • ${s.status}'),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: () async {
-                              await ref.read(apiProvider).staffRemoveEventStaff(token, widget.event.id, s.user.id);
-                              if (!mounted) return;
-                              setState(() {});
-                            },
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ],
-                ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                value: role,
+                items: const [
+                  DropdownMenuItem(value: 'photographer', child: Text('Fotógrafo')),
+                  DropdownMenuItem(value: 'assistant', child: Text('Assistente')),
+                  DropdownMenuItem(value: 'sales', child: Text('Vendas')),
+                ],
+                onChanged: (v) => setState(() => role = v ?? 'photographer'),
+                decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Função'),
               ),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                value: sendInvite,
+                onChanged: (v) => setState(() => sendInvite = v),
+                title: const Text('Enviar convite'),
+              ),
+              if (sendInvite) ...[
+                DropdownButtonFormField<String>(
+                  value: channel,
+                  items: const [
+                    DropdownMenuItem(value: 'email', child: Text('Email')),
+                    DropdownMenuItem(value: 'whatsapp', child: Text('WhatsApp')),
+                  ],
+                  onChanged: (v) => setState(() => channel = v ?? 'email'),
+                  decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Canal'),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: messageCtrl,
+                  maxLines: 2,
+                  decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Mensagem (opcional)'),
+                ),
+              ],
+              const SizedBox(height: 8),
+              FilledButton(
+                onPressed: selectedUserId == null
+                    ? null
+                    : () async {
+                        await ref.read(apiProvider).staffAssignEventStaff(
+                              token,
+                              widget.event.id,
+                              [selectedUserId!],
+                              role: role,
+                              sendInvite: sendInvite,
+                              channel: channel,
+                              message: messageCtrl.text.trim(),
+                            );
+                        if (!mounted) return;
+                        setState(() {});
+                      },
+                child: const Text('Associar'),
+              ),
+              const Divider(height: 32),
+              const Text('Staff associado', style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              if (staff.isEmpty) const Text('Sem staff associado.'),
+              ...staff.map((s) {
+                return Card(
+                  child: ListTile(
+                    title: Text('${s.user.name} (${s.user.role})'),
+                    subtitle: Text('${s.role} • ${s.status}'),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () async {
+                        await ref.read(apiProvider).staffRemoveEventStaff(token, widget.event.id, s.user.id);
+                        if (!mounted) return;
+                        setState(() {});
+                      },
+                    ),
+                  ),
+                );
+              }).toList(),
             ],
           );
         },
@@ -3287,49 +2960,42 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(12),
             children: [
-              SectionCard(
-                title: 'Upload de fotos',
-                child: Column(
-                  children: [
-                    DropdownButtonFormField<int>(
-                      value: eventId,
-                      items: events.map((e) => DropdownMenuItem(value: e.id, child: Text(e.internalCode ?? e.name))).toList(),
-                      onChanged: uploading ? null : (v) => setState(() => eventId = v),
-                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Evento'),
-                    ),
-                    const SizedBox(height: 12),
-                    FilledButton.icon(
-                      onPressed: uploading
-                          ? null
-                          : () async {
-                              final picker = ImagePicker();
-                              final files = await picker.pickMultiImage(imageQuality: 90);
-                              if (files.isEmpty) return;
-                              setState(() {
-                                uploading = true;
-                                status = 'A enviar ${files.length} ficheiros...';
-                              });
-                              try {
-                                for (final file in files) {
-                                  await _uploadFile(token, eventId!, File(file.path));
-                                }
-                                if (!context.mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Uploads concluídos.')));
-                              } catch (e) {
-                                if (!context.mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro upload: $e')));
-                              } finally {
-                                if (mounted) setState(() => uploading = false);
-                              }
-                            },
-                      icon: const Icon(Icons.add_a_photo),
-                      label: const Text('Selecionar fotos'),
-                    ),
-                    const SizedBox(height: 12),
-                    if (status.isNotEmpty) Text(status),
-                  ],
-                ),
+              DropdownButtonFormField<int>(
+                value: eventId,
+                items: events.map((e) => DropdownMenuItem(value: e.id, child: Text(e.name))).toList(),
+                onChanged: uploading ? null : (v) => setState(() => eventId = v),
+                decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Evento'),
               ),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: uploading
+                    ? null
+                    : () async {
+                        final picker = ImagePicker();
+                        final files = await picker.pickMultiImage(imageQuality: 90);
+                        if (files.isEmpty) return;
+                        setState(() {
+                          uploading = true;
+                          status = 'A enviar ${files.length} ficheiros...';
+                        });
+                        try {
+                          for (final file in files) {
+                            await _uploadFile(token, eventId!, File(file.path));
+                          }
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Uploads concluídos.')));
+                        } catch (e) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro upload: $e')));
+                        } finally {
+                          if (mounted) setState(() => uploading = false);
+                        }
+                      },
+                icon: const Icon(Icons.add_a_photo),
+                label: const Text('Selecionar fotos'),
+              ),
+              const SizedBox(height: 12),
+              Text(status),
             ],
           );
         },
@@ -3438,41 +3104,38 @@ class _StaffPhotosPageState extends ConsumerState<StaffPhotosPage> {
           return Column(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                child: SectionCard(
-                  title: 'Filtros',
-                  child: Column(
-                    children: [
-                      DropdownButtonFormField<int>(
-                        value: eventId,
-                        items: events.map((e) => DropdownMenuItem(value: e.id, child: Text(e.internalCode ?? e.name))).toList(),
-                        onChanged: (v) => setState(() => eventId = v),
-                        decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Evento'),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: searchCtrl,
-                        decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Pesquisar número'),
-                        onSubmitted: (_) => setState(() {}),
-                      ),
-                      if (selected.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: FilledButton(
-                            onPressed: () async {
-                              final ok = await _confirm(context, 'Apagar selecionadas?', 'Isto remove fotos permanentemente.');
-                              if (!ok) return;
-                              final deleted = await ref.read(apiProvider).staffBulkDeletePhotos(token, eventId!, selected.toList());
-                              if (!context.mounted) return;
-                              selected.clear();
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Apagadas $deleted fotos.')));
-                              setState(() {});
-                            },
-                            child: Text('Apagar selecionadas (${selected.length})'),
-                          ),
+                padding: const EdgeInsets.all(8),
+                child: Column(
+                  children: [
+                    DropdownButtonFormField<int>(
+                      value: eventId,
+                      items: events.map((e) => DropdownMenuItem(value: e.id, child: Text(e.name))).toList(),
+                      onChanged: (v) => setState(() => eventId = v),
+                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Evento'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: searchCtrl,
+                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Pesquisar número'),
+                      onSubmitted: (_) => setState(() {}),
+                    ),
+                    if (selected.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: FilledButton(
+                          onPressed: () async {
+                            final ok = await _confirm(context, 'Apagar selecionadas?', 'Isto remove fotos permanentemente.');
+                            if (!ok) return;
+                            final deleted = await ref.read(apiProvider).staffBulkDeletePhotos(token, eventId!, selected.toList());
+                            if (!context.mounted) return;
+                            selected.clear();
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Apagadas $deleted fotos.')));
+                            setState(() {});
+                          },
+                          child: Text('Apagar selecionadas (${selected.length})'),
                         ),
-                    ],
-                  ),
+                      ),
+                  ],
                 ),
               ),
               Expanded(
@@ -3487,7 +3150,6 @@ class _StaffPhotosPageState extends ConsumerState<StaffPhotosPage> {
                     if (photos.isEmpty) return const Center(child: Text('Sem fotos'));
                     return ListView.builder(
                       physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.all(12),
                       itemCount: photos.length,
                       itemBuilder: (_, i) {
                         final p = photos[i];
@@ -3617,84 +3279,87 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
           return Column(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                child: SectionCard(
-                  title: 'Filtros',
-                  child: Column(
-                    children: [
-                      DropdownButtonFormField<int?>(
-                        value: eventId,
-                        items: [
-                          const DropdownMenuItem<int?>(value: null, child: Text('Todos eventos')),
-                          ...events.map((e) => DropdownMenuItem(value: e.id, child: Text(e.internalCode ?? e.name))),
-                        ],
-                        onChanged: (v) => setState(() => eventId = v),
-                        decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Evento'),
-                      ),
-                      const SizedBox(height: 8),
-                      DropdownButtonFormField<String>(
-                        initialValue: status,
-                        items: const [
-                          DropdownMenuItem(value: '', child: Text('Todos status')),
-                          DropdownMenuItem(value: 'pending', child: Text('pending')),
-                          DropdownMenuItem(value: 'paid', child: Text('paid')),
-                          DropdownMenuItem(value: 'delivered', child: Text('delivered')),
-                        ],
-                        onChanged: (v) => setState(() => status = v ?? ''),
-                        decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Status'),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: queryCtrl,
-                        decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Nome/código'),
-                        onSubmitted: (_) => setState(() {}),
-                      ),
-                      if (canExport && eventId != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: FilledButton.tonal(
-                            onPressed: () async {
-                              final path = await ref.read(apiProvider).staffExportOrdersCsv(token, eventId!);
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('CSV guardado em: $path')));
-                            },
-                            child: const Text('Exportar CSV do evento'),
-                          ),
+                padding: const EdgeInsets.all(8),
+                child: Column(
+                  children: [
+                    DropdownButtonFormField<int?>(
+                      value: eventId,
+                      items: [
+                        const DropdownMenuItem<int?>(value: null, child: Text('Todos eventos')),
+                        ...events.map((e) => DropdownMenuItem(value: e.id, child: Text(e.name))),
+                      ],
+                      onChanged: (v) => setState(() => eventId = v),
+                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Evento'),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: status,
+                      items: const [
+                        DropdownMenuItem(value: '', child: Text('Todos status')),
+                        DropdownMenuItem(value: 'pending', child: Text('pending')),
+                        DropdownMenuItem(value: 'paid', child: Text('paid')),
+                        DropdownMenuItem(value: 'delivered', child: Text('delivered')),
+                      ],
+                      onChanged: (v) => setState(() => status = v ?? ''),
+                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Status'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: queryCtrl,
+                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Nome/codigo'),
+                      onSubmitted: (_) => setState(() {}),
+                    ),
+                    if (canExport && eventId != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: FilledButton.tonal(
+                          onPressed: () async {
+                            final path = await ref.read(apiProvider).staffExportOrdersCsv(token, eventId!);
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('CSV guardado em: $path')));
+                          },
+                          child: const Text('Exportar CSV do evento'),
                         ),
-                      if (selected.isNotEmpty && canWrite)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: isPhotographer
-                              ? FilledButton(
-                                  onPressed: () async {
-                                    final updated = await ref.read(apiProvider).staffBulkOrderStatus(token, selected.toList(), 'paid');
-                                    if (!context.mounted) return;
-                                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Atualizados $updated pedidos.')));
-                                    selected.clear();
-                                    setState(() {});
-                                  },
-                                  child: const Text('Marcar pagos (selecionados)'),
-                                )
-                              : DropdownButtonFormField<String>(
-                                  value: 'paid',
-                                  items: const [
-                                    DropdownMenuItem(value: 'pending', child: Text('pending')),
-                                    DropdownMenuItem(value: 'paid', child: Text('paid')),
-                                    DropdownMenuItem(value: 'delivered', child: Text('delivered')),
-                                  ],
-                                  onChanged: (v) async {
-                                    if (v == null) return;
-                                    final updated = await ref.read(apiProvider).staffBulkOrderStatus(token, selected.toList(), v);
-                                    if (!context.mounted) return;
-                                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Atualizados $updated pedidos.')));
-                                    selected.clear();
-                                    setState(() {});
-                                  },
-                                  decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Bulk status'),
-                                ),
-                        ),
-                    ],
-                  ),
+                      ),
+                    if (selected.isNotEmpty && canWrite)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: isPhotographer
+                            ? FilledButton(
+                                onPressed: () async {
+                                  final updated = await ref.read(apiProvider).staffBulkOrderStatus(token, selected.toList(), 'paid');
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Atualizados $updated pedidos.')));
+                                  selected.clear();
+                                  setState(() {});
+                                },
+                                child: const Text('Marcar pagos (selecionados)'),
+                              )
+                            : Row(
+                                children: [
+                                  Expanded(
+                                    child: DropdownButtonFormField<String>(
+                                      value: 'paid',
+                                      items: const [
+                                        DropdownMenuItem(value: 'pending', child: Text('pending')),
+                                        DropdownMenuItem(value: 'paid', child: Text('paid')),
+                                        DropdownMenuItem(value: 'delivered', child: Text('delivered')),
+                                      ],
+                                      onChanged: (v) async {
+                                        if (v == null) return;
+                                        final updated = await ref.read(apiProvider).staffBulkOrderStatus(token, selected.toList(), v);
+                                        if (!context.mounted) return;
+                                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Atualizados $updated pedidos.')));
+                                        selected.clear();
+                                        setState(() {});
+                                      },
+                                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Bulk status'),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                      ),
+                  ],
                 ),
               ),
               Expanded(
@@ -3709,7 +3374,6 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                     if (orders.isEmpty) return const Center(child: Text('Sem pedidos'));
                     return ListView.builder(
                       physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.all(12),
                       itemCount: orders.length,
                       itemBuilder: (_, i) {
                         final o = orders[i];
@@ -3913,106 +3577,87 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              SectionCard(
-                title: 'Resumo',
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Código: ${order.orderCode}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    if (order.eventName != null) Text('Evento: ${order.eventName}'),
-                    Text('Status: ${order.status}'),
-                    Text('Pagamento: ${order.paymentMethod.isEmpty ? '-' : order.paymentMethod}'),
-                    Text('Total: ${order.totalAmount}'),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              SectionCard(
-                title: editing ? 'Editar cliente' : 'Cliente',
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (!editing) ...[
-                      Text('Nome: ${order.customerName}'),
-                      if ((order.customerEmail ?? '').isNotEmpty) Text('Email: ${order.customerEmail}'),
-                      if ((order.customerPhone ?? '').isNotEmpty) Text('Telefone: ${order.customerPhone}'),
-                      if (isPhotographer && order.status == 'pending')
-                        Padding(
-                          padding: const EdgeInsets.only(top: 12),
-                          child: FilledButton(
-                            onPressed: () async {
-                              await ref.read(apiProvider).markOrderPaid(token, order.id);
-                              if (!context.mounted) return;
-                              setState(() => _loadDetail(token));
-                            },
-                            child: const Text('Marcar como pago'),
-                          ),
-                        ),
-                    ] else ...[
-                      TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
-                      const SizedBox(height: 8),
-                      TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
-                      const SizedBox(height: 8),
-                      TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Telefone', border: OutlineInputBorder())),
-                      const SizedBox(height: 8),
-                      TextField(controller: paymentCtrl, decoration: const InputDecoration(labelText: 'Pagamento', border: OutlineInputBorder())),
-                      const SizedBox(height: 8),
-                      DropdownButtonFormField<String>(
-                        value: status,
-                        items: const [
-                          DropdownMenuItem(value: 'pending', child: Text('pending')),
-                          DropdownMenuItem(value: 'paid', child: Text('paid')),
-                          DropdownMenuItem(value: 'delivered', child: Text('delivered')),
-                        ],
-                        onChanged: (v) => setState(() => status = v ?? status),
-                        decoration: const InputDecoration(labelText: 'Status', border: OutlineInputBorder()),
-                      ),
-                      const SizedBox(height: 12),
-                      FilledButton(
-                        onPressed: saving ? null : () => _save(token),
-                        child: Text(saving ? 'A guardar...' : 'Guardar'),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              SectionCard(
-                title: 'Fotos',
-                child: order.photos.isEmpty
-                    ? const Text('Sem fotos.')
-                    : Wrap(
-                        spacing: 6,
-                        children: order.photos.map((p) => Chip(label: Text(p.number))).toList(),
-                      ),
-              ),
-              if (canDownload) ...[
+              Text('Código: ${order.orderCode}', style: const TextStyle(fontWeight: FontWeight.bold)),
+              if (order.eventName != null) Text('Evento: ${order.eventName}'),
+              const SizedBox(height: 8),
+              if (!editing) ...[
+                Text('Status: ${order.status}'),
+                Text('Pagamento: ${order.paymentMethod.isEmpty ? '-' : order.paymentMethod}'),
+                Text('Total: ${order.totalAmount}'),
                 const SizedBox(height: 12),
-                SectionCard(
-                  title: 'Ações',
-                  child: Wrap(
-                    spacing: 8,
-                    children: [
-                      OutlinedButton(
-                        onPressed: () async {
-                          final sent = await ref.read(apiProvider).staffSendDownloadLink(token, order.id);
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(sent ? 'Link enviado.' : 'Falha no envio.')));
-                        },
-                        child: const Text('Enviar link'),
-                      ),
-                      OutlinedButton(
-                        onPressed: () async {
-                          final path = await ref.read(apiProvider).staffDownloadAll(token, order.id);
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('ZIP guardado: $path')));
-                        },
-                        child: const Text('Download ZIP'),
-                      ),
-                    ],
+                Text('Cliente: ${order.customerName}'),
+                if ((order.customerEmail ?? '').isNotEmpty) Text('Email: ${order.customerEmail}'),
+                if ((order.customerPhone ?? '').isNotEmpty) Text('Telefone: ${order.customerPhone}'),
+                if (isPhotographer && order.status == 'pending')
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: FilledButton(
+                      onPressed: () async {
+                        await ref.read(apiProvider).markOrderPaid(token, order.id);
+                        if (!context.mounted) return;
+                        setState(() => _loadDetail(token));
+                      },
+                      child: const Text('Marcar como pago'),
+                    ),
                   ),
+              ] else ...[
+                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
+                const SizedBox(height: 8),
+                TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+                const SizedBox(height: 8),
+                TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Telefone', border: OutlineInputBorder())),
+                const SizedBox(height: 8),
+                TextField(controller: paymentCtrl, decoration: const InputDecoration(labelText: 'Pagamento', border: OutlineInputBorder())),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: status,
+                  items: const [
+                    DropdownMenuItem(value: 'pending', child: Text('pending')),
+                    DropdownMenuItem(value: 'paid', child: Text('paid')),
+                    DropdownMenuItem(value: 'delivered', child: Text('delivered')),
+                  ],
+                  onChanged: (v) => setState(() => status = v ?? status),
+                  decoration: const InputDecoration(labelText: 'Status', border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: saving ? null : () => _save(token),
+                  child: Text(saving ? 'A guardar...' : 'Guardar'),
                 ),
               ],
+              const SizedBox(height: 16),
+              const Text('Fotos', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              if (order.photos.isEmpty)
+                const Text('Sem fotos.')
+              else
+                Wrap(
+                  spacing: 6,
+                  children: order.photos.map((p) => Chip(label: Text(p.number))).toList(),
+                ),
+              const SizedBox(height: 16),
+              if (canDownload)
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    OutlinedButton(
+                      onPressed: () async {
+                        final sent = await ref.read(apiProvider).staffSendDownloadLink(token, order.id);
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(sent ? 'Link enviado.' : 'Falha no envio.')));
+                      },
+                      child: const Text('Enviar link'),
+                    ),
+                    OutlinedButton(
+                      onPressed: () async {
+                        final path = await ref.read(apiProvider).staffDownloadAll(token, order.id);
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('ZIP guardado: $path')));
+                      },
+                      child: const Text('Download ZIP'),
+                    ),
+                  ],
+                ),
             ],
           );
         },
@@ -4026,30 +3671,6 @@ class StaffSettingsPage extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<StaffSettingsPage> createState() => _StaffSettingsPageState();
-}
-
-class SectionCard extends StatelessWidget {
-  const SectionCard({super.key, required this.title, required this.child, this.padding = const EdgeInsets.all(12)});
-  final String title;
-  final Widget child;
-  final EdgeInsets padding;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: padding,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            child,
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _StaffSettingsPageState extends ConsumerState<StaffSettingsPage> {
@@ -4086,61 +3707,56 @@ class _StaffSettingsPageState extends ConsumerState<StaffSettingsPage> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Definições')),
-      body: ListView(
+      body: Padding(
         padding: const EdgeInsets.all(16),
-        children: [
-          SectionCard(
-            title: 'Perfil',
-            child: Column(
-              children: [
-                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
-                const SizedBox(height: 8),
-                TextField(controller: usernameCtrl, decoration: const InputDecoration(labelText: 'Username (opcional)', border: OutlineInputBorder())),
-                const SizedBox(height: 8),
-                TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: passwordCtrl,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Nova password (opcional)', border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: saving
-                      ? null
-                      : () async {
-                          final name = nameCtrl.text.trim();
-                          final email = emailCtrl.text.trim();
-                          if (name.isEmpty || email.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome e email são obrigatórios.')));
-                            return;
-                          }
-                          setState(() => saving = true);
-                          try {
-                            final updated = await ref.read(apiProvider).updateProfile(
-                                  token,
-                                  name: name,
-                                  email: email,
-                                  username: usernameCtrl.text.trim(),
-                                  password: passwordCtrl.text.trim(),
-                                );
-                            ref.read(staffUserProvider.notifier).state = updated;
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Definições atualizadas.')));
-                            passwordCtrl.clear();
-                          } catch (e) {
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
-                          } finally {
-                            if (mounted) setState(() => saving = false);
-                          }
-                        },
-                  child: Text(saving ? 'A guardar...' : 'Guardar'),
-                ),
-              ],
+        child: ListView(
+          children: [
+            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(controller: usernameCtrl, decoration: const InputDecoration(labelText: 'Username (opcional)', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(
+              controller: passwordCtrl,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Nova password (opcional)', border: OutlineInputBorder()),
             ),
-          ),
-        ],
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      final name = nameCtrl.text.trim();
+                      final email = emailCtrl.text.trim();
+                      if (name.isEmpty || email.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome e email são obrigatórios.')));
+                        return;
+                      }
+                      setState(() => saving = true);
+                      try {
+                        final updated = await ref.read(apiProvider).updateProfile(
+                              token,
+                              name: name,
+                              email: email,
+                              username: usernameCtrl.text.trim(),
+                              password: passwordCtrl.text.trim(),
+                            );
+                        ref.read(staffUserProvider.notifier).state = updated;
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Definições atualizadas.')));
+                        passwordCtrl.clear();
+                      } catch (e) {
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                      } finally {
+                        if (mounted) setState(() => saving = false);
+                      }
+                    },
+              child: Text(saving ? 'A guardar...' : 'Guardar'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -4221,14 +3837,13 @@ class _StaffUsersPageState extends ConsumerState<StaffUsersPage> {
             }
             return ListView.builder(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(12),
               itemCount: users.length,
               itemBuilder: (_, i) {
                 final u = users[i];
                 return Card(
                   child: ListTile(
                     title: Text(u.name),
-                    subtitle: Text('${u.username ?? '-'} • ${u.role}\n${u.email}'),
+                    subtitle: Text('${u.username ?? '-'} • ${u.email} • ${u.role}'),
                     trailing: Wrap(
                       spacing: 6,
                       children: [
@@ -4313,97 +3928,85 @@ class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
 
     return Scaffold(
       appBar: AppBar(title: Text(widget.user == null ? 'Novo utilizador' : 'Editar utilizador')),
-      body: ListView(
+      body: Padding(
         padding: const EdgeInsets.all(16),
-        children: [
-          SectionCard(
-            title: 'Dados do utilizador',
-            child: Column(
-              children: [
-                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
-                const SizedBox(height: 8),
-                TextField(controller: usernameCtrl, decoration: const InputDecoration(labelText: 'Username (opcional)', border: OutlineInputBorder())),
-                const SizedBox(height: 8),
-                TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: passwordCtrl,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Password (opcional)', border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  value: role,
-                  items: const [
-                    DropdownMenuItem(value: 'staff', child: Text('staff')),
-                    DropdownMenuItem(value: 'photographer', child: Text('fotografo')),
-                    DropdownMenuItem(value: 'admin', child: Text('admin')),
-                  ],
-                  onChanged: (v) => setState(() => role = v ?? 'staff'),
-                  decoration: const InputDecoration(labelText: 'Role', border: OutlineInputBorder()),
-                ),
+        child: ListView(
+          children: [
+            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(controller: usernameCtrl, decoration: const InputDecoration(labelText: 'Username (opcional)', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            TextField(
+              controller: passwordCtrl,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Password (opcional)', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: role,
+              items: const [
+                DropdownMenuItem(value: 'staff', child: Text('staff')),
+                DropdownMenuItem(value: 'photographer', child: Text('fotografo')),
+                DropdownMenuItem(value: 'admin', child: Text('admin')),
               ],
+              onChanged: (v) => setState(() => role = v ?? 'staff'),
+              decoration: const InputDecoration(labelText: 'Role', border: OutlineInputBorder()),
             ),
-          ),
-          const SizedBox(height: 12),
-          SectionCard(
-            title: 'Permissões',
-            child: Column(
-              children: kStaffPermissions.entries
-                  .map(
-                    (e) => CheckboxListTile(
-                      value: selectedPermissions.contains(e.key),
-                      onChanged: (v) => setState(() {
-                        if (v == true) {
-                          selectedPermissions.add(e.key);
-                        } else {
-                          selectedPermissions.remove(e.key);
-                        }
-                      }),
-                      title: Text(e.value),
-                      dense: true,
-                      controlAffinity: ListTileControlAffinity.leading,
-                    ),
-                  )
-                  .toList(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          FilledButton(
-            onPressed: saving
-                ? null
-                : () async {
-                    final payload = StaffUserPayload(
-                      name: nameCtrl.text.trim(),
-                      username: usernameCtrl.text.trim(),
-                      email: emailCtrl.text.trim(),
-                      role: role,
-                      permissions: selectedPermissions.toList(),
-                      password: passwordCtrl.text.trim().isEmpty ? null : passwordCtrl.text.trim(),
-                    );
-                    if (payload.name.isEmpty || payload.email.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome e email são obrigatórios.')));
-                      return;
-                    }
-                    try {
-                      setState(() => saving = true);
-                      if (widget.user == null) {
-                        await ref.read(apiProvider).createUser(token, payload);
-                      } else {
-                        await ref.read(apiProvider).updateUser(token, widget.user!.id, payload);
+            const SizedBox(height: 12),
+            const Text('Permissões', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            ...kStaffPermissions.entries.map((e) => CheckboxListTile(
+              value: selectedPermissions.contains(e.key),
+              onChanged: (v) => setState(() {
+                if (v == true) {
+                  selectedPermissions.add(e.key);
+                } else {
+                  selectedPermissions.remove(e.key);
+                }
+              }),
+              title: Text(e.value),
+              dense: true,
+              controlAffinity: ListTileControlAffinity.leading,
+            )),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      final payload = StaffUserPayload(
+                        name: nameCtrl.text.trim(),
+                        username: usernameCtrl.text.trim(),
+                        email: emailCtrl.text.trim(),
+                        role: role,
+                        permissions: selectedPermissions.toList(),
+                        password: passwordCtrl.text.trim().isEmpty ? null : passwordCtrl.text.trim(),
+                      );
+                      if (payload.name.isEmpty || payload.email.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome e email são obrigatórios.')));
+                        return;
                       }
-                      if (!context.mounted) return;
-                      Navigator.pop(context);
-                    } catch (e) {
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
-                    } finally {
-                      if (mounted) setState(() => saving = false);
-                    }
-                  },
-            child: Text(saving ? 'A guardar...' : 'Guardar'),
-          ),
-        ],
+                      try {
+                        setState(() => saving = true);
+                        if (widget.user == null) {
+                          await ref.read(apiProvider).createUser(token, payload);
+                        } else {
+                          await ref.read(apiProvider).updateUser(token, widget.user!.id, payload);
+                        }
+                        if (!context.mounted) return;
+                        Navigator.pop(context);
+                      } catch (e) {
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                      } finally {
+                        if (mounted) setState(() => saving = false);
+                      }
+                    },
+              child: Text(saving ? 'A guardar...' : 'Guardar'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -4455,14 +4058,11 @@ class _StaffClientsPageState extends ConsumerState<StaffClientsPage> {
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: SectionCard(
-                title: 'Pesquisa',
-                child: TextField(
-                  controller: searchCtrl,
-                  decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Pesquisar'),
-                  onSubmitted: (_) => setState(() {}),
-                ),
+              padding: const EdgeInsets.all(8),
+              child: TextField(
+                controller: searchCtrl,
+                decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Pesquisar'),
+                onSubmitted: (_) => setState(() {}),
               ),
             ),
             Expanded(
@@ -4476,7 +4076,6 @@ class _StaffClientsPageState extends ConsumerState<StaffClientsPage> {
                   final clients = snap.data!;
                   if (clients.isEmpty) return const Center(child: Text('Sem clientes'));
                   return ListView.builder(
-                    padding: const EdgeInsets.all(12),
                     itemCount: clients.length,
                     itemBuilder: (_, i) {
                       final c = clients[i];
@@ -4559,29 +4158,22 @@ class _StaffClientFormPageState extends ConsumerState<StaffClientFormPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          SectionCard(
-            title: 'Dados do cliente',
-            child: Column(
-              children: [
-                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
-                const SizedBox(height: 8),
-                TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Telemóvel', border: OutlineInputBorder())),
-                const SizedBox(height: 8),
-                TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: notesCtrl,
-                  maxLines: 3,
-                  decoration: const InputDecoration(labelText: 'Notas', border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 8),
-                SwitchListTile(
-                  value: marketingConsent,
-                  onChanged: (v) => setState(() => marketingConsent = v),
-                  title: const Text('Consentimento marketing'),
-                ),
-              ],
-            ),
+          TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
+          const SizedBox(height: 8),
+          TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Telemóvel', border: OutlineInputBorder())),
+          const SizedBox(height: 8),
+          TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+          const SizedBox(height: 8),
+          TextField(
+            controller: notesCtrl,
+            maxLines: 3,
+            decoration: const InputDecoration(labelText: 'Notas', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            value: marketingConsent,
+            onChanged: (v) => setState(() => marketingConsent = v),
+            title: const Text('Consentimento marketing'),
           ),
           const SizedBox(height: 12),
           FilledButton(
@@ -4866,8 +4458,8 @@ class ApiService {
     return list.map(EventItem.fromJson).toList();
   }
 
-  Future<GuestSession> enterEvent(int id, String password) async {
-    final r = await dio.post('/public/events/$id/enter', data: {'password': password});
+  Future<GuestSession> enterEvent(int id, String pin) async {
+    final r = await dio.post('/public/events/$id/enter', data: {'pin': pin});
     if (r.statusCode != 200) throw _errorFromResponse(r);
     return GuestSession.fromJson(r.data);
   }
@@ -5104,40 +4696,6 @@ class ApiService {
     if (r.statusCode != 200) throw _errorFromResponse(r);
     final list = (r.data['data'] as List).cast<Map<String, dynamic>>();
     return list.map(StaffEvent.fromJson).toList();
-  }
-
-  Future<EventLookupResult> staffEventLookup(
-    String token, {
-    int? currentId,
-    String? eventType,
-    String? internalCode,
-    String? accessPin,
-    String? eventDate,
-    String? eventTime,
-    String? pricePerPhoto,
-    String? basePrice,
-    String? q,
-    Map<String, String>? meta,
-  }) async {
-    final params = <String, dynamic>{};
-    if (currentId != null) params['current_id'] = currentId;
-    if (eventType != null && eventType.isNotEmpty) params['event_type'] = eventType;
-    if (internalCode != null && internalCode.isNotEmpty) params['internal_code'] = internalCode;
-    if (accessPin != null && accessPin.isNotEmpty) params['access_pin'] = accessPin;
-    if (eventDate != null && eventDate.isNotEmpty) params['event_date'] = eventDate;
-    if (eventTime != null && eventTime.isNotEmpty) params['event_time'] = eventTime;
-    if (pricePerPhoto != null && pricePerPhoto.isNotEmpty) params['price_per_photo'] = pricePerPhoto;
-    if (basePrice != null && basePrice.isNotEmpty) params['base_price'] = basePrice;
-    if (q != null && q.isNotEmpty) params['q'] = q;
-    if (meta != null && meta.isNotEmpty) params['meta'] = meta;
-
-    final r = await dio.get(
-      '/events/lookup',
-      queryParameters: params,
-      options: Options(headers: {'Authorization': 'Bearer $token'}),
-    );
-    if (r.statusCode != 200) throw _errorFromResponse(r);
-    return EventLookupResult.fromJson((r.data as Map).cast<String, dynamic>());
   }
 
   Future<Uint8List> staffEventPdf(String token, int eventId) async {
@@ -5460,6 +5018,7 @@ class GuestSession {
     required this.token,
     required this.eventId,
     required this.eventName,
+    this.basePrice,
     required this.pricePerPhoto,
     required this.eventType,
     required this.eventMeta,
@@ -5470,6 +5029,7 @@ class GuestSession {
   final String token;
   final int eventId;
   final String eventName;
+  final num? basePrice;
   final num pricePerPhoto;
   final String? eventType;
   final Map<String, dynamic> eventMeta;
@@ -5483,6 +5043,11 @@ class GuestSession {
       token: j['event_session_token'] as String,
       eventId: e['id'] as int,
       eventName: e['name'] as String,
+      basePrice: e['base_price'] == null
+          ? null
+          : (e['base_price'] is num
+              ? e['base_price'] as num
+              : num.tryParse(e['base_price'].toString())),
       pricePerPhoto: e['price_per_photo'] is num ? e['price_per_photo'] as num : num.tryParse(e['price_per_photo']?.toString() ?? '') ?? 0,
       eventType: e['event_type'] as String?,
       eventMeta: e['event_meta'] is Map<String, dynamic> ? Map<String, dynamic>.from(e['event_meta']) : <String, dynamic>{},
@@ -5724,14 +5289,14 @@ class StaffEvent {
   StaffEvent({
     required this.id,
     required this.name,
+    this.legacyReportNumber,
+    this.reportNumber,
     required this.eventDate,
     this.eventTime,
     required this.pricePerPhoto,
     this.basePrice,
     required this.isActiveToday,
-    this.internalCode,
     this.location,
-    this.accessPassword,
     this.eventType,
     this.eventMeta,
     this.qrToken,
@@ -5741,14 +5306,14 @@ class StaffEvent {
   });
   final int id;
   final String name;
+  final String? legacyReportNumber;
+  final String? reportNumber;
   final String eventDate;
   final String? eventTime;
   final num pricePerPhoto;
   final num? basePrice;
   final bool isActiveToday;
-  final String? internalCode;
   final String? location;
-  final String? accessPassword;
   final String? eventType;
   final Map<String, dynamic>? eventMeta;
   final String? qrToken;
@@ -5759,40 +5324,24 @@ class StaffEvent {
   factory StaffEvent.fromJson(Map<String, dynamic> j) => StaffEvent(
     id: j['id'] as int,
     name: j['name'] as String? ?? '',
+    legacyReportNumber: j['legacy_report_number']?.toString(),
+    reportNumber: j['report_number']?.toString(),
     eventDate: j['event_date'] as String? ?? '',
     eventTime: j['event_time'] as String?,
     pricePerPhoto: j['price_per_photo'] is num ? j['price_per_photo'] as num : num.tryParse(j['price_per_photo']?.toString() ?? '') ?? 0,
-    basePrice: j['base_price'] is num ? j['base_price'] as num : num.tryParse(j['base_price']?.toString() ?? '') ?? 0,
+    basePrice: j['base_price'] == null
+        ? null
+        : (j['base_price'] is num
+            ? j['base_price'] as num
+            : num.tryParse(j['base_price'].toString())),
     isActiveToday: j['is_active_today'] == true || j['is_active_today'] == 1,
-    internalCode: j['internal_code'] as String?,
     location: j['location'] as String?,
-    accessPassword: j['access_password'] as String?,
     eventType: j['event_type'] as String?,
     eventMeta: j['event_meta'] is Map<String, dynamic> ? Map<String, dynamic>.from(j['event_meta']) : null,
     qrToken: j['qr_token'] as String?,
     accessPin: j['access_pin'] as String?,
     notes: j['notes'] as String?,
     isLocked: j['is_locked'] == true || j['is_locked'] == 1,
-  );
-}
-
-class EventLookupResult {
-  EventLookupResult({
-    required this.event,
-    required this.prevId,
-    required this.nextId,
-    required this.total,
-  });
-  final StaffEvent? event;
-  final int? prevId;
-  final int? nextId;
-  final int total;
-
-  factory EventLookupResult.fromJson(Map<String, dynamic> j) => EventLookupResult(
-    event: j['event'] == null ? null : StaffEvent.fromJson((j['event'] as Map).cast<String, dynamic>()),
-    prevId: j['prev_id'] as int?,
-    nextId: j['next_id'] as int?,
-    total: j['total'] is num ? (j['total'] as num).toInt() : int.tryParse(j['total']?.toString() ?? '') ?? 0,
   );
 }
 
@@ -5819,24 +5368,22 @@ class StaffEventStaff {
 class StaffEventPayload {
   StaffEventPayload({
     required this.name,
+    this.legacyReportNumber,
     required this.eventDate,
     required this.eventTime,
     required this.pricePerPhoto,
     this.basePrice,
-    this.internalCode,
-    this.accessPin,
     required this.eventType,
     required this.eventMeta,
     required this.notes,
     required this.isLocked,
   });
   final String name;
+  final String? legacyReportNumber;
   final String eventDate;
   final String eventTime;
   final num pricePerPhoto;
   final num? basePrice;
-  final String? internalCode;
-  final String? accessPin;
   final String eventType;
   final Map<String, dynamic> eventMeta;
   final String notes;
@@ -5844,12 +5391,12 @@ class StaffEventPayload {
 
   Map<String, dynamic> toJson() => {
     'name': name,
+    if (legacyReportNumber != null && legacyReportNumber!.trim().isNotEmpty)
+      'legacy_report_number': legacyReportNumber!.trim(),
     'event_date': eventDate,
     if (eventTime.trim().isNotEmpty) 'event_time': eventTime.trim(),
     'price_per_photo': pricePerPhoto,
     if (basePrice != null) 'base_price': basePrice,
-    if (internalCode != null && internalCode!.trim().isNotEmpty) 'internal_code': internalCode!.trim(),
-    if (accessPin != null && accessPin!.trim().isNotEmpty) 'access_pin': accessPin!.trim(),
     'event_type': eventType.isEmpty ? null : eventType,
     'event_meta': eventMeta,
     if (notes.trim().isNotEmpty) 'notes': notes.trim(),
