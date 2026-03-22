@@ -50,6 +50,9 @@
     </div>
     <div class="flex items-center gap-2 mb-4">
         <button id="search-btn" class="bg-black text-white px-3 py-2 rounded" type="submit" form="event-search-form" formaction="{{ route('events.index') }}" formmethod="get">Procurar</button>
+        @if($event && auth()->user()->hasPermission('uploads.manage'))
+            <a href="{{ route('uploads.index', $event) }}" class="bg-white px-3 py-2 rounded border">Upload</a>
+        @endif
         @if($event)
             <button class="bg-emerald-700 text-white px-3 py-2 rounded" type="submit" form="event-search-form" formaction="{{ route('events.update', $event) }}" formmethod="post">Guardar</button>
             @if(($type ?? null) === 'casamento')

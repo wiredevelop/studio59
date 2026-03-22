@@ -13,6 +13,9 @@
         <h1 class="text-xl font-semibold">Downloads - Pedido {{ $order->order_code }}</h1>
         <p class="text-sm text-gray-600">Evento: {{ $order->event->name }} - Cliente: {{ $order->customer_name }}</p>
         <p class="text-sm text-gray-600">Estado: {{ strtoupper($order->status) }}</p>
+        @if(!empty($expiresAt))
+            <p class="text-sm text-gray-600">Link válido até: {{ $expiresAt->format('d/m/Y H:i') }}</p>
+        @endif
     </div>
 
     <form method="post" action="{{ route('downloads.bulk', ['token' => $token]) }}" id="bulk-download-form">

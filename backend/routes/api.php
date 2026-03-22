@@ -74,7 +74,6 @@ Route::middleware(['auth:sanctum', 'role:admin,staff,photographer'])->group(func
         Route::post('/orders/bulk-status', [StaffOrderController::class, 'bulkStatus']);
         Route::put('/orders/{order}', [StaffOrderController::class, 'update']);
         Route::post('/orders/{order}/mark-paid', [StaffOrderController::class, 'markPaid']);
-        Route::post('/orders/{order}/mark-delivered', [StaffOrderController::class, 'markDelivered']);
     });
     Route::middleware('permission:orders.download')->group(function () {
         Route::post('/orders/{order}/send-download-link', [StaffOrderController::class, 'sendDownloadLink']);

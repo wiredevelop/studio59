@@ -33,6 +33,7 @@ Route::prefix('/guest')->name('guest.')->group(function () {
     Route::post('/events/{event}/catalog/face-search', [GuestController::class, 'faceSearch'])->name('catalog.faceSearch');
     Route::post('/events/{event}/order', [GuestController::class, 'storeOrder'])->name('order.store');
     Route::get('/orders/{orderCode}', [GuestController::class, 'order'])->name('order.show');
+    Route::get('/orders/{orderCode}/status', [GuestController::class, 'orderStatus'])->name('order.status');
 });
 
 Route::get('/downloads/{token}', [DownloadAccessController::class, 'show'])->name('downloads.show');
@@ -41,7 +42,20 @@ Route::post('/downloads/{token}/bulk', [DownloadAccessController::class, 'bulkDo
 
 Route::get('/preview/{photo}', function (Photo $photo) {
     abort_unless($photo->preview_path && Storage::disk('local')->exists($photo->preview_path), 404);
-    return response()->file(storage_path('app/private/'.$photo->preview_path));
+    $path = storage_path('app/private/'.$photo->preview_path);
+    $mtime = filemtime($path);
+    $etag = md5($photo->preview_path.'|'.$mtime.'|'.filesize($path));
+    $response = response()->file($path);
+    $response->setEtag($etag);
+    $response->setLastModified(\Illuminate\Support\Carbon::createFromTimestampUTC($mtime));
+    $response->setPublic();
+    $response->setMaxAge(31536000);
+    $response->setSharedMaxAge(31536000);
+    $response->headers->addCacheControlDirective('immutable', true);
+    if ($response->isNotModified(request())) {
+        return $response;
+    }
+    return $response;
 })->name('preview.image');
 
 Route::middleware(['auth', 'nocache'])->group(function () {
@@ -118,9 +132,6 @@ Route::middleware(['auth', 'nocache'])->group(function () {
     Route::post('/orders/{order}/mark-paid', [OrderController::class, 'markPaid'])
         ->middleware('permission:orders.write')
         ->name('orders.markPaid');
-    Route::post('/orders/{order}/mark-delivered', [OrderController::class, 'markDelivered'])
-        ->middleware('permission:orders.write')
-        ->name('orders.markDelivered');
     Route::post('/orders/{order}/send-download-link', [OrderController::class, 'sendDownloadLink'])
         ->middleware('permission:orders.download')
         ->name('orders.sendDownloadLink');

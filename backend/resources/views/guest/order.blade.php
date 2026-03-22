@@ -13,10 +13,16 @@
         <div class="bg-green-100 border border-green-300 p-3 rounded mb-4">{{ session('ok') }}</div>
     @endif
     <div class="bg-white border rounded p-4 space-y-2">
+        <div id="pending-note" class="{{ $order->status === 'pending' ? '' : 'hidden' }}">
+            <div class="bg-amber-100 border border-amber-300 text-amber-900 p-3 rounded text-sm font-semibold">
+                Dirija-se ao fotografo, e obrigado.
+            </div>
+            <div class="text-xs text-gray-500">A aguardar confirmação de pagamento.</div>
+        </div>
         <h1 class="text-xl font-semibold">Pedido {{ $order->order_code }}</h1>
         <div class="text-sm">Evento: {{ $order->event->name }}</div>
         <div class="text-sm">Cliente: {{ $order->customer_name }}</div>
-        <div class="text-sm">Estado: <span class="font-semibold">{{ strtoupper($order->status) }}</span></div>
+        <div class="text-sm">Estado: <span id="order-status" class="font-semibold">{{ strtoupper($order->status) }}</span></div>
         <div class="text-sm">Total: {{ number_format($order->total_amount, 2) }}€</div>
         <div class="pt-2 text-sm">
             Fotos:
@@ -24,7 +30,17 @@
                 {{ $order->items->map(fn($i) => $i->photo?->number)->filter()->implode(', ') }}
             </span>
         </div>
-        <a href="{{ route('guest.events') }}" class="inline-block mt-2 border rounded px-3 py-2 bg-white">Voltar aos eventos</a>
+        <div id="download-area">
+            @if(!empty($downloadUrl))
+                <a href="{{ $downloadUrl }}" class="inline-block mt-2 border rounded px-3 py-2 bg-white">Download das fotos</a>
+                @if(!empty($downloadExpiresAt))
+                    <div class="text-xs text-gray-500">Link válido até {{ $downloadExpiresAt->format('d/m/Y H:i') }}</div>
+                @endif
+            @elseif($order->status === 'paid')
+                <div class="text-sm text-gray-600">Link expirado. Pede ao fotografo para enviar novamente.</div>
+            @endif
+        </div>
+        <a href="{{ route('guest.catalog', $order->event) }}" class="inline-block mt-2 border rounded px-3 py-2 bg-white">Voltar ao catalogo</a>
     </div>
 </main>
 <script>
@@ -46,6 +62,39 @@ if (!codes.includes(orderCode)) {
 }
 localStorage.removeItem(cartKey);
 localStorage.removeItem(wantsFilmKey);
+</script>
+<script>
+const statusEl = document.getElementById('order-status');
+const pendingNote = document.getElementById('pending-note');
+const downloadArea = document.getElementById('download-area');
+
+const renderDownload = (payload) => {
+    if (!downloadArea) return;
+    if (!payload.download_url) {
+        if (payload.status === 'paid') {
+            downloadArea.innerHTML = '<div class="text-sm text-gray-600">Link expirado. Pede ao fotografo para enviar novamente.</div>';
+        } else {
+            downloadArea.innerHTML = '';
+        }
+        return;
+    }
+    const expires = payload.download_expires_label ? `<div class="text-xs text-gray-500">Link válido até ${payload.download_expires_label}</div>` : '';
+    downloadArea.innerHTML = `<a href="${payload.download_url}" class="inline-block mt-2 border rounded px-3 py-2 bg-white">Download das fotos</a>${expires}`;
+};
+
+const pollStatus = async () => {
+    try {
+        const res = await fetch('{{ route('guest.order.status', $order->order_code) }}', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (statusEl && data.status) statusEl.textContent = String(data.status).toUpperCase();
+        if (pendingNote) pendingNote.classList.toggle('hidden', data.status !== 'pending');
+        renderDownload(data);
+    } catch (_) {}
+};
+
+setInterval(pollStatus, 5000);
+pollStatus();
 </script>
 </body>
 </html>

@@ -7,6 +7,7 @@ use App\Models\Event;
 use App\Models\Order;
 use App\Models\Photo;
 use App\Support\Audit;
+use App\Support\OrderDownloadService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -70,7 +71,7 @@ class GuestController extends Controller
             ->whereNotNull('preview_path')
             ->when($search !== '', fn ($q) => $q->where('number', 'like', '%'.$search.'%'))
             ->orderBy('number')
-            ->paginate(60)
+            ->paginate(9)
             ->withQueryString();
 
         return view('guest.catalog', [
@@ -349,7 +350,23 @@ class GuestController extends Controller
     {
         $order = Order::with('items.photo', 'event')->where('order_code', $orderCode)->firstOrFail();
 
-        return view('guest.order', compact('order'));
+        [$downloadUrl, $downloadExpiresAt] = $this->resolveDownloadInfo($order);
+
+        return view('guest.order', compact('order', 'downloadUrl', 'downloadExpiresAt'));
+    }
+
+    public function orderStatus(string $orderCode)
+    {
+        $order = Order::query()->where('order_code', $orderCode)->firstOrFail();
+
+        [$downloadUrl, $downloadExpiresAt] = $this->resolveDownloadInfo($order);
+
+        return response()->json([
+            'status' => $order->status,
+            'download_url' => $downloadUrl,
+            'download_expires_at' => $downloadExpiresAt?->toIso8601String(),
+            'download_expires_label' => $downloadExpiresAt?->format('d/m/Y H:i'),
+        ])->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
     }
 
     private function ensureSession(Event $event): void
@@ -360,6 +377,30 @@ class GuestController extends Controller
     private function sessionKey(int $eventId): string
     {
         return 'guest_event_'.$eventId;
+    }
+
+    private function resolveDownloadInfo(Order $order): array
+    {
+        $downloadUrl = null;
+        $downloadExpiresAt = null;
+        if (in_array($order->status, ['paid', 'delivered'], true)) {
+            if ($order->download_link_sent_at) {
+                $downloadExpiresAt = $order->download_link_sent_at->copy()->addDays(7);
+            }
+            $isExpired = OrderDownloadService::isLinkExpired($order);
+            if (! $order->download_token) {
+                $downloadUrl = OrderDownloadService::createAccessLink($order);
+                $downloadExpiresAt = $order->download_link_sent_at?->copy()->addDays(7);
+            } elseif (! $isExpired) {
+                $downloadUrl = OrderDownloadService::getExistingAccessLink($order);
+                if (! $downloadUrl) {
+                    $downloadUrl = OrderDownloadService::createAccessLink($order);
+                    $downloadExpiresAt = $order->download_link_sent_at?->copy()->addDays(7);
+                }
+            }
+        }
+
+        return [$downloadUrl, $downloadExpiresAt];
     }
 
     private function newOrderCode(): string

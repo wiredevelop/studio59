@@ -14,18 +14,23 @@ class DownloadAccessController extends Controller
     {
         $order = $this->resolveOrderByToken($token);
 
-        abort_unless($order->status === 'paid', 403, 'Pedido ainda não está pago.');
+        abort_unless(in_array($order->status, ['paid', 'delivered'], true), 403, 'Pedido ainda não está pago.');
+        $expiresAt = $order->download_link_sent_at?->copy()->addDays(7);
+        abort_unless($expiresAt && now()->lessThanOrEqualTo($expiresAt), 403, 'Link expirado.');
 
         return view('downloads.show', [
             'order' => $order,
             'token' => $token,
+            'expiresAt' => $expiresAt,
         ]);
     }
 
     public function download(string $token, int $photoId)
     {
         $order = $this->resolveOrderByToken($token);
-        abort_unless($order->status === 'paid', 403, 'Pedido ainda não está pago.');
+        abort_unless(in_array($order->status, ['paid', 'delivered'], true), 403, 'Pedido ainda não está pago.');
+        $expiresAt = $order->download_link_sent_at?->copy()->addDays(7);
+        abort_unless($expiresAt && now()->lessThanOrEqualTo($expiresAt), 403, 'Link expirado.');
 
         $photo = $order->items->firstWhere('photo_id', $photoId)?->photo;
         abort_unless($photo instanceof Photo, 403);
@@ -39,7 +44,9 @@ class DownloadAccessController extends Controller
     public function bulkDownload(Request $request, string $token)
     {
         $order = $this->resolveOrderByToken($token);
-        abort_unless($order->status === 'paid', 403, 'Pedido ainda não está pago.');
+        abort_unless(in_array($order->status, ['paid', 'delivered'], true), 403, 'Pedido ainda não está pago.');
+        $expiresAt = $order->download_link_sent_at?->copy()->addDays(7);
+        abort_unless($expiresAt && now()->lessThanOrEqualTo($expiresAt), 403, 'Link expirado.');
 
         $validated = $request->validate([
             'photo_ids' => ['nullable', 'array'],

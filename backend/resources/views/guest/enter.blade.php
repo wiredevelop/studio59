@@ -21,7 +21,7 @@
         <p class="text-sm text-gray-600 mb-4">Introduza o PIN para aceder ao catálogo.</p>
         <form method="post" action="{{ route('guest.enter.submit', $event) }}" class="space-y-3">
             @csrf
-            <input name="pin" type="text" inputmode="numeric" pattern="\\d{4}" class="w-full border rounded p-2" placeholder="PIN" required autofocus>
+            <input name="pin" type="text" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" class="w-full border rounded p-2" placeholder="PIN" required autofocus>
             <button class="w-full bg-black text-white p-2 rounded">Entrar</button>
         </form>
     </div>

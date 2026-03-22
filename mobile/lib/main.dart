@@ -57,19 +57,23 @@ class Studio59App extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final colorScheme = const ColorScheme(
+    final baseScheme = ColorScheme.fromSeed(
+      seedColor: kBrandRose,
       brightness: Brightness.dark,
+    );
+    final colorScheme = baseScheme.copyWith(
       primary: kBrandRose,
       onPrimary: kBrandBlack,
       secondary: kBrandRose,
       onSecondary: kBrandBlack,
-      error: kBrandRose,
-      onError: kBrandBlack,
       background: kBrandBlack,
       onBackground: kBrandRose,
       surface: kBrandBlack,
       onSurface: kBrandRose,
       outline: kBrandRose,
+      surfaceTint: kBrandRose,
+      error: kBrandRose,
+      onError: kBrandBlack,
     );
 
     return MaterialApp(

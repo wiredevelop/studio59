@@ -109,7 +109,7 @@ class StaffOrderController extends Controller
             'customer_email' => ['nullable', 'email', 'max:255'],
             'customer_phone' => ['nullable', 'string', 'max:50'],
             'payment_method' => ['nullable', 'string', 'max:50'],
-            'status' => ['required', Rule::in(['pending', 'paid', 'delivered'])],
+            'status' => ['required', Rule::in(['pending', 'paid'])],
         ]);
 
         $order->update($validated);
@@ -123,7 +123,7 @@ class StaffOrderController extends Controller
         $validated = $request->validate([
             'order_ids' => ['required', 'array', 'min:1'],
             'order_ids.*' => ['integer', 'exists:orders,id'],
-            'status' => ['required', Rule::in(['pending', 'paid', 'delivered'])],
+            'status' => ['required', Rule::in(['pending', 'paid'])],
         ]);
 
         $user = $request->user();
@@ -162,37 +162,35 @@ class StaffOrderController extends Controller
         ]);
     }
 
-    public function markDelivered(Order $order)
+    public function sendDownloadLink(Request $request, Order $order)
     {
         $this->ensureOrderAccess($order);
         $user = request()->user();
         if ($user && $user->role === 'photographer') {
             abort(403);
         }
-        $order->update(['status' => 'delivered']);
-        Audit::log('api.order.mark_delivered', Order::class, $order->id, ['order_code' => $order->order_code]);
-
-        return response()->json(['message' => 'Order marked delivered']);
-    }
-
-    public function sendDownloadLink(Order $order)
-    {
-        $this->ensureOrderAccess($order);
-        $user = request()->user();
-        if ($user && $user->role === 'photographer') {
-            abort(403);
+        $validated = $request->validate([
+            'customer_email' => ['nullable', 'email', 'max:255'],
+        ]);
+        if (! empty($validated['customer_email'])) {
+            $order->update(['customer_email' => $validated['customer_email']]);
         }
+        $hasEmail = ! empty($order->customer_email);
         if ($order->status !== 'paid') {
             return response()->json(['message' => 'Order must be paid to send link'], 422);
         }
 
-        $sent = OrderDownloadService::sendAccessLink($order);
+        $sent = OrderDownloadService::sendAccessLink($order, true);
         Audit::log('api.order.download_link.send', Order::class, $order->id, ['sent' => $sent]);
 
-        return response()->json([
-            'message' => $sent ? 'Link sent' : 'Link not sent',
-            'sent' => $sent,
-        ]);
+        if (! $sent) {
+            if (! $hasEmail) {
+                return response()->json(['message' => 'Email em falta no pedido.'], 422);
+            }
+            return response()->json(['message' => 'Falha ao enviar email (verifica a configuração). O link ficou disponível para o cliente.'], 422);
+        }
+
+        return response()->json(['message' => 'Link de download enviado por email.', 'sent' => true]);
     }
 
     public function downloadAll(Order $order)

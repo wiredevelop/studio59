@@ -13,7 +13,6 @@
         <option value="">Todos status</option>
         <option value="pending" {{ request('status')==='pending'?'selected':'' }}>pending</option>
         <option value="paid" {{ request('status')==='paid'?'selected':'' }}>paid</option>
-        <option value="delivered" {{ request('status')==='delivered'?'selected':'' }}>delivered</option>
     </select>
     <input name="q" value="{{ request('q') }}" class="border p-2 rounded" placeholder="nome, codigo, telefone, email">
     <button class="bg-black text-white px-3 py-2 rounded">Filtrar</button>
@@ -81,13 +80,14 @@
 <td class="p-2 space-x-2">
     @if(auth()->user()->hasPermission('orders.write'))
         <form method="post" action="{{ route('orders.markPaid', $order) }}" class="inline">@csrf<button class="text-blue-600">Marcar pago</button></form>
-        @if(! $isPhotographer)
-            <form method="post" action="{{ route('orders.markDelivered', $order) }}" class="inline">@csrf<button class="text-green-600">Entregar</button></form>
-        @endif
     @endif
     @if(auth()->user()->hasPermission('orders.download') && ! $isPhotographer)
         @if($order->status === 'paid')
-            <form method="post" action="{{ route('orders.sendDownloadLink', $order) }}" class="inline">@csrf<button class="text-purple-700">Enviar link</button></form>
+            <form method="post" action="{{ route('orders.sendDownloadLink', $order) }}" class="inline">
+                @csrf
+                <input type="hidden" name="customer_email" value="">
+                <button type="submit" class="text-purple-700" data-send-link data-has-email="{{ $order->customer_email ? '1' : '0' }}">Enviar</button>
+            </form>
         @endif
         @if($order->status !== 'pending')
             <a class="text-black" href="{{ route('orders.downloadAll', $order) }}">Download ZIP</a>
@@ -107,7 +107,6 @@
             <option value="">Bulk status</option>
             <option value="pending">pending</option>
             <option value="paid">paid</option>
-            <option value="delivered">delivered</option>
         </select>
         <button class="border px-3 py-2 rounded bg-white">Aplicar aos selecionados</button>
     </form>
@@ -138,6 +137,20 @@ document.getElementById('bulk-form')?.addEventListener('submit', (e) => {
     input.name = 'order_ids[]';
     input.value = id;
     e.target.appendChild(input);
+  });
+});
+
+document.querySelectorAll('[data-send-link]').forEach((btn) => {
+  btn.addEventListener('click', (e) => {
+    if (btn.dataset.hasEmail === '1') return;
+    e.preventDefault();
+    const email = prompt('Email do cliente para enviar o link de download:');
+    if (!email) return;
+    const form = btn.closest('form');
+    const input = form?.querySelector('input[name="customer_email"]');
+    if (!input) return;
+    input.value = email.trim();
+    form.submit();
   });
 });
 </script>

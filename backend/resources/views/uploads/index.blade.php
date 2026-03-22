@@ -31,8 +31,8 @@ const append = (t) => { log.innerHTML += `<div>${t}</div>`; log.scrollTop = log.
 let uploadCounter = 0;
 let totalBytes = 0;
 let startedAt = null;
-let lastTick = null;
-let lastUploaded = 0;
+let statsTimer = null;
+const speedSamples = [];
 const eventId = '{{ $event->id }}';
 
 const chunkSize = 5 * 1024 * 1024;
@@ -80,6 +80,31 @@ const fileFingerprint = (file) => {
     return `${file.fileName}|${file.size}|${lm}`;
 };
 const uploadKey = (fingerprint) => `studio59_upload_${eventId}_${fingerprint}`;
+const pushSample = (t, bytes) => {
+    speedSamples.push({ t, bytes });
+    const cutoff = t - 8000;
+    while (speedSamples.length > 2 && speedSamples[0].t < cutoff) speedSamples.shift();
+};
+const computeSpeed = () => {
+    if (speedSamples.length < 2) return 0;
+    const first = speedSamples[0];
+    const last = speedSamples[speedSamples.length - 1];
+    const dt = (last.t - first.t) / 1000;
+    if (dt <= 0) return 0;
+    return (last.bytes - first.bytes) / dt;
+};
+const updateStats = () => {
+    if (!startedAt || totalBytes <= 0) return;
+    const now = Date.now();
+    const p = r.progress() || 0;
+    const uploaded = totalBytes * p;
+    pushSample(now, uploaded);
+    const speed = computeSpeed();
+    const remaining = speed > 0 ? (totalBytes - uploaded) / speed : Infinity;
+    const elapsed = (now - startedAt) / 1000;
+    bar.style.width = Math.floor(p * 100) + '%';
+    stats.textContent = `Progresso: ${(p*100).toFixed(1)}% • ${humanBytes(uploaded)} / ${humanBytes(totalBytes)} • ${humanBytes(speed)}/s • ETA ${humanTime(remaining)} • Decorrido ${humanTime(elapsed)}`;
+};
 
 r.on('fileAdded', function(file){
     uploadCounter += 1;
@@ -97,8 +122,9 @@ r.on('fileAdded', function(file){
     totalBytes = r.files.reduce((sum, f) => sum + f.size, 0);
     if (!startedAt) {
         startedAt = Date.now();
-        lastTick = startedAt;
-        lastUploaded = 0;
+        speedSamples.length = 0;
+        pushSample(startedAt, 0);
+        if (!statsTimer) statsTimer = setInterval(updateStats, 500);
     }
     r.upload();
 });
@@ -115,20 +141,14 @@ r.on('fileSuccess', function(file, message){
 });
 r.on('fileError', function(file, msg){ append(`ERRO: ${file.fileName} ${msg}`); });
 r.on('progress', function(){
-    const p = r.progress();
-    bar.style.width = Math.floor(p*100) + '%';
-    const now = Date.now();
-    const elapsed = (now - (startedAt || now)) / 1000;
-    const uploaded = totalBytes * p;
-    const deltaTime = (now - (lastTick || now)) / 1000;
-    const deltaBytes = uploaded - lastUploaded;
-    const speed = deltaTime > 0 ? (deltaBytes / deltaTime) : 0;
-    const remaining = speed > 0 ? (totalBytes - uploaded) / speed : Infinity;
-    lastTick = now;
-    lastUploaded = uploaded;
-    stats.textContent = `Progresso: ${(p*100).toFixed(1)}% • ${humanBytes(uploaded)} / ${humanBytes(totalBytes)} • ${humanBytes(speed)}/s • ETA ${humanTime(remaining)} • Decorrido ${humanTime(elapsed)}`;
+    updateStats();
 });
 r.on('complete', function(){
+    if (statsTimer) {
+        clearInterval(statsTimer);
+        statsTimer = null;
+    }
+    updateStats();
     stats.textContent = 'Upload completo.';
 });
 </script>

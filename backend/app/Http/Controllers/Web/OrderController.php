@@ -54,7 +54,7 @@ class OrderController extends Controller
         $validated = $request->validate([
             'order_ids' => ['required', 'array', 'min:1'],
             'order_ids.*' => ['integer', 'exists:orders,id'],
-            'status' => ['required', Rule::in(['pending', 'paid', 'delivered'])],
+            'status' => ['required', Rule::in(['pending', 'paid'])],
         ]);
 
         $user = $request->user();
@@ -84,6 +84,7 @@ class OrderController extends Controller
     {
         $this->ensureOrderAccess($order);
         $order->update(['status' => 'paid']);
+        $hadEmail = ! empty($order->customer_email);
         $sent = OrderDownloadService::sendAccessLink($order);
         Audit::log('order.mark_paid', Order::class, $order->id, ['order_code' => $order->order_code]);
 
@@ -91,37 +92,39 @@ class OrderController extends Controller
             return back()->with('ok', 'Pedido marcado como pago e link enviado por email.');
         }
 
-        return back()->with('ok', 'Pedido marcado como pago. Sem email, não foi enviado link.');
-    }
-
-    public function markDelivered(Order $order)
-    {
-        $this->ensureOrderAccess($order);
-        $user = auth()->user();
-        if ($user && $user->role === 'photographer') {
-            abort(403, 'Apenas pode aprovar pagamentos.');
+        if (! $hadEmail) {
+            return back()->with('ok', 'Pedido marcado como pago. Sem email no pedido, o link não foi enviado.');
         }
-        $order->update(['status' => 'delivered']);
-        Audit::log('order.mark_delivered', Order::class, $order->id, ['order_code' => $order->order_code]);
-        return back()->with('ok', 'Pedido marcado como entregue');
+
+        return back()->with('ok', 'Pedido marcado como pago. Falha ao enviar email (verifica a configuração).');
     }
 
-    public function sendDownloadLink(Order $order)
+    public function sendDownloadLink(Request $request, Order $order)
     {
         $this->ensureOrderAccess($order);
         $user = auth()->user();
         if ($user && $user->role === 'photographer') {
             abort(403);
         }
+        $validated = $request->validate([
+            'customer_email' => ['nullable', 'email', 'max:255'],
+        ]);
+        if (! empty($validated['customer_email'])) {
+            $order->update(['customer_email' => $validated['customer_email']]);
+        }
+        $hasEmail = ! empty($order->customer_email);
         if ($order->status !== 'paid') {
             return back()->withErrors(['Pedido precisa estar paid para enviar link.']);
         }
 
-        $sent = OrderDownloadService::sendAccessLink($order);
+        $sent = OrderDownloadService::sendAccessLink($order, true);
         Audit::log('order.download_link.send', Order::class, $order->id, ['sent' => $sent]);
 
         if (! $sent) {
-            return back()->withErrors(['Sem email no pedido ou envio falhou.']);
+            if (! $hasEmail) {
+                return back()->withErrors(['Email em falta no pedido.']);
+            }
+            return back()->withErrors(['Falha ao enviar email (verifica a configuração). O link ficou disponível para o cliente.']);
         }
 
         return back()->with('ok', 'Link de download enviado por email.');

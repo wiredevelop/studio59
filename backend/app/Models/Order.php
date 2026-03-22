@@ -29,6 +29,7 @@ class Order extends Model
         'status',
         'total_amount',
         'download_token_hash',
+        'download_token',
         'download_link_sent_at',
     ];
 

@@ -43,8 +43,12 @@ class GeneratePhotoPreview implements ShouldQueue
 
             $srcWidth = imagesx($src);
             $srcHeight = imagesy($src);
-            $canvas = imagecreatetruecolor($srcWidth, $srcHeight);
-            imagecopy($canvas, $src, 0, 0, 0, 0, $srcWidth, $srcHeight);
+            $maxDim = 1600;
+            $scale = min(1, $maxDim / max($srcWidth, $srcHeight));
+            $targetWidth = max(1, (int) round($srcWidth * $scale));
+            $targetHeight = max(1, (int) round($srcHeight * $scale));
+            $canvas = imagecreatetruecolor($targetWidth, $targetHeight);
+            imagecopyresampled($canvas, $src, 0, 0, 0, 0, $targetWidth, $targetHeight, $srcWidth, $srcHeight);
             imagedestroy($src);
 
             $wmText = 'STUDIO 59';
@@ -52,10 +56,10 @@ class GeneratePhotoPreview implements ShouldQueue
             $fontPath = $this->resolveFontPath();
 
             if ($fontPath) {
-                $fontSize = max(24, min(72, (int) round($srcWidth * 0.03)));
+                $fontSize = max(24, min(72, (int) round($targetWidth * 0.03)));
                 $colorLight = imagecolorallocatealpha($canvas, 255, 255, 255, 100);
-                for ($x = -300; $x < $srcWidth + 300; $x += 280) {
-                    for ($y = -100; $y < $srcHeight + 200; $y += 180) {
+                for ($x = -300; $x < $targetWidth + 300; $x += 280) {
+                    for ($y = -100; $y < $targetHeight + 200; $y += 180) {
                         imagettftext($canvas, $fontSize, -30, $x, $y, $colorLight, $fontPath, $wmText);
                     }
                 }
@@ -63,24 +67,25 @@ class GeneratePhotoPreview implements ShouldQueue
                 $shadow = imagecolorallocatealpha($canvas, 0, 0, 0, 55);
                 $strong = imagecolorallocatealpha($canvas, 255, 255, 255, 20);
                 $boxPadding = 16;
-                $badgeSize = max(26, min(60, (int) round($srcWidth * 0.02)));
+                $badgeSize = max(26, min(60, (int) round($targetWidth * 0.02)));
                 $bbox = imagettfbbox($badgeSize, 0, $fontPath, $wmText);
                 $textW = abs($bbox[2] - $bbox[0]);
                 $textH = abs($bbox[7] - $bbox[1]);
-                $x1 = $srcWidth - $textW - ($boxPadding * 2) - 20;
-                $y1 = $srcHeight - $textH - ($boxPadding * 2) - 20;
-                imagefilledrectangle($canvas, $x1, $y1, $srcWidth - 20, $srcHeight - 20, $shadow);
-                imagettftext($canvas, $badgeSize, 0, $x1 + $boxPadding, $srcHeight - 20 - $boxPadding, $strong, $fontPath, $wmText);
+                $x1 = $targetWidth - $textW - ($boxPadding * 2) - 20;
+                $y1 = $targetHeight - $textH - ($boxPadding * 2) - 20;
+                imagefilledrectangle($canvas, $x1, $y1, $targetWidth - 20, $targetHeight - 20, $shadow);
+                imagettftext($canvas, $badgeSize, 0, $x1 + $boxPadding, $targetHeight - 20 - $boxPadding, $strong, $fontPath, $wmText);
             } else {
                 $color = imagecolorallocatealpha($canvas, 255, 255, 255, 75);
-                imagestring($canvas, 5, 20, $srcHeight - 30, $wmText, $color);
+                imagestring($canvas, 5, 20, $targetHeight - 30, $wmText, $color);
             }
 
             $previewPath = $photo->preview_path ?: $this->defaultPreviewPath($photo);
             Storage::disk('local')->makeDirectory(dirname($previewPath));
 
             $targetPath = Storage::disk('local')->path($previewPath);
-            imagejpeg($canvas, $targetPath, 90);
+            imageinterlace($canvas, true);
+            imagejpeg($canvas, $targetPath, 82);
             imagedestroy($canvas);
 
             $photo->update([

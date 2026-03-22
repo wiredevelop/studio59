@@ -7,9 +7,14 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/brand.css">
     <style>
+        .catalog-shell { height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+        .catalog-body { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+        #all-grid { flex: 1 1 auto; min-height: 0; grid-auto-rows: 1fr; }
         .photo-card { background: var(--brand-surface); border: 1px solid rgba(219, 171, 151, 0.45); border-radius: 14px; overflow: hidden; }
-        .photo-thumb { position: relative; aspect-ratio: 3 / 4; overflow: hidden; }
+        .photo-card { display: flex; flex-direction: column; height: 100%; }
+        .photo-thumb { position: relative; overflow: hidden; flex: 1 1 auto; min-height: 0; }
         .photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .photo-footer { flex-shrink: 0; }
         .wm-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0.15; font-weight: 800; letter-spacing: 2px; color: var(--brand-rose); font-size: 22px; pointer-events: none; }
         .select-badge {
             position: absolute;
@@ -55,39 +60,43 @@
         }
     </style>
 </head>
-<body class="bg-gray-100 min-h-screen">
-<main class="mx-auto p-4">
-    @if($errors->any())
-        <div class="bg-red-100 border border-red-300 p-3 rounded mb-4">{{ $errors->first() }}</div>
-    @endif
+<body class="bg-gray-100 h-screen overflow-hidden">
+<main class="mx-auto h-full max-w-6xl p-4 catalog-shell">
+    <div class="catalog-top">
+        @if($errors->any())
+            <div class="bg-red-100 border border-red-300 p-3 rounded mb-4">{{ $errors->first() }}</div>
+        @endif
 
-    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-        <div class="text-sm font-semibold">{{ $event->name }}</div>
-        <div class="flex items-center gap-2">
-            <button type="button" id="face-search-btn" class="ios-btn ios-btn-secondary">Pesquisa facial</button>
-            <button type="button" id="clear-guest-btn" class="ios-btn ios-btn-secondary">Novo convidado / limpar sessão</button>
-            <input id="face-input" type="file" accept="image/*" capture="user" class="hidden">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <div class="text-sm font-semibold">{{ $event->name }}</div>
+            <div class="flex items-center gap-2">
+                <button type="button" id="face-search-btn" class="ios-btn ios-btn-secondary">Pesquisa facial</button>
+                <button type="button" id="clear-guest-btn" class="ios-btn ios-btn-secondary">Novo convidado / limpar sessão</button>
+                <input id="face-input" type="file" accept="image/*" capture="user" class="hidden">
+            </div>
         </div>
+
+        <form method="get" action="{{ route('guest.catalog', $event) }}" class="mb-3">
+            <div class="grid grid-cols-[1fr_auto] gap-2">
+                <input name="search" value="{{ $search }}" class="ios-input" placeholder="Pesquisar número">
+                <button class="ios-btn ios-btn-primary" type="submit">Pesquisar</button>
+            </div>
+        </form>
     </div>
 
-    <form method="get" action="{{ route('guest.catalog', $event) }}" class="mb-4">
-        <div class="grid grid-cols-[1fr_auto] gap-2">
-            <input name="search" value="{{ $search }}" class="ios-input" placeholder="Pesquisar número">
-            <button class="ios-btn ios-btn-primary" type="submit">Pesquisar</button>
+    <div class="catalog-body">
+        <div id="suggestions-section" class="mb-4 hidden">
+            <div class="text-xs uppercase tracking-wider text-gray-600 mb-2">Sugestões</div>
+            <div id="suggestions-grid" class="grid grid-cols-3 gap-3"></div>
         </div>
-    </form>
 
-    <div id="suggestions-section" class="mb-4 hidden">
-        <div class="text-xs uppercase tracking-wider text-gray-600 mb-2">Sugestões</div>
-        <div id="suggestions-grid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3"></div>
-    </div>
-
-    <div class="text-xs uppercase tracking-wider text-gray-600 mb-2">Todas</div>
-    <div id="all-grid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+        <div class="text-xs uppercase tracking-wider text-gray-600 mb-2">Todas</div>
+        <div id="all-grid" class="grid grid-cols-3 gap-3">
         @foreach($photos as $photo)
-            <div class="photo-card" data-photo-id="{{ $photo->id }}" data-photo-number="{{ $photo->number }}" data-photo-url="{{ route('preview.image', $photo) }}">
+            @php $previewUrl = route('preview.image', $photo).'?v='.($photo->updated_at ? $photo->updated_at->timestamp : 0); @endphp
+            <div class="photo-card" data-photo-id="{{ $photo->id }}" data-photo-number="{{ $photo->number }}" data-photo-url="{{ $previewUrl }}">
                 <div class="photo-thumb">
-                    <img src="{{ route('preview.image', $photo) }}" alt="Foto {{ $photo->number }}" loading="lazy">
+                    <img src="{{ $previewUrl }}" alt="Foto {{ $photo->number }}" loading="lazy" decoding="async">
                     <div class="wm-overlay">STUDIO 59</div>
                     <button type="button" class="select-badge" data-select-toggle>✓</button>
                 </div>
@@ -97,12 +106,14 @@
                 </div>
             </div>
         @endforeach
+        </div>
     </div>
 
-    <div class="mt-4">{{ $photos->links() }}</div>
-
-    <div class="bottom-bar">
-        <a href="{{ route('guest.cart', $event) }}" class="ios-btn ios-btn-primary" id="cart-btn">Carrinho (0)</a>
+    <div class="catalog-bottom pt-3 border-t border-white/10">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="min-w-[220px]">{{ $photos->links('pagination.guest') }}</div>
+            <a href="{{ route('guest.cart', $event) }}" class="ios-btn ios-btn-primary" id="cart-btn">Carrinho (0)</a>
+        </div>
     </div>
 </main>
 
