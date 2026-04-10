@@ -58,7 +58,8 @@ PY
 
 flutter pub get
 
-flutter build appbundle --release
+TARGET_PLATFORMS="${TARGET_PLATFORMS:-android-arm,android-arm64,android-x64}"
+flutter build appbundle --release --target-platform "$TARGET_PLATFORMS"
 
 mkdir -p "$OUT_DIR"
 cp -f build/app/outputs/bundle/release/app-release.aab "$OUT_FILE"
