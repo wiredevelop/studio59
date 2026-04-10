@@ -41,6 +41,7 @@ workflows:
           BUILD_SUFFIX=$(printf '%03d' $((BUILD_COUNTER % 1000)))
           BUILD_NUMBER_OVERRIDE="$(date +%y%m%d)${BUILD_SUFFIX}"
           echo "Using build number: $BUILD_NUMBER_OVERRIDE"
-          flutter build appbundle --release --build-number=$BUILD_NUMBER_OVERRIDE
+          TARGET_PLATFORMS="${TARGET_PLATFORMS:-android-arm,android-arm64,android-x64}"
+          flutter build appbundle --release --build-number=$BUILD_NUMBER_OVERRIDE --target-platform "$TARGET_PLATFORMS"
     artifacts:
       - build/app/outputs/bundle/release/*.aab
