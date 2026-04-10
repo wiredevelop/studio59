@@ -1,0 +1,46 @@
+workflows:
+  ios-release:
+    name: iOS Release
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    working_directory: $CM_BUILD_DIR
+    environment:
+      flutter: 3.41.4
+      xcode: 26.0.1
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: pt.studio59.app
+    scripts:
+      - name: Flutter Pub Get
+        script: flutter pub get
+      - name: Build IPA
+        script: |
+          BUILD_COUNTER="${CM_BUILD_NUMBER:-0}"
+          BUILD_SUFFIX=$(printf '%03d' $((BUILD_COUNTER % 1000)))
+          BUILD_NUMBER_OVERRIDE="$(date +%y%m%d)${BUILD_SUFFIX}"
+          echo "Using build number: $BUILD_NUMBER_OVERRIDE"
+          flutter build ipa --release --build-number=$BUILD_NUMBER_OVERRIDE
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+
+  android-release:
+    name: Android Release
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    working_directory: $CM_BUILD_DIR
+    environment:
+      flutter: 3.41.4
+    scripts:
+      - name: Flutter Pub Get
+        script: flutter pub get
+      - name: Build AAB
+        script: |
+          BUILD_COUNTER="${CM_BUILD_NUMBER:-0}"
+          BUILD_SUFFIX=$(printf '%03d' $((BUILD_COUNTER % 1000)))
+          BUILD_NUMBER_OVERRIDE="$(date +%y%m%d)${BUILD_SUFFIX}"
+          echo "Using build number: $BUILD_NUMBER_OVERRIDE"
+          flutter build appbundle --release --build-number=$BUILD_NUMBER_OVERRIDE
+    artifacts:
+      - build/app/outputs/bundle/release/*.aab
