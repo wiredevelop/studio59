@@ -70,9 +70,8 @@ bool isDesktopPlatform() {
 }
 
 bool useDesktopLayout(BuildContext context) {
-  if (isDesktopPlatform()) return true;
-  final width = MediaQuery.of(context).size.width;
-  return width >= 1100;
+  // Unified layout: use the desktop UI everywhere, but make it responsive for narrow screens.
+  return true;
 }
 
 const Color kDeskBg = Color(0xFF0B0A0A);
@@ -3492,6 +3491,7 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
     if (current.id != _selectedId) {
       _selectedId = current.id;
     }
+    final isCompact = MediaQuery.of(context).size.width < 900;
     final overrideKey = widget.initialId ?? 'dashboard';
     final useOverride = widget.overrideContent != null && _selectedId == overrideKey;
     final topTitle = useOverride ? (widget.overrideTitle ?? current.label) : current.label;
@@ -3500,6 +3500,78 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
     final topActions = useOverride
         ? (widget.overrideActionsBuilder?.call(context, widget.user, widget.token) ?? const <Widget>[])
         : (current.actionsBuilder?.call(context, widget.user, widget.token) ?? const <Widget>[]);
+
+    Widget content = Column(
+      children: [
+        _DesktopTopbar(
+          title: topTitle,
+          subtitle: topSubtitle,
+          showSearch: topSearch,
+          controller: _searchCtrl,
+          onSearchChanged: (value) => _searchValue.value = value,
+          actions: topActions,
+          user: widget.user,
+          onLogout: () {
+            ref.read(staffTokenProvider.notifier).state = null;
+            ref.read(staffUserProvider.notifier).state = null;
+            clearStaffSession();
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (_) => const HomePage()),
+              (_) => false,
+            );
+          },
+          leading: isCompact
+              ? Builder(
+                  builder: (context) => IconButton(
+                    tooltip: 'Menu',
+                    icon: const Icon(Icons.menu),
+                    onPressed: () => Scaffold.of(context).openDrawer(),
+                  ),
+                )
+              : null,
+        ),
+        Expanded(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 240),
+            child: Container(
+              key: ValueKey(current.id),
+              color: kDeskBg,
+              child: useOverride
+                  ? widget.overrideContent!(context, widget.user, widget.token)
+                  : current.builder(context, widget.user, widget.token),
+            ),
+          ),
+        ),
+      ],
+    );
+
+    if (isCompact) {
+      return Scaffold(
+        backgroundColor: kDeskBg,
+        drawer: Drawer(
+          backgroundColor: kDeskBg,
+          child: SafeArea(
+            child: _DesktopSidebar(
+              width: double.infinity,
+              items: items,
+              selectedId: _selectedId,
+              user: widget.user,
+              onSelect: (id) {
+                setState(() {
+                  _selectedId = id;
+                  _searchCtrl.clear();
+                  _searchValue.value = '';
+                });
+                saveStaffLastRoute(id, userId: widget.user.id);
+                Navigator.pop(context);
+              },
+            ),
+          ),
+        ),
+        body: SafeArea(child: content),
+      );
+    }
 
     return Scaffold(
       backgroundColor: kDeskBg,
@@ -3519,43 +3591,7 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
                 saveStaffLastRoute(id, userId: widget.user.id);
               },
             ),
-            Expanded(
-              child: Column(
-                children: [
-                  _DesktopTopbar(
-                    title: topTitle,
-                    subtitle: topSubtitle,
-                    showSearch: topSearch,
-                    controller: _searchCtrl,
-                    onSearchChanged: (value) => _searchValue.value = value,
-                    actions: topActions,
-                    user: widget.user,
-                    onLogout: () {
-                      ref.read(staffTokenProvider.notifier).state = null;
-                      ref.read(staffUserProvider.notifier).state = null;
-                      clearStaffSession();
-                      Navigator.pushAndRemoveUntil(
-                        context,
-                        MaterialPageRoute(builder: (_) => const HomePage()),
-                        (_) => false,
-                      );
-                    },
-                  ),
-                  Expanded(
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 240),
-                      child: Container(
-                        key: ValueKey(current.id),
-                        color: kDeskBg,
-                        child: useOverride
-                            ? widget.overrideContent!(context, widget.user, widget.token)
-                            : current.builder(context, widget.user, widget.token),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            Expanded(child: content),
           ],
         ),
       ),
@@ -3565,12 +3601,14 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
 
 class _DesktopSidebar extends StatelessWidget {
   const _DesktopSidebar({
+    this.width,
     required this.items,
     required this.selectedId,
     required this.onSelect,
     required this.user,
   });
 
+  final double? width;
   final List<DesktopNavItem> items;
   final String selectedId;
   final ValueChanged<String> onSelect;
@@ -3579,7 +3617,7 @@ class _DesktopSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: kDeskSidebarWidth,
+      width: width ?? kDeskSidebarWidth,
       decoration: BoxDecoration(
         color: kDeskSurface,
         border: Border(
@@ -3700,6 +3738,7 @@ class _DesktopTopbar extends StatelessWidget {
     required this.actions,
     required this.user,
     required this.onLogout,
+    this.leading,
   });
 
   final String title;
@@ -3710,6 +3749,7 @@ class _DesktopTopbar extends StatelessWidget {
   final List<Widget> actions;
   final StaffUser user;
   final VoidCallback onLogout;
+  final Widget? leading;
 
   @override
   Widget build(BuildContext context) {
@@ -3721,46 +3761,109 @@ class _DesktopTopbar extends StatelessWidget {
           bottom: BorderSide(color: kBrandRose.withOpacity(0.2)),
         ),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 900;
+          if (!isNarrow) {
+            return Row(
               children: [
-                Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                if (subtitle != null)
-                  Text(subtitle!, style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
-              ],
-            ),
-          ),
-          if (showSearch)
-            SizedBox(
-              width: 260,
-              child: TextField(
-                controller: controller,
-                onChanged: onSearchChanged,
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: 'Pesquisar...',
-                  prefixIcon: const Icon(Icons.search),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: kBrandRose.withOpacity(0.4)),
+                if (leading != null) ...[
+                  leading!,
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                      if (subtitle != null)
+                        Text(subtitle!, style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
+                    ],
                   ),
                 ),
+                if (showSearch)
+                  SizedBox(
+                    width: 260,
+                    child: TextField(
+                      controller: controller,
+                      onChanged: onSearchChanged,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        hintText: 'Pesquisar...',
+                        prefixIcon: const Icon(Icons.search),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: kBrandRose.withOpacity(0.4)),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (actions.isNotEmpty) ...[
+                  const SizedBox(width: 16),
+                  ...actions.map((w) => Padding(padding: const EdgeInsets.only(right: 8), child: w)),
+                ],
+                const SizedBox(width: 12),
+                IconButton(
+                  tooltip: 'Terminar sessao',
+                  onPressed: onLogout,
+                  icon: const Icon(Icons.logout),
+                ),
+              ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  if (leading != null) ...[
+                    leading!,
+                    const SizedBox(width: 6),
+                  ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        if (subtitle != null)
+                          Text(subtitle!, style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Terminar sessao',
+                    onPressed: onLogout,
+                    icon: const Icon(Icons.logout),
+                  ),
+                ],
               ),
-            ),
-          if (actions.isNotEmpty) ...[
-            const SizedBox(width: 16),
-            ...actions.map((w) => Padding(padding: const EdgeInsets.only(right: 8), child: w)),
-          ],
-          const SizedBox(width: 12),
-          IconButton(
-            tooltip: 'Terminar sessao',
-            onPressed: onLogout,
-            icon: const Icon(Icons.logout),
-          ),
-        ],
+              if (actions.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: actions,
+                ),
+              ],
+              if (showSearch) ...[
+                const SizedBox(height: 10),
+                TextField(
+                  controller: controller,
+                  onChanged: onSearchChanged,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'Pesquisar...',
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: kBrandRose.withOpacity(0.4)),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          );
+        },
       ),
     );
   }
@@ -3891,60 +3994,73 @@ class _DeskTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: kDeskCardAlt,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: kBrandRose.withOpacity(0.2)),
-          ),
-          child: Row(
-            children: [
-              for (final c in columns)
-                Expanded(
-                  flex: c.flex,
-                  child: Column(
-                    crossAxisAlignment: c.align,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const minCellWidth = 120.0;
+        final minTableWidth = columns.fold<double>(0, (sum, c) => sum + (c.flex * minCellWidth));
+        final tableWidth = math.max(constraints.maxWidth, minTableWidth);
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: tableWidth),
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: kDeskCardAlt,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: kBrandRose.withOpacity(0.2)),
+                  ),
+                  child: Row(
                     children: [
-                      Text(
-                        c.label.toUpperCase(),
-                        style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.6), letterSpacing: 0.6),
-                      ),
+                      for (final c in columns)
+                        Expanded(
+                          flex: c.flex,
+                          child: Column(
+                            crossAxisAlignment: c.align,
+                            children: [
+                              Text(
+                                c.label.toUpperCase(),
+                                style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.6), letterSpacing: 0.6),
+                              ),
+                            ],
+                          ),
+                        ),
                     ],
                   ),
                 ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 6),
-        ...rows.map((cells) {
-          return Container(
-            margin: const EdgeInsets.only(bottom: 6),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            decoration: BoxDecoration(
-              color: kDeskCard,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: kBrandRose.withOpacity(0.15)),
-            ),
-            child: Row(
-              children: [
-                for (int i = 0; i < columns.length; i++)
-                  Expanded(
-                    flex: columns[i].flex,
-                    child: Column(
-                      crossAxisAlignment: columns[i].align,
+                const SizedBox(height: 6),
+                ...rows.map((cells) {
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: kDeskCard,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: kBrandRose.withOpacity(0.15)),
+                    ),
+                    child: Row(
                       children: [
-                        cells[i],
+                        for (int i = 0; i < columns.length; i++)
+                          Expanded(
+                            flex: columns[i].flex,
+                            child: Column(
+                              crossAxisAlignment: columns[i].align,
+                              children: [
+                                cells[i],
+                              ],
+                            ),
+                          ),
                       ],
                     ),
-                  ),
+                  );
+                }),
               ],
             ),
-          );
-        }),
-      ],
+          ),
+        );
+      },
     );
   }
 }
@@ -4027,155 +4143,166 @@ class DesktopDashboardView extends ConsumerWidget {
             },
           ),
           const SizedBox(height: 22),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                flex: 3,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _DeskSectionHeader('Atividade recente'),
-                    const SizedBox(height: 10),
-                    _DeskCard(
-                      child: Column(
-                        children: [
-                          _DesktopActivityRow(title: 'Pagamento confirmado', subtitle: 'Pedido S59-43MZX', time: 'agora'),
-                          _DesktopActivityRow(title: 'Upload concluido', subtitle: 'Evento Casamento Silva', time: 'há 1h'),
-                          _DesktopActivityRow(title: 'Servico agendado', subtitle: 'Batizado 14/04', time: 'há 3h'),
-                          _DesktopActivityRow(title: 'Cliente criou pedido', subtitle: 'Pedido S59-43MZW', time: 'ontem'),
-                        ],
-                      ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isNarrow = constraints.maxWidth < 900;
+              final left = Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _DeskSectionHeader('Atividade recente'),
+                  const SizedBox(height: 10),
+                  _DeskCard(
+                    child: Column(
+                      children: [
+                        _DesktopActivityRow(title: 'Pagamento confirmado', subtitle: 'Pedido S59-43MZX', time: 'agora'),
+                        _DesktopActivityRow(title: 'Upload concluido', subtitle: 'Evento Casamento Silva', time: 'há 1h'),
+                        _DesktopActivityRow(title: 'Servico agendado', subtitle: 'Batizado 14/04', time: 'há 3h'),
+                        _DesktopActivityRow(title: 'Cliente criou pedido', subtitle: 'Pedido S59-43MZW', time: 'ontem'),
+                      ],
                     ),
-                    const SizedBox(height: 22),
-                    _DeskSectionHeader('Pedidos pendentes'),
-                    const SizedBox(height: 10),
-                    FutureBuilder<List<OrderListItem>>(
-                      future: ordersFuture,
-                      builder: (context, snap) {
-                        final orders = snap.data ?? const <OrderListItem>[];
-                        final visible = orders.take(5).toList();
-                        final rows = visible.isNotEmpty
-                            ? visible
-                                .map((o) => List<Widget>.of([
-                                      Text(o.orderCode, style: const TextStyle(fontWeight: FontWeight.w600)),
-                                      Text(o.customerName),
-                                      _DeskStatusBadge(o.status.toUpperCase(), color: Colors.orangeAccent),
-                                      Text('€${(o.totalAmount ?? 0).toStringAsFixed(2)}'),
-                                    ]))
-                                .toList()
-                            : [
-                                [
-                                  const Text('S59-XX12'),
-                                  const Text('Maria Costa'),
-                                  const _DeskStatusBadge('PENDENTE', color: Colors.orangeAccent),
-                                  const Text('€85.00'),
-                                ],
-                                [
-                                  const Text('S59-XX13'),
-                                  const Text('Joao Silva'),
-                                  const _DeskStatusBadge('PENDENTE', color: Colors.orangeAccent),
-                                  const Text('€50.00'),
-                                ],
-                              ];
-                        return _DeskTable(
-                          columns: const [
-                            _DeskTableColumn('Pedido', flex: 2),
-                            _DeskTableColumn('Cliente', flex: 3),
-                            _DeskTableColumn('Estado', flex: 2),
-                            _DeskTableColumn('Total', flex: 2, align: CrossAxisAlignment.end),
-                          ],
-                          rows: rows,
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 20),
-              Expanded(
-                flex: 2,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _DeskSectionHeader('Proximos eventos'),
-                    const SizedBox(height: 10),
-                    FutureBuilder<List<StaffEvent>>(
-                      future: eventsFuture,
-                      builder: (context, snap) {
-                        final events = snap.data ?? const <StaffEvent>[];
-                        final upcoming = _upcomingEvents(_filterEventsForUser(events, user)).take(5).toList();
-                        return _DeskCard(
-                          child: Column(
-                            children: [
-                              if (upcoming.isEmpty) ...[
-                                _DesktopEventRow(
-                                  title: 'Casamento Costa',
-                                  subtitle: '14/04/2026 • 16:00',
-                                  badge: 'Agendado',
-                                ),
-                                _DesktopEventRow(
-                                  title: 'Batizado Lima',
-                                  subtitle: '21/04/2026 • 10:00',
-                                  badge: 'Confirmado',
-                                ),
-                              ] else ...[
-                                ...upcoming.map((e) => _DesktopEventRow(
-                                      title: e.name.isNotEmpty ? e.name : 'Evento ${e.id}',
-                                      subtitle: _formatEventDateTime(e.eventDate, e.eventTime),
-                                      badge: _eventTypeLabel(e),
-                                    )),
+                  ),
+                  const SizedBox(height: 22),
+                  _DeskSectionHeader('Pedidos pendentes'),
+                  const SizedBox(height: 10),
+                  FutureBuilder<List<OrderListItem>>(
+                    future: ordersFuture,
+                    builder: (context, snap) {
+                      final orders = snap.data ?? const <OrderListItem>[];
+                      final visible = orders.take(5).toList();
+                      final rows = visible.isNotEmpty
+                          ? visible
+                              .map((o) => List<Widget>.of([
+                                    Text(o.orderCode, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                    Text(o.customerName),
+                                    _DeskStatusBadge(o.status.toUpperCase(), color: Colors.orangeAccent),
+                                    Text('€${(o.totalAmount ?? 0).toStringAsFixed(2)}'),
+                                  ]))
+                              .toList()
+                          : [
+                              [
+                                const Text('S59-XX12'),
+                                const Text('Maria Costa'),
+                                const _DeskStatusBadge('PENDENTE', color: Colors.orangeAccent),
+                                const Text('€85.00'),
                               ],
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 20),
-                    _DeskSectionHeader('Sincronizacao'),
-                    const SizedBox(height: 10),
-                    _DeskCard(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: const [
-                              _DeskStatusBadge('ONLINE', color: Colors.lightGreenAccent),
-                              SizedBox(width: 10),
-                              Text('Sincronizacao ativa'),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Text('Ultima sync: há 2 minutos', style: TextStyle(color: Colors.white.withOpacity(0.6))),
-                          const SizedBox(height: 8),
-                          Text('Pendentes: 0 uploads • 1 pedido offline', style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                              [
+                                const Text('S59-XX13'),
+                                const Text('Joao Silva'),
+                                const _DeskStatusBadge('PENDENTE', color: Colors.orangeAccent),
+                                const Text('€50.00'),
+                              ],
+                            ];
+                      return _DeskTable(
+                        columns: const [
+                          _DeskTableColumn('Pedido', flex: 2),
+                          _DeskTableColumn('Cliente', flex: 3),
+                          _DeskTableColumn('Estado', flex: 2),
+                          _DeskTableColumn('Total', flex: 2, align: CrossAxisAlignment.end),
                         ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    _DeskSectionHeader('Resumo mensal'),
-                    const SizedBox(height: 10),
-                    _DeskCard(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Vendas totais', style: TextStyle(color: Colors.white.withOpacity(0.6))),
-                          const SizedBox(height: 6),
-                          const Text('€4 280', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: const [
-                              Expanded(child: Text('Eventos: 12')),
-                              Expanded(child: Text('Pedidos pagos: 86')),
+                        rows: rows,
+                      );
+                    },
+                  ),
+                ],
+              );
+              final right = Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _DeskSectionHeader('Proximos eventos'),
+                  const SizedBox(height: 10),
+                  FutureBuilder<List<StaffEvent>>(
+                    future: eventsFuture,
+                    builder: (context, snap) {
+                      final events = snap.data ?? const <StaffEvent>[];
+                      final upcoming = _upcomingEvents(_filterEventsForUser(events, user)).take(5).toList();
+                      return _DeskCard(
+                        child: Column(
+                          children: [
+                            if (upcoming.isEmpty) ...[
+                              _DesktopEventRow(
+                                title: 'Casamento Costa',
+                                subtitle: '14/04/2026 • 16:00',
+                                badge: 'Agendado',
+                              ),
+                              _DesktopEventRow(
+                                title: 'Batizado Lima',
+                                subtitle: '21/04/2026 • 10:00',
+                                badge: 'Confirmado',
+                              ),
+                            ] else ...[
+                              ...upcoming.map((e) => _DesktopEventRow(
+                                    title: e.name.isNotEmpty ? e.name : 'Evento ${e.id}',
+                                    subtitle: _formatEventDateTime(e.eventDate, e.eventTime),
+                                    badge: _eventTypeLabel(e),
+                                  )),
                             ],
-                          ),
-                        ],
-                      ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 20),
+                  _DeskSectionHeader('Sincronizacao'),
+                  const SizedBox(height: 10),
+                  _DeskCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: const [
+                            _DeskStatusBadge('ONLINE', color: Colors.lightGreenAccent),
+                            SizedBox(width: 10),
+                            Text('Sincronizacao ativa'),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Text('Ultima sync: há 2 minutos', style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                        const SizedBox(height: 8),
+                        Text('Pendentes: 0 uploads • 1 pedido offline', style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                      ],
                     ),
+                  ),
+                  const SizedBox(height: 20),
+                  _DeskSectionHeader('Resumo mensal'),
+                  const SizedBox(height: 10),
+                  _DeskCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Vendas totais', style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                        const SizedBox(height: 6),
+                        const Text('€4 280', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: const [
+                            Expanded(child: Text('Eventos: 12')),
+                            Expanded(child: Text('Pedidos pagos: 86')),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+              if (isNarrow) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    left,
+                    const SizedBox(height: 22),
+                    right,
                   ],
-                ),
-              ),
-            ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 3, child: left),
+                  const SizedBox(width: 20),
+                  Expanded(flex: 2, child: right),
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -4281,7 +4408,10 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               _DeskStatusFilterChip(
                 label: 'Todos',
@@ -4291,7 +4421,6 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
                   _reload();
                 }),
               ),
-              const SizedBox(width: 8),
               _DeskStatusFilterChip(
                 label: 'Casamento',
                 selected: _eventType == 'casamento',
@@ -4300,7 +4429,6 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
                   _reload();
                 }),
               ),
-              const SizedBox(width: 8),
               _DeskStatusFilterChip(
                 label: 'Batizado',
                 selected: _eventType == 'batizado',
@@ -4309,7 +4437,6 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
                   _reload();
                 }),
               ),
-              const Spacer(),
               OutlinedButton.icon(onPressed: _reload, icon: const Icon(Icons.refresh), label: const Text('Atualizar')),
             ],
           ),
@@ -4453,7 +4580,10 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               _DeskStatusFilterChip(
                 label: 'Todos',
@@ -4463,7 +4593,6 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                   _reload();
                 }),
               ),
-              const SizedBox(width: 8),
               _DeskStatusFilterChip(
                 label: 'Pendentes',
                 selected: _status == 'pending',
@@ -4472,7 +4601,6 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                   _reload();
                 }),
               ),
-              const SizedBox(width: 8),
               _DeskStatusFilterChip(
                 label: 'Pagos',
                 selected: _status == 'paid',
@@ -4481,7 +4609,6 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                   _reload();
                 }),
               ),
-              const SizedBox(width: 8),
               _DeskStatusFilterChip(
                 label: 'Entregues',
                 selected: _status == 'delivered',
@@ -4490,7 +4617,6 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                   _reload();
                 }),
               ),
-              const Spacer(),
               OutlinedButton.icon(onPressed: _reload, icon: const Icon(Icons.refresh), label: const Text('Atualizar')),
             ],
           ),
