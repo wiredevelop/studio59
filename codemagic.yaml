@@ -3,7 +3,7 @@ workflows:
     name: iOS Release
     max_build_duration: 60
     instance_type: mac_mini_m2
-    working_directory: $CM_BUILD_DIR
+    working_directory: .
     environment:
       flutter: 3.41.4
       xcode: 26.0.1
@@ -29,7 +29,7 @@ workflows:
     name: Android Release
     max_build_duration: 60
     instance_type: mac_mini_m2
-    working_directory: $CM_BUILD_DIR
+    working_directory: .
     environment:
       flutter: 3.41.4
     scripts:
