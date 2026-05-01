@@ -5815,36 +5815,100 @@ class _EventMetaSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final entries = _eventMetaEntries(meta);
-    if (entries.isEmpty) {
+    final groups = _eventMetaGroups(meta);
+    if (groups.isEmpty) {
       return const Text('Sem detalhes adicionais.');
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Detalhes', style: TextStyle(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 12),
-        ...entries.map(
-          (entry) => Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  entry.key,
-                  style: const TextStyle(
-                    color: kDeskMuted,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < 760;
+        final width = narrow ? constraints.maxWidth : (constraints.maxWidth - 16) / 2;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Detalhes', style: TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 16,
+              runSpacing: 16,
+              children: groups
+                  .map(
+                    (group) => SizedBox(
+                      width: width,
+                      child: _EventMetaGroupCard(group: group),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _EventMetaGroup {
+  const _EventMetaGroup({
+    required this.title,
+    required this.icon,
+    required this.entries,
+  });
+
+  final String title;
+  final IconData icon;
+  final List<MapEntry<String, String>> entries;
+}
+
+class _EventMetaGroupCard extends StatelessWidget {
+  const _EventMetaGroupCard({required this.group});
+
+  final _EventMetaGroup group;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: kDeskCardAlt,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kBrandRose.withValues(alpha: 0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(group.icon, size: 18, color: kBrandRose),
+              const SizedBox(width: 8),
+              Text(
+                group.title,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ...group.entries.map(
+            (entry) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entry.key,
+                    style: const TextStyle(
+                      color: kDeskMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 3),
-                Text(entry.value, style: const TextStyle(fontSize: 15)),
-              ],
+                  const SizedBox(height: 3),
+                  Text(entry.value, style: const TextStyle(fontSize: 15)),
+                ],
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -5875,7 +5939,7 @@ class _EventInfoCard extends StatelessWidget {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: kBrandRose.withOpacity(0.12),
+              color: kBrandRose.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(data.icon, color: kBrandRose),
@@ -5920,7 +5984,7 @@ class _EventBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: kDeskCardAlt,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: kBrandRose.withOpacity(0.18)),
+        border: Border.all(color: kBrandRose.withValues(alpha: 0.18)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -5976,6 +6040,77 @@ List<MapEntry<String, String>> _eventMetaEntries(Map<String, dynamic> meta) {
       })
       .whereType<MapEntry<String, String>>()
       .toList();
+}
+
+List<_EventMetaGroup> _eventMetaGroups(Map<String, dynamic> meta) {
+  final buckets = <String, List<MapEntry<String, String>>>{
+    'Casal': [],
+    'Família': [],
+    'Locais': [],
+    'Horários': [],
+    'Evento': [],
+    'Outros': [],
+  };
+
+  for (final entry in meta.entries) {
+    final value = _normalizeEventMetaValue(entry.value);
+    if (value == null) continue;
+    final label = _prettyMetaKey(entry.key);
+    buckets[_eventMetaBucket(entry.key)]!.add(MapEntry(label, value));
+  }
+
+  const icons = <String, IconData>{
+    'Casal': Icons.favorite_border,
+    'Família': Icons.people_outline,
+    'Locais': Icons.place_outlined,
+    'Horários': Icons.schedule_outlined,
+    'Evento': Icons.celebration_outlined,
+    'Outros': Icons.notes_outlined,
+  };
+
+  return buckets.entries
+      .where((entry) => entry.value.isNotEmpty)
+      .map(
+        (entry) => _EventMetaGroup(
+          title: entry.key,
+          icon: icons[entry.key] ?? Icons.notes_outlined,
+          entries: entry.value,
+        ),
+      )
+      .toList();
+}
+
+String _eventMetaBucket(String key) {
+  if (key.contains('noivo_') || key.contains('noiva_')) return 'Casal';
+  if (key.contains('pai') ||
+      key.contains('mae') ||
+      key.contains('padrinho') ||
+      key.contains('madrinha') ||
+      key.contains('filho_de')) {
+    return 'Família';
+  }
+  if (key.contains('morada') ||
+      key.contains('igreja') ||
+      key.contains('quinta') ||
+      key.contains('localidade') ||
+      key.contains('casa_')) {
+    return 'Locais';
+  }
+  if (key.contains('hora') ||
+      key.contains('chegada') ||
+      key.contains('saida') ||
+      key.contains('entrega') ||
+      key.contains('loja')) {
+    return 'Horários';
+  }
+  if (key.contains('convidados') ||
+      key.contains('equipa') ||
+      key.contains('pacote') ||
+      key.contains('bebe') ||
+      key == 'contacto_pais') {
+    return 'Evento';
+  }
+  return 'Outros';
 }
 
 String? _normalizeEventMetaValue(dynamic value) {
