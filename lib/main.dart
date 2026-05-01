@@ -675,9 +675,19 @@ void showQrDialog(BuildContext context, {required String title, required String 
 
 PreferredSizeWidget buildNavAppBar(BuildContext context, String title, {List<Widget> actions = const []}) {
   return AppBar(
-    title: Text(title),
+    title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600, letterSpacing: 0.3)),
     leading: navLeading(context),
     actions: navActions(context, extra: actions),
+    scrolledUnderElevation: 0,
+    bottom: PreferredSize(
+      preferredSize: const Size.fromHeight(1),
+      child: Container(
+        height: 1,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(colors: [Colors.transparent, kBrandRose.withOpacity(0.35), Colors.transparent]),
+        ),
+      ),
+    ),
   );
 }
 
@@ -4015,6 +4025,29 @@ class _DeskStatusBadge extends StatelessWidget {
         border: Border.all(color: fg.withOpacity(0.4)),
       ),
       child: Text(label, style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600)),
+    );
+  }
+}
+
+class _MobileActionChip extends StatelessWidget {
+  const _MobileActionChip({required this.label, required this.color, required this.onTap});
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withOpacity(0.4)),
+        ),
+        child: Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
+      ),
     );
   }
 }
@@ -8534,79 +8567,143 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                       itemBuilder: (_, i) {
                         final o = orders[i];
                         final isSelected = selected.contains(o.id);
-                        return Card(
-                          child: ListTile(
-                            title: Text('${o.orderCode} - ${o.customerName}'),
-                            subtitle: Text(() {
-                              final info = o.eventId != null ? eventInfoById[o.eventId] : null;
-                              final name = info?.name ?? o.eventName ?? '';
-                              final date = info?.eventDate ?? '';
-                              final type = info?.eventType ?? '';
-                              final parts = <String>['Status: ${o.status}'];
-                              if (name.isNotEmpty) parts.add(name);
-                              if (date.isNotEmpty) parts.add(date);
-                              if (type.isNotEmpty) parts.add(type);
-                              return parts.join(' • ');
-                            }()),
-                            onTap: () async {
-                              await Navigator.push(context, MaterialPageRoute(builder: (_) => StaffOrderDetailPage(orderId: o.id)));
-                              if (!mounted) return;
-                              setState(() {});
-                            },
-                            trailing: Wrap(
-                              spacing: 6,
-                              children: [
-                                IconButton(
-                                  icon: Icon(isSelected ? Icons.check_box : Icons.check_box_outline_blank),
-                                  onPressed: () => setState(() {
-                                    if (isSelected) {
-                                      selected.remove(o.id);
-                                    } else {
-                                      selected.add(o.id);
-                                    }
-                                  }),
-                                ),
-                                if (canUpdate && o.status != 'paid' && o.status != 'delivered')
-                                  FilledButton(
-                                    onPressed: () async {
-                                      final emailed = await ref.read(apiProvider).markOrderPaid(token, o.id, eventId: o.eventId);
-                                      if (!context.mounted) return;
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(content: Text(emailed ? 'Marcado pago e link enviado.' : 'Marcado pago. Sem email.')),
-                                      );
-                                      setState(() {});
-                                    },
-                                    child: const Text('Pago'),
-                                  ),
-                                if (canUpdate && o.status == 'paid' && !isPhotographer)
-                                  OutlinedButton(
-                                    onPressed: () async {
-                                      await ref.read(apiProvider).markOrderDelivered(token, o.id, eventId: o.eventId);
-                                      if (!context.mounted) return;
-                                      setState(() {});
-                                    },
-                                    child: const Text('Entregue'),
-                                  ),
-                                if (canDownload)
-                                  PopupMenuButton<String>(
-                                    onSelected: (v) async {
-                                      if (v == 'send-link') {
-                                        final sent = await ref.read(apiProvider).staffSendDownloadLink(token, o.id);
-                                        if (!context.mounted) return;
-                                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(sent ? 'Link enviado.' : 'Falha no envio.')));
-                                      }
-                                      if (v == 'download-all') {
-                                        final path = await ref.read(apiProvider).staffDownloadAll(token, o.id);
-                                        if (!context.mounted) return;
-                                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('ZIP guardado: $path')));
-                                      }
-                                    },
-                                    itemBuilder: (_) => const [
-                                      PopupMenuItem(value: 'send-link', child: Text('Enviar link')),
-                                      PopupMenuItem(value: 'download-all', child: Text('Download ZIP')),
+                        final info = o.eventId != null ? eventInfoById[o.eventId] : null;
+                        final eventName = info?.name ?? o.eventName ?? '';
+                        final eventDate = info?.eventDate ?? '';
+                        final eventType = info?.eventType ?? '';
+                        final statusColor = o.status == 'paid'
+                            ? Colors.lightGreenAccent
+                            : o.status == 'delivered'
+                                ? Colors.lightBlueAccent
+                                : Colors.orangeAccent;
+                        return Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: kDeskCard,
+                            borderRadius: BorderRadius.circular(kDeskRadius),
+                            border: Border.all(color: isSelected ? kBrandRose.withOpacity(0.7) : kBrandRose.withOpacity(0.2)),
+                            boxShadow: [BoxShadow(color: kBrandRose.withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 3))],
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(kDeskRadius),
+                              onTap: () async {
+                                await Navigator.push(context, MaterialPageRoute(builder: (_) => StaffOrderDetailPage(orderId: o.id)));
+                                if (!mounted) return;
+                                setState(() {});
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.all(14),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            o.orderCode,
+                                            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700, letterSpacing: 0.5),
+                                          ),
+                                        ),
+                                        _DeskStatusBadge(o.status.toUpperCase(), color: statusColor),
+                                        if (canBulk) ...[
+                                          const SizedBox(width: 8),
+                                          GestureDetector(
+                                            onTap: () => setState(() => isSelected ? selected.remove(o.id) : selected.add(o.id)),
+                                            child: Icon(
+                                              isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+                                              color: kBrandRose,
+                                              size: 22,
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                    const SizedBox(height: 5),
+                                    Text(o.customerName, style: const TextStyle(color: kBrandRose, fontSize: 14, fontWeight: FontWeight.w500)),
+                                    if (eventName.isNotEmpty || eventDate.isNotEmpty || eventType.isNotEmpty) ...[
+                                      const SizedBox(height: 6),
+                                      Wrap(
+                                        spacing: 10,
+                                        runSpacing: 4,
+                                        children: [
+                                          if (eventName.isNotEmpty)
+                                            Row(mainAxisSize: MainAxisSize.min, children: [
+                                              const Icon(Icons.event, size: 12, color: kDeskMuted),
+                                              const SizedBox(width: 3),
+                                              Text(eventName, style: const TextStyle(color: kDeskMuted, fontSize: 12)),
+                                            ]),
+                                          if (eventDate.isNotEmpty)
+                                            Row(mainAxisSize: MainAxisSize.min, children: [
+                                              const Icon(Icons.calendar_today, size: 12, color: kDeskMuted),
+                                              const SizedBox(width: 3),
+                                              Text(eventDate, style: const TextStyle(color: kDeskMuted, fontSize: 12)),
+                                            ]),
+                                          if (eventType.isNotEmpty)
+                                            Row(mainAxisSize: MainAxisSize.min, children: [
+                                              const Icon(Icons.label_outline, size: 12, color: kDeskMuted),
+                                              const SizedBox(width: 3),
+                                              Text(eventType, style: const TextStyle(color: kDeskMuted, fontSize: 12)),
+                                            ]),
+                                        ],
+                                      ),
                                     ],
-                                  ),
-                              ],
+                                    if (canUpdate || canDownload) ...[
+                                      const SizedBox(height: 10),
+                                      Wrap(
+                                        spacing: 6,
+                                        runSpacing: 6,
+                                        children: [
+                                          if (canUpdate && o.status != 'paid' && o.status != 'delivered')
+                                            _MobileActionChip(
+                                              label: 'Pago',
+                                              color: Colors.lightGreenAccent,
+                                              onTap: () async {
+                                                final emailed = await ref.read(apiProvider).markOrderPaid(token, o.id, eventId: o.eventId);
+                                                if (!context.mounted) return;
+                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                  SnackBar(content: Text(emailed ? 'Marcado pago e link enviado.' : 'Marcado pago. Sem email.')),
+                                                );
+                                                setState(() {});
+                                              },
+                                            ),
+                                          if (canUpdate && o.status == 'paid' && !isPhotographer)
+                                            _MobileActionChip(
+                                              label: 'Entregue',
+                                              color: Colors.lightBlueAccent,
+                                              onTap: () async {
+                                                await ref.read(apiProvider).markOrderDelivered(token, o.id, eventId: o.eventId);
+                                                if (!context.mounted) return;
+                                                setState(() {});
+                                              },
+                                            ),
+                                          if (canDownload)
+                                            _MobileActionChip(
+                                              label: 'Enviar link',
+                                              color: kBrandRose,
+                                              onTap: () async {
+                                                final sent = await ref.read(apiProvider).staffSendDownloadLink(token, o.id);
+                                                if (!context.mounted) return;
+                                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(sent ? 'Link enviado.' : 'Falha no envio.')));
+                                              },
+                                            ),
+                                          if (canDownload)
+                                            _MobileActionChip(
+                                              label: 'ZIP',
+                                              color: kDeskMuted,
+                                              onTap: () async {
+                                                final path = await ref.read(apiProvider).staffDownloadAll(token, o.id);
+                                                if (!context.mounted) return;
+                                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('ZIP guardado: $path')));
+                                              },
+                                            ),
+                                        ],
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
                         );
@@ -9356,31 +9453,82 @@ class _StaffClientsPageState extends ConsumerState<StaffClientsPage> {
                   itemCount: clients.length,
                   itemBuilder: (_, i) {
                     final c = clients[i];
-                    return Card(
-                      child: ListTile(
-                        title: Text(c.name),
-                        subtitle: Text([c.phone, c.email].where((v) => v != null && v!.isNotEmpty).join(' • ')),
-                        onTap: user.hasPermission('clients.update')
-                            ? () async {
-                                await Navigator.push(
-                                  context,
-                                  MaterialPageRoute(builder: (_) => StaffClientFormPage(client: c)),
-                                );
-                                setState(() {});
-                              }
-                            : null,
-                        trailing: user.hasPermission('clients.delete')
-                            ? IconButton(
-                                icon: const Icon(Icons.delete_outline),
-                                onPressed: () async {
-                                  final ok = await _confirm(context, 'Remover cliente?', c.name);
-                                  if (!ok) return;
-                                  await ref.read(apiProvider).deleteClient(token, c.id);
-                                  if (!context.mounted) return;
+                    final initials = c.name.trim().split(' ').take(2).map((p) => p.isNotEmpty ? p[0].toUpperCase() : '').join('');
+                    return Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: kDeskCard,
+                        borderRadius: BorderRadius.circular(kDeskRadius),
+                        border: Border.all(color: kBrandRose.withOpacity(0.2)),
+                        boxShadow: [BoxShadow(color: kBrandRose.withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 3))],
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(kDeskRadius),
+                          onTap: user.hasPermission('clients.update')
+                              ? () async {
+                                  await Navigator.push(context, MaterialPageRoute(builder: (_) => StaffClientFormPage(client: c)));
                                   setState(() {});
-                                },
-                              )
-                            : null,
+                                }
+                              : null,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                    color: kBrandRose.withOpacity(0.15),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: kBrandRose.withOpacity(0.4)),
+                                  ),
+                                  child: Center(
+                                    child: Text(initials, style: const TextStyle(color: kBrandRose, fontSize: 16, fontWeight: FontWeight.w700)),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(c.name, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
+                                      if (c.phone != null && c.phone!.isNotEmpty) ...[
+                                        const SizedBox(height: 3),
+                                        Row(children: [
+                                          const Icon(Icons.phone_outlined, size: 12, color: kDeskMuted),
+                                          const SizedBox(width: 4),
+                                          Text(c.phone!, style: const TextStyle(color: kDeskMuted, fontSize: 12)),
+                                        ]),
+                                      ],
+                                      if (c.email != null && c.email!.isNotEmpty) ...[
+                                        const SizedBox(height: 3),
+                                        Row(children: [
+                                          const Icon(Icons.email_outlined, size: 12, color: kDeskMuted),
+                                          const SizedBox(width: 4),
+                                          Expanded(child: Text(c.email!, style: const TextStyle(color: kDeskMuted, fontSize: 12), overflow: TextOverflow.ellipsis)),
+                                        ]),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                                if (user.hasPermission('clients.delete'))
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline, size: 20),
+                                    color: kDeskMuted,
+                                    onPressed: () async {
+                                      final ok = await _confirm(context, 'Remover cliente?', c.name);
+                                      if (!ok) return;
+                                      await ref.read(apiProvider).deleteClient(token, c.id);
+                                      if (!context.mounted) return;
+                                      setState(() {});
+                                    },
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
                     );
                   },
