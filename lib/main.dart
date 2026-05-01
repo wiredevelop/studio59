@@ -78,8 +78,7 @@ bool isDesktopPlatform() {
 }
 
 bool useDesktopLayout(BuildContext context) {
-  // Unified layout: use the desktop UI everywhere, but make it responsive for narrow screens.
-  return true;
+  return MediaQuery.of(context).size.width >= 768;
 }
 
 String formatUiError(Object error) {
@@ -113,10 +112,6 @@ const Set<String> kOnlineWebMethods = {
   'mb_way',
   'paypal',
   'revolut_pay',
-  'amazon_pay',
-  'bancontact',
-  'eps',
-  'klarna',
 };
 
 List<OnlineMethodOption> buildOnlineMethodOptions({
@@ -130,10 +125,6 @@ List<OnlineMethodOption> buildOnlineMethodOptions({
     const OnlineMethodOption('mb_way', 'MB WAY', opensWeb: true),
     const OnlineMethodOption('paypal', 'PayPal', opensWeb: true),
     const OnlineMethodOption('revolut_pay', 'Revolut Pay', opensWeb: true),
-    const OnlineMethodOption('amazon_pay', 'Amazon Pay', opensWeb: true),
-    const OnlineMethodOption('bancontact', 'Bancontact', opensWeb: true),
-    const OnlineMethodOption('eps', 'EPS', opensWeb: true),
-    const OnlineMethodOption('klarna', 'Klarna', opensWeb: true),
   ];
 }
 const Map<String, String> kStaffPermissions = {
@@ -1519,9 +1510,8 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
         _paymentBadge('MB WAY'),
         _paymentBadge('APPLE PAY'),
         _paymentBadge('GOOGLE PAY'),
-        _paymentBadge('KLARNA'),
-        _paymentBadge('BANCONTACT'),
-        _paymentBadge('EPS'),
+        _paymentBadge('PAYPAL'),
+        _paymentBadge('REVOLUT'),
       ],
     );
   }
@@ -1551,14 +1541,6 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
         return _methodBadge('PP');
       case 'revolut_pay':
         return _methodBadge('R');
-      case 'amazon_pay':
-        return _methodBadge('A');
-      case 'bancontact':
-        return _methodBadge('BC');
-      case 'eps':
-        return _methodBadge('EPS');
-      case 'klarna':
-        return _methodBadge('K');
       default:
         return const Icon(Icons.payment);
     }
@@ -1708,10 +1690,11 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                 stripe.CardFormField(
                   controller: _cardFormController,
                   style: stripe.CardFormStyle(
-                    backgroundColor: Colors.white,
-                    textColor: Colors.black,
+                    backgroundColor: const Color(0xFF1C1C1C),
+                    textColor: Colors.white,
+                    placeholderColor: Colors.white38,
                     fontSize: 16,
-                    borderColor: Colors.black,
+                    borderColor: kBrandRose,
                     borderWidth: 1,
                     borderRadius: 12,
                   ),
@@ -1797,14 +1780,16 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                             if (uri == null) {
                               throw Exception('URL de pagamento inválido.');
                             }
-                            final opened = await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+                            final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
                             if (!opened) {
                               throw Exception('Não foi possível abrir o navegador.');
                             }
                             await ref.read(savedOrdersProvider.notifier).add(checkout.orderCode);
                             if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Completa o pagamento no navegador.')),
+                            Navigator.pushAndRemoveUntil(
+                              context,
+                              MaterialPageRoute(builder: (_) => TicketPage(orderCode: checkout.orderCode)),
+                              (route) => route.isFirst,
                             );
                             return;
                           }
@@ -2046,20 +2031,30 @@ class _TicketPageState extends ConsumerState<TicketPage> {
 
   Future<bool> _ensureGalleryPermission() async {
     if (Platform.isIOS) {
-      final photosStatus = await Permission.photos.status;
-      if (photosStatus.isGranted || photosStatus.isLimited) return true;
       final addOnlyStatus = await Permission.photosAddOnly.status;
       if (addOnlyStatus.isGranted || addOnlyStatus.isLimited) return true;
-
-      final photos = await Permission.photos.request();
-      if (photos.isGranted || photos.isLimited) return true;
-
+      if (addOnlyStatus.isPermanentlyDenied) {
+        await openAppSettings();
+        return false;
+      }
+      final photosStatus = await Permission.photos.status;
+      if (photosStatus.isGranted || photosStatus.isLimited) return true;
+      if (photosStatus.isPermanentlyDenied) {
+        await openAppSettings();
+        return false;
+      }
       final addOnly = await Permission.photosAddOnly.request();
-      return addOnly.isGranted || addOnly.isLimited;
+      if (addOnly.isGranted || addOnly.isLimited) return true;
+      final photos = await Permission.photos.request();
+      return photos.isGranted || photos.isLimited;
     }
     if (Platform.isAndroid) {
       final photos = await Permission.photos.request();
       if (photos.isGranted) return true;
+      if (photos.isPermanentlyDenied) {
+        await openAppSettings();
+        return false;
+      }
       final storage = await Permission.storage.request();
       return storage.isGranted;
     }
@@ -4169,16 +4164,6 @@ class DesktopDashboardView extends ConsumerWidget {
                         subtitle: 'Total de dias ativos',
                         icon: Icons.calendar_today,
                         color: Colors.lightBlueAccent,
-                      ),
-                    ),
-                    SizedBox(
-                      width: cardWidth,
-                      child: _DeskKpiCard(
-                        title: 'Fotos por tratar',
-                        value: '${(events.length * 12).clamp(4, 128)}',
-                        subtitle: 'Estimativa',
-                        icon: Icons.photo_library,
-                        color: Colors.pinkAccent,
                       ),
                     ),
                   ],
@@ -7921,6 +7906,202 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
   }
 }
 
+class _StaffEventGalleryPage extends ConsumerStatefulWidget {
+  const _StaffEventGalleryPage({required this.event});
+  final StaffEvent event;
+
+  @override
+  ConsumerState<_StaffEventGalleryPage> createState() => _StaffEventGalleryPageState();
+}
+
+class _StaffEventGalleryPageState extends ConsumerState<_StaffEventGalleryPage> {
+  bool uploading = false;
+  String uploadStatus = '';
+  List<_UploadOutcome> uploadResults = [];
+
+  String _generateUploadId() {
+    final rand = Random();
+    return '${DateTime.now().millisecondsSinceEpoch}-${rand.nextInt(1 << 32)}';
+  }
+
+  Future<_UploadOutcome> _uploadFile(String token, File file) async {
+    final fileName = file.path.split('/').last;
+    final length = await file.length();
+    const chunkSize = 1024 * 1024 * 2;
+    final totalChunks = (length / chunkSize).ceil();
+    final uploadId = _generateUploadId();
+    final raf = await file.open();
+    final startedAt = DateTime.now();
+    try {
+      for (var i = 0; i < totalChunks; i++) {
+        final start = i * chunkSize;
+        final size = min(chunkSize, length - start);
+        await raf.setPosition(start);
+        final bytes = await raf.read(size);
+        await ref.read(apiProvider).staffUploadChunk(
+          token: token,
+          eventId: widget.event.id,
+          uploadId: uploadId,
+          chunkIndex: i,
+          totalChunks: totalChunks,
+          fileName: fileName,
+          chunkBytes: bytes,
+        );
+        if (mounted) setState(() => uploadStatus = 'Upload ${i + 1}/$totalChunks: $fileName');
+      }
+      return _UploadOutcome(fileName: fileName, duration: DateTime.now().difference(startedAt), success: true);
+    } catch (e) {
+      return _UploadOutcome(fileName: fileName, duration: DateTime.now().difference(startedAt), success: false, error: e.toString());
+    } finally {
+      await raf.close();
+    }
+  }
+
+  Future<void> _pickAndUpload(String token) async {
+    final picker = ImagePicker();
+    final files = await picker.pickMultiImage(imageQuality: 90);
+    if (files.isEmpty) return;
+    setState(() { uploading = true; uploadStatus = 'A enviar ${files.length} ficheiros...'; uploadResults = []; });
+    try {
+      final results = <_UploadOutcome>[];
+      for (final f in files) {
+        final outcome = await _uploadFile(token, File(f.path));
+        results.add(outcome);
+        if (mounted) setState(() => uploadResults = List.from(results));
+      }
+      if (mounted) {
+        final failed = results.where((r) => !r.success).length;
+        setState(() => uploadStatus = failed == 0 ? 'Uploads concluídos.' : 'Concluído com $failed falhas.');
+      }
+    } catch (e) {
+      if (mounted) setState(() => uploadStatus = 'Erro: $e');
+    } finally {
+      if (mounted) setState(() => uploading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final token = ref.watch(staffTokenProvider);
+    final user = ref.watch(staffUserProvider);
+    if (token == null || user == null) return const Scaffold(body: SizedBox());
+    return Scaffold(
+      appBar: buildNavAppBar(context, widget.event.name),
+      floatingActionButton: user.hasPermission('photos.upload')
+          ? FloatingActionButton.extended(
+              onPressed: uploading ? null : () => _pickAndUpload(token),
+              icon: uploading
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                  : const Icon(Icons.add_a_photo),
+              label: Text(uploading ? 'A enviar...' : 'Adicionar fotos'),
+              backgroundColor: kBrandRose,
+              foregroundColor: kBrandBlack,
+            )
+          : null,
+      body: RefreshIndicator(
+        onRefresh: () async => setState(() {}),
+        child: FutureBuilder<List<StaffPhoto>>(
+          future: ref.read(apiProvider).staffEventPhotos(token, widget.event.id, ''),
+          builder: (_, snap) {
+            return ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 100),
+              children: [
+                if (uploadStatus.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(uploadStatus, style: TextStyle(color: kBrandRose, fontWeight: FontWeight.w500)),
+                  ),
+                if (uploadResults.isNotEmpty) ...[
+                  ...uploadResults.map((r) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(children: [
+                      Icon(r.success ? Icons.check_circle_outline : Icons.error_outline,
+                           size: 16, color: r.success ? Colors.greenAccent : Colors.redAccent),
+                      const SizedBox(width: 6),
+                      Expanded(child: Text('${r.fileName}${r.success ? '' : ' • Falhou'}',
+                          style: const TextStyle(fontSize: 12))),
+                    ]),
+                  )),
+                  const SizedBox(height: 12),
+                ],
+                if (!snap.hasData) ...[
+                  if (snap.hasError)
+                    Center(child: Text('Erro: ${snap.error}'))
+                  else
+                    const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator())),
+                ] else if (snap.data!.isEmpty) ...[
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 48),
+                      child: Column(children: [
+                        Icon(Icons.photo_library_outlined, size: 64, color: Colors.white24),
+                        SizedBox(height: 12),
+                        Text('Sem fotos neste evento', style: TextStyle(color: Colors.white38)),
+                      ]),
+                    ),
+                  ),
+                ] else ...[
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 3,
+                      crossAxisSpacing: 4,
+                      mainAxisSpacing: 4,
+                    ),
+                    itemCount: snap.data!.length,
+                    itemBuilder: (_, i) {
+                      final p = snap.data![i];
+                      return GestureDetector(
+                        onLongPress: user.hasPermission('photos.delete')
+                            ? () async {
+                                final ok = await _confirm(context, 'Apagar foto?', 'Número ${p.number}');
+                                if (!ok) return;
+                                await ref.read(apiProvider).staffDeletePhoto(token, widget.event.id, p.id);
+                                if (mounted) setState(() {});
+                              }
+                            : null,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: kBrandBlack,
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: kBrandRose.withOpacity(0.2)),
+                          ),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              if (p.previewUrl != null && p.previewUrl!.isNotEmpty)
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: Image.network(p.previewUrl!, fit: BoxFit.cover),
+                                )
+                              else
+                                const Center(child: Icon(Icons.image_not_supported, color: Colors.white24, size: 28)),
+                              Positioned(
+                                bottom: 2, left: 2,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                  decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(3)),
+                                  child: Text('#${p.number}', style: const TextStyle(fontSize: 9, color: Colors.white)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
 class StaffPhotosPage extends ConsumerStatefulWidget {
   const StaffPhotosPage({super.key});
 
@@ -7929,10 +8110,6 @@ class StaffPhotosPage extends ConsumerStatefulWidget {
 }
 
 class _StaffPhotosPageState extends ConsumerState<StaffPhotosPage> {
-  int? eventId;
-  final searchCtrl = TextEditingController();
-  final selected = <int>{};
-
   Future<List<StaffEvent>> _loadEvents(String token, {required bool assignedOnly}) =>
       ref.read(apiProvider).staffEvents(token, assignedOnly: assignedOnly);
 
@@ -7940,12 +8117,6 @@ class _StaffPhotosPageState extends ConsumerState<StaffPhotosPage> {
   void initState() {
     super.initState();
     saveStaffLastRoute('photos', userId: ref.read(staffUserProvider)?.id);
-  }
-
-  @override
-  void dispose() {
-    searchCtrl.dispose();
-    super.dispose();
   }
 
   @override
@@ -7963,7 +8134,7 @@ class _StaffPhotosPageState extends ConsumerState<StaffPhotosPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Fotos'),
+        title: const Text('Galerias / Fotos'),
         leading: navLeading(context),
         actions: navActions(context, extra: [
           IconButton(onPressed: () => setState(() {}), icon: const Icon(Icons.refresh)),
@@ -7972,135 +8143,89 @@ class _StaffPhotosPageState extends ConsumerState<StaffPhotosPage> {
       body: RefreshIndicator(
         onRefresh: () async => setState(() {}),
         child: FutureBuilder<List<StaffEvent>>(
-        future: _loadEvents(token, assignedOnly: !_canSeeAllEvents(user)),
-        builder: (_, snap) {
-          if (!snap.hasData) {
-            if (snap.hasError) {
+          future: _loadEvents(token, assignedOnly: !_canSeeAllEvents(user)),
+          builder: (_, snap) {
+            if (!snap.hasData) {
+              if (snap.hasError) {
+                return ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  children: [Padding(padding: const EdgeInsets.all(16), child: Text('Erro: ${snap.error}'))],
+                );
+              }
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                children: [Padding(padding: const EdgeInsets.all(16), child: Text('Erro: ${snap.error}'))],
+                children: const [SizedBox(height: 300, child: Center(child: CircularProgressIndicator()))],
               );
             }
-            return ListView(
+            final events = _filterEventsForUser(snap.data!, user);
+            if (events.isEmpty) {
+              return ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: const [Padding(padding: EdgeInsets.all(16), child: Text('Sem eventos'))],
+              );
+            }
+            return GridView.builder(
               physics: const AlwaysScrollableScrollPhysics(),
-              children: const [SizedBox(height: 300, child: Center(child: CircularProgressIndicator()))],
-            );
-          }
-          final events = _filterEventsForUser(snap.data!, user);
-          if (events.isEmpty) {
-            return ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              children: const [Padding(padding: EdgeInsets.all(16), child: Text('Sem eventos'))],
-            );
-          }
-          if (eventId == null || !events.any((e) => e.id == eventId)) {
-            eventId = events.first.id;
-          }
-
-          return Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(8),
-                child: Column(
-                  children: [
-                    DropdownButtonFormField<int>(
-                      value: eventId,
-                      items: events.map((e) => DropdownMenuItem(value: e.id, child: Text(e.name))).toList(),
-                      onChanged: (v) => setState(() => eventId = v),
-                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Evento'),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: searchCtrl,
-                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Pesquisar número'),
-                      onSubmitted: (_) => setState(() {}),
-                    ),
-                    if (selected.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: FilledButton(
-                          onPressed: () async {
-                            final ok = await _confirm(context, 'Apagar selecionadas?', 'Isto remove fotos permanentemente.');
-                            if (!ok) return;
-                            final deleted = await ref.read(apiProvider).staffBulkDeletePhotos(token, eventId!, selected.toList());
-                            if (!context.mounted) return;
-                            selected.clear();
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Apagadas $deleted fotos.')));
-                            setState(() {});
-                          },
-                          child: Text('Apagar selecionadas (${selected.length})'),
-                        ),
-                      ),
-                  ],
-                ),
+              padding: const EdgeInsets.all(12),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+                childAspectRatio: 0.95,
               ),
-              Expanded(
-                child: FutureBuilder<List<StaffPhoto>>(
-                  future: ref.read(apiProvider).staffEventPhotos(token, eventId!, searchCtrl.text.trim()),
-                  builder: (_, photoSnap) {
-                    if (!photoSnap.hasData) {
-                      if (photoSnap.hasError) return Center(child: Text('Erro: ${photoSnap.error}'));
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    final photos = photoSnap.data!;
-                    if (photos.isEmpty) return const Center(child: Text('Sem fotos'));
-                    return ListView.builder(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      itemCount: photos.length,
-                      itemBuilder: (_, i) {
-                        final p = photos[i];
-                        final isSelected = selected.contains(p.id);
-                        return Card(
-                          child: ListTile(
-                            leading: p.previewUrl == null
-                                ? const Icon(Icons.image_not_supported)
-                                : Image.network(p.previewUrl!, width: 56, height: 56, fit: BoxFit.cover),
-                            title: Text('#${p.number}'),
-                            subtitle: Text(p.previewStatus ?? ''),
-                            trailing: Wrap(
-                              spacing: 6,
-                              children: [
-                                IconButton(
-                                  icon: Icon(isSelected ? Icons.check_box : Icons.check_box_outline_blank),
-                                  onPressed: () => setState(() {
-                                    if (isSelected) {
-                                      selected.remove(p.id);
-                                    } else {
-                                      selected.add(p.id);
-                                    }
-                                  }),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.refresh),
-                                  onPressed: () async {
-                                    await ref.read(apiProvider).staffRetryPreview(token, eventId!, p.id);
-                                    if (!context.mounted) return;
-                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Retry enviado.')));
-                                  },
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete_outline),
-                                  onPressed: () async {
-                                    final ok = await _confirm(context, 'Apagar foto?', 'Número ${p.number}');
-                                    if (!ok) return;
-                                    await ref.read(apiProvider).staffDeletePhoto(token, eventId!, p.id);
-                                    if (!context.mounted) return;
-                                    setState(() {});
-                                  },
-                                ),
-                              ],
+              itemCount: events.length,
+              itemBuilder: (context, index) {
+                final e = events[index];
+                final typeLabel = e.eventType == 'casamento' ? 'Casamento' : e.eventType == 'batizado' ? 'Batizado' : e.eventType ?? '';
+                return GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => _StaffEventGalleryPage(event: e)),
+                  ),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: kBrandBlack,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: kBrandRose.withOpacity(0.35)),
+                    ),
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: kBrandRose.withOpacity(0.07),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Center(
+                              child: Icon(Icons.photo_library_outlined, size: 36, color: kBrandRose.withOpacity(0.5)),
                             ),
                           ),
-                        );
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          );
-        },
-      ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          e.name,
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (e.eventDate.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(e.eventDate, style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.45))),
+                        ],
+                        if (typeLabel.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(typeLabel, style: TextStyle(fontSize: 11, color: kBrandRose.withOpacity(0.7))),
+                        ],
+                      ],
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        ),
       ),
     );
   }
