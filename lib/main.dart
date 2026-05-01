@@ -7432,7 +7432,6 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
             ),
           );
         },
-      ),
     );
     if (user != null && useDesktopLayout(context)) {
       return StaffDesktopShell(
