@@ -1743,8 +1743,8 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                         final session = ref.read(guestSessionProvider);
                         if (session == null) return;
                         sessionToken = session.token;
-                        if (nameCtrl.text.trim().isEmpty || phoneCtrl.text.trim().isEmpty || emailCtrl.text.trim().isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome, telemóvel e email são obrigatórios.')));
+                        if (nameCtrl.text.trim().isEmpty || phoneCtrl.text.trim().isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome e telemóvel são obrigatórios.')));
                           return;
                         }
                         final email = emailCtrl.text.trim();
