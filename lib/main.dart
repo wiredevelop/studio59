@@ -4042,7 +4042,7 @@ class _DeskTable extends StatelessWidget {
       builder: (context, constraints) {
         const minCellWidth = 120.0;
         final minTableWidth = columns.fold<double>(0, (sum, c) => sum + (c.flex * minCellWidth));
-        final tableWidth = math.max(constraints.maxWidth, minTableWidth);
+        final tableWidth = max(constraints.maxWidth, minTableWidth);
         return SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: ConstrainedBox(
@@ -7839,6 +7839,7 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
             ],
           );
         },
+      ),
     );
   }
 

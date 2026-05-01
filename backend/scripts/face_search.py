@@ -37,6 +37,40 @@ def get_faces(app: FaceAnalysis, img_path: str):
         return app.get(img)
 
 
+def normalize_embedding(embedding):
+    emb = np.asarray(embedding, dtype=np.float32)
+    norm = np.linalg.norm(emb)
+    if norm == 0:
+        return None
+    return emb / norm
+
+
+def normalize_embeddings(embeddings):
+    normalized = []
+    for embedding in embeddings:
+        emb = normalize_embedding(embedding)
+        if emb is not None:
+            normalized.append(emb)
+    return normalized
+
+
+def score_photo_matches(photo_embeddings, query_embeddings):
+    if not photo_embeddings or not query_embeddings:
+        return {}
+
+    query_matrix = np.vstack(query_embeddings).T
+    best = {}
+
+    for pid, embeddings in photo_embeddings.items():
+        if not embeddings:
+            continue
+        photo_matrix = np.vstack(embeddings)
+        scores = photo_matrix @ query_matrix
+        best[pid] = float(np.max(scores))
+
+    return best
+
+
 def main():
     orig_stdout = sys.stdout
     sys.stdout = sys.stderr
@@ -79,18 +113,15 @@ def main():
         out({'error': 'no_face_detected'})
         return 1
 
-    query_emb = faces[0].embedding.astype(np.float32)
-    qnorm = np.linalg.norm(query_emb)
-    if qnorm == 0:
+    query_embeddings = normalize_embeddings([face.embedding for face in faces])
+    if not query_embeddings:
         out({'error': 'invalid_embedding'})
         return 1
-    query_emb = query_emb / qnorm
 
     index = load_index(index_path)
     index.setdefault('photos', {})
 
-    embeddings = []
-    photo_ids = []
+    photo_embeddings = {}
 
     for item in photos:
         pid = str(item['id'])
@@ -115,26 +146,13 @@ def main():
                 'embeddings': emb_list,
             }
 
-        for emb in index['photos'][pid].get('embeddings', []):
-            emb_arr = np.asarray(emb, dtype=np.float32)
-            norm = np.linalg.norm(emb_arr)
-            if norm == 0:
-                continue
-            emb_arr = emb_arr / norm
-            embeddings.append(emb_arr)
-            photo_ids.append(int(pid))
+        normalized_photo_embeddings = normalize_embeddings(
+            index['photos'][pid].get('embeddings', [])
+        )
+        if normalized_photo_embeddings:
+            photo_embeddings[int(pid)] = normalized_photo_embeddings
 
-    if embeddings:
-        emb_matrix = np.vstack(embeddings)
-        scores = emb_matrix @ query_emb
-    else:
-        scores = np.array([])
-
-    best = {}
-    for pid, score in zip(photo_ids, scores.tolist()):
-        prev = best.get(pid)
-        if prev is None or score > prev:
-            best[pid] = score
+    best = score_photo_matches(photo_embeddings, query_embeddings)
 
     suggested = [
         {'id': pid, 'score': score}

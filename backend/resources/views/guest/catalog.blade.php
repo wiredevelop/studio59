@@ -81,6 +81,7 @@
                 <input id="face-input" type="file" accept="image/*" capture="user" class="hidden">
             </div>
         </div>
+        <div class="text-xs text-gray-600 mb-3">Podes tirar a selfie sozinho ou com mais pessoas. As sugestões incluem fotos onde apareca qualquer rosto detetado.</div>
 
         <form method="get" action="{{ route('guest.catalog', $event) }}" class="mb-3">
             <div class="grid grid-cols-[1fr_auto] gap-2">

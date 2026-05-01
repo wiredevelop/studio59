@@ -76,7 +76,6 @@ class EventStoreRequest extends FormRequest
             'event_meta.quinta_local' => ['nullable', 'string', 'max:255'],
             'event_meta.almoco_localidade' => ['nullable', 'string', 'max:255'],
             'event_meta.instagram_noivos' => ['nullable', 'string', 'max:255'],
-            'event_meta.instagram_pais' => ['nullable', 'string', 'max:255'],
             'event_meta.numero_convidados' => ['nullable', 'integer', 'min:0'],
             'event_meta.tipo_pacote' => ['nullable', 'string', 'max:255'],
             'event_meta.data_entrega' => ['nullable', 'date'],
@@ -86,6 +85,8 @@ class EventStoreRequest extends FormRequest
             'event_meta.mae_nome' => ['nullable', 'string', 'max:255'],
             'event_meta.padrinho_nome' => ['nullable', 'string', 'max:255'],
             'event_meta.madrinha_nome' => ['nullable', 'string', 'max:255'],
+            'event_meta.contacto_pai' => ['nullable', 'string', 'max:255'],
+            'event_meta.contacto_mae' => ['nullable', 'string', 'max:255'],
             'event_meta.contacto_pais' => ['nullable', 'string', 'max:255'],
             'event_meta.morada' => ['nullable', 'string', 'max:500'],
             'event_meta.cliente_noivo_num' => ['nullable', 'string', 'max:50'],
@@ -184,7 +185,8 @@ class EventStoreRequest extends FormRequest
                     'mae_nome' => 'Nome da mãe',
                     'padrinho_nome' => 'Nome do padrinho',
                     'madrinha_nome' => 'Nome da madrinha',
-                    'contacto_pais' => 'Contacto dos pais',
+                    'contacto_pai' => 'Contacto do pai',
+                    'contacto_mae' => 'Contacto da mãe',
                     'morada' => 'Morada',
                 ];
                 foreach ($required as $field => $label) {

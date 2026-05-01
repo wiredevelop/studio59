@@ -34,8 +34,8 @@
     $reportNo = $event->legacy_report_number ?? $event->internal_code ?? $event->id;
     $priceBaseRaw = $meta['preco_base'] ?? $event->base_price ?? null;
     $priceBase = $priceBaseRaw !== null ? number_format((float) $priceBaseRaw, 2, ',', '.').' €' : '';
-    $contact1 = $meta['contacto_pais'] ?? $meta['noivo_contacto'] ?? '';
-    $contact2 = $meta['contacto_pais_2'] ?? $meta['noiva_contacto'] ?? '';
+    $contact1 = $meta['contacto_pai'] ?? $meta['contacto_pais'] ?? $meta['noivo_contacto'] ?? '';
+    $contact2 = $meta['contacto_mae'] ?? $meta['contacto_pais_2'] ?? $meta['noiva_contacto'] ?? '';
     $houseLabel = $type === 'casamento' ? 'NA CASA DO NOIVO ÀS:' : 'NA CASA DO BEBÉ ÀS:';
     $serviceLabels = [
         'servico_save_the_date' => 'Save the date',
@@ -208,20 +208,28 @@
                     <td class="val">{{ $type === 'casamento' ? ($meta['noivo_nome'] ?? '') : ($meta['bebe_nome'] ?? '') }}</td>
                 </tr>
                 <tr style="height:6mm;">
-                    <td class="lbl">{{ $type === 'casamento' ? 'Noiva' : 'Pais bebé' }}</td>
-                    <td class="val">{{ $type === 'casamento' ? ($meta['noiva_nome'] ?? '') : trim(($meta['pai_nome'] ?? '').' '.($meta['mae_nome'] ?? '')) }}</td>
+                    <td class="lbl">{{ $type === 'casamento' ? 'Noiva' : 'Pai' }}</td>
+                    <td class="val">{{ $type === 'casamento' ? ($meta['noiva_nome'] ?? '') : ($meta['pai_nome'] ?? '') }}</td>
                 </tr>
                 <tr style="height:6mm;">
-                    <td class="lbl">Morada</td>
-                    <td class="val">{{ $type === 'casamento' ? ($meta['noivo_morada'] ?? '') : ($meta['morada'] ?? '') }}</td>
+                    <td class="lbl">{{ $type === 'casamento' ? 'Morada' : 'Mãe' }}</td>
+                    <td class="val">{{ $type === 'casamento' ? ($meta['noivo_morada'] ?? '') : ($meta['mae_nome'] ?? '') }}</td>
                 </tr>
                 <tr style="height:6mm;">
-                    <td class="lbl"></td>
-                    <td class="val">{{ $type === 'casamento' ? ($meta['noiva_morada'] ?? '') : '' }}</td>
+                    <td class="lbl">{{ $type === 'casamento' ? '' : 'Padrinhos' }}</td>
+                    <td class="val">{{ $type === 'casamento' ? ($meta['noiva_morada'] ?? '') : trim(collect([$meta['padrinho_nome'] ?? '', $meta['madrinha_nome'] ?? ''])->filter()->implode(' / ')) }}</td>
                 </tr>
                 <tr style="height:6mm;">
-                    <td class="lbl">Coordenadas</td>
-                    <td class="val">{{ $meta['coordenadas'] ?? '' }}</td>
+                    <td class="lbl">{{ $type === 'casamento' ? 'Coordenadas' : 'Contactos' }}</td>
+                    <td class="val">{{ $type === 'casamento' ? ($meta['coordenadas'] ?? '') : trim(collect([$contact1, $contact2])->filter()->implode(' / ')) }}</td>
+                </tr>
+                <tr style="height:6mm;">
+                    <td class="lbl">{{ $type === 'casamento' ? '' : 'Morada' }}</td>
+                    <td class="val">{{ $type === 'casamento' ? '' : ($meta['morada'] ?? '') }}</td>
+                </tr>
+                <tr style="height:6mm;">
+                    <td class="lbl">{{ $type === 'casamento' ? '' : 'Coordenadas' }}</td>
+                    <td class="val">{{ $type === 'casamento' ? '' : ($meta['coordenadas'] ?? '') }}</td>
                 </tr>
             </table>
         </div>

@@ -17,13 +17,21 @@
     </main>
 @else
     <div class="desk-shell">
+        <button type="button" class="desk-sidebar-backdrop" data-desk-toggle aria-label="Fechar menu"></button>
         <aside class="desk-sidebar">
-            <div class="desk-brand">
-                <div class="desk-logo">S59</div>
-                <div>
-                    <div class="desk-brand-title">Studio 59</div>
-                    <div class="desk-brand-subtitle">Backoffice</div>
+            <div class="desk-sidebar-top">
+                <div class="desk-brand">
+                    <div class="desk-logo">S59</div>
+                    <div>
+                        <div class="desk-brand-title">Studio 59</div>
+                        <div class="desk-brand-subtitle">Backoffice</div>
+                    </div>
                 </div>
+                <button type="button" class="desk-sidebar-close" data-desk-toggle aria-label="Fechar menu">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M6 6l12 12M18 6 6 18"></path>
+                    </svg>
+                </button>
             </div>
 
             <div>
@@ -125,11 +133,18 @@
 
         <div class="desk-main">
             <header class="desk-topbar">
-                <div>
-                    <div class="desk-title">@yield('page_title', 'Dashboard')</div>
-                    @hasSection('page_subtitle')
-                        <div class="desk-subtitle">@yield('page_subtitle')</div>
-                    @endif
+                <div class="desk-topbar-leading">
+                    <button type="button" class="desk-menu-toggle" data-desk-toggle aria-label="Abrir menu">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M4 7h16M4 12h16M4 17h16"></path>
+                        </svg>
+                    </button>
+                    <div>
+                        <div class="desk-title">@yield('page_title', 'Dashboard')</div>
+                        @hasSection('page_subtitle')
+                            <div class="desk-subtitle">@yield('page_subtitle')</div>
+                        @endif
+                    </div>
                 </div>
                 <div>
                     @yield('page_search')
@@ -169,5 +184,29 @@
         </div>
     </div>
 @endif
+@unless(Route::is('login'))
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const body = document.body;
+        const toggles = document.querySelectorAll('[data-desk-toggle]');
+        const closeMenu = () => body.classList.remove('desk-mobile-nav-open');
+        const toggleMenu = () => body.classList.toggle('desk-mobile-nav-open');
+
+        toggles.forEach((element) => {
+            element.addEventListener('click', toggleMenu);
+        });
+
+        document.querySelectorAll('.desk-sidebar a').forEach((link) => {
+            link.addEventListener('click', closeMenu);
+        });
+
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 1100) {
+                closeMenu();
+            }
+        });
+    });
+</script>
+@endunless
 </body>
 </html>

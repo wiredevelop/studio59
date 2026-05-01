@@ -206,13 +206,26 @@ class Event extends Model
         $meta = $this->setMetaIfMissing($meta, 'mae_nome', $this->bride_name ?? null);
         $meta = $this->setMetaIfMissing($meta, 'bebe_nome', $meta['BEBE'] ?? ($meta['BEBÉ'] ?? null));
 
-        $contact = $this->mergeContacts([
+        $contactoPai = $this->mergeContacts([
             $this->groom_phone ?? null,
-            $this->bride_phone ?? null,
             $meta['TELEF.'] ?? null,
-            $meta['TELEF2'] ?? null,
             $meta['Telemovel noivo'] ?? null,
+            $meta['contacto_pais'] ?? null,
+        ]);
+        $contactoMae = $this->mergeContacts([
+            $this->bride_phone ?? null,
+            $meta['TELEF2'] ?? null,
             $meta['Telemovel noiva'] ?? null,
+            $meta['contacto_pais_2'] ?? null,
+        ]);
+        $meta = $this->setMetaIfMissing($meta, 'contacto_pai', $contactoPai);
+        $meta = $this->setMetaIfMissing($meta, 'contacto_mae', $contactoMae);
+
+        $contact = $this->mergeContacts([
+            $meta['contacto_pai'] ?? null,
+            $meta['contacto_mae'] ?? null,
+            $meta['contacto_pais'] ?? null,
+            $meta['contacto_pais_2'] ?? null,
         ]);
         $meta = $this->setMetaIfMissing($meta, 'contacto_pais', $contact);
 

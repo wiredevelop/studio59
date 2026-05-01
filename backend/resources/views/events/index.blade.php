@@ -250,14 +250,14 @@
             <div class="event-card space-y-4">
                 <div class="font-semibold">Dados do Batizado</div>
                 <div class="grid md:grid-cols-2 gap-3">
-                    <input name="event_meta[bebe_nome]" value="{{ $metaValue('bebe_nome') }}" placeholder="Nome do bebé" class="border p-2 rounded w-full">
+                    <input name="event_meta[bebe_nome]" value="{{ $metaValue('bebe_nome') }}" placeholder="Nome do bebé" class="border p-2 rounded w-full md:col-span-2">
                     <input name="event_meta[pai_nome]" value="{{ $metaValue('pai_nome') }}" placeholder="Nome do pai" class="border p-2 rounded w-full">
                     <input name="event_meta[mae_nome]" value="{{ $metaValue('mae_nome') }}" placeholder="Nome da mãe" class="border p-2 rounded w-full">
                     <input name="event_meta[padrinho_nome]" value="{{ $metaValue('padrinho_nome') }}" placeholder="Nome do padrinho" class="border p-2 rounded w-full">
                     <input name="event_meta[madrinha_nome]" value="{{ $metaValue('madrinha_nome') }}" placeholder="Nome da madrinha" class="border p-2 rounded w-full">
-                    <input name="event_meta[contacto_pais]" value="{{ $metaValue('contacto_pais') }}" placeholder="Contacto dos pais" class="border p-2 rounded w-full">
+                    <input name="event_meta[contacto_pai]" value="{{ $metaValue('contacto_pai') ?: $metaValue('contacto_pais') }}" placeholder="Contacto do pai" class="border p-2 rounded w-full">
+                    <input name="event_meta[contacto_mae]" value="{{ $metaValue('contacto_mae') }}" placeholder="Contacto da mãe" class="border p-2 rounded w-full">
                     <input name="event_meta[morada]" value="{{ $metaValue('morada') }}" placeholder="Morada" class="border p-2 rounded w-full md:col-span-2">
-                    <input name="event_meta[instagram_pais]" value="{{ $metaValue('instagram_pais') }}" placeholder="Instagram dos pais" class="border p-2 rounded w-full md:col-span-2">
                 </div>
             </div>
         @endif

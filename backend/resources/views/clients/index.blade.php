@@ -10,7 +10,7 @@
     <button class="desk-btn">Pesquisar</button>
 </form>
 
-<div class="desk-card overflow-hidden">
+<div class="desk-card overflow-x-auto">
     <table class="desk-table">
         <thead>
             <tr>

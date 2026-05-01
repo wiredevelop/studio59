@@ -230,6 +230,11 @@ class EventController extends Controller
             $meta['legacy_report_number_raw'] = $rawReportNumber;
             $validated['event_meta'] = $meta;
         }
+        $validated['event_meta'] = $this->normalizeBatizadoMeta(
+            $validated['event_type'] ?? null,
+            $meta
+        );
+        $meta = $validated['event_meta'];
         if (empty($validated['name'])) {
             $validated['name'] = $this->buildEventName(
                 $validated['event_type'] ?? null,
@@ -286,7 +291,7 @@ class EventController extends Controller
             );
         }
         $this->ensureClientNumbers($event);
-        if ($request->hasFile('event_meta.foto_noivos')) {
+        if (($validated['event_type'] ?? null) !== 'batizado' && $request->hasFile('event_meta.foto_noivos')) {
             $this->storeCouplePhoto($event, $request->file('event_meta.foto_noivos'));
         }
         Audit::log('event.created', Event::class, $event->id, [
@@ -386,6 +391,11 @@ class EventController extends Controller
             $meta['legacy_report_number_raw'] = $rawReportNumber;
             $validated['event_meta'] = $meta;
         }
+        $validated['event_meta'] = $this->normalizeBatizadoMeta(
+            $validated['event_type'] ?? $event->event_type,
+            $meta
+        );
+        $meta = $validated['event_meta'];
         if (empty($validated['name'])) {
             $validated['name'] = $this->buildEventName(
                 $validated['event_type'] ?? $event->event_type,
@@ -442,7 +452,7 @@ class EventController extends Controller
         $event->refresh();
         $afterNotifySnapshot = \App\Support\EventChangeDetector::snapshot($event);
         $this->ensureClientNumbers($event);
-        if ($request->hasFile('event_meta.foto_noivos')) {
+        if (($validated['event_type'] ?? $event->event_type) !== 'batizado' && $request->hasFile('event_meta.foto_noivos')) {
             $this->storeCouplePhoto($event, $request->file('event_meta.foto_noivos'));
         }
 
@@ -723,6 +733,43 @@ class EventController extends Controller
         if ($changed) {
             $event->update(['event_meta' => $meta]);
         }
+    }
+
+    private function normalizeBatizadoMeta($eventType, array $meta): array
+    {
+        if ($eventType !== 'batizado') {
+            return $meta;
+        }
+
+        $contactoPai = trim((string) ($meta['contacto_pai'] ?? ''));
+        $contactoMae = trim((string) ($meta['contacto_mae'] ?? ''));
+
+        if ($contactoPai === '' && ! empty($meta['contacto_pais'])) {
+            $contactoPai = trim((string) $meta['contacto_pais']);
+        }
+
+        if ($contactoPai !== '') {
+            $meta['contacto_pai'] = $contactoPai;
+        } else {
+            unset($meta['contacto_pai']);
+        }
+
+        if ($contactoMae !== '') {
+            $meta['contacto_mae'] = $contactoMae;
+        } else {
+            unset($meta['contacto_mae']);
+        }
+
+        $contactos = array_values(array_filter([$contactoPai, $contactoMae], fn ($value) => $value !== ''));
+        if ($contactos !== []) {
+            $meta['contacto_pais'] = implode(' / ', $contactos);
+        } else {
+            unset($meta['contacto_pais']);
+        }
+
+        unset($meta['instagram_pais']);
+
+        return $meta;
     }
 
     private function storeCouplePhoto(Event $event, $file): void

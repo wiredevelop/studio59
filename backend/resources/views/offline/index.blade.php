@@ -19,7 +19,7 @@
     <button class="desk-btn primary">Importar</button>
 </form>
 
-<div class="desk-card overflow-hidden">
+<div class="desk-card overflow-x-auto">
     <table class="desk-table">
         <thead>
             <tr>

@@ -156,14 +156,14 @@
     <div id="event-meta-batizado" class="hidden event-card space-y-4">
         <div class="font-semibold">Dados do Batizado</div>
         <div class="grid md:grid-cols-2 gap-3">
-            <input name="event_meta[bebe_nome]" value="{{ $meta['bebe_nome'] ?? '' }}" placeholder="Nome do bebé" class="border p-2 rounded w-full">
+            <input name="event_meta[bebe_nome]" value="{{ $meta['bebe_nome'] ?? '' }}" placeholder="Nome do bebé" class="border p-2 rounded w-full md:col-span-2">
             <input name="event_meta[pai_nome]" value="{{ $meta['pai_nome'] ?? '' }}" placeholder="Nome do pai" class="border p-2 rounded w-full">
             <input name="event_meta[mae_nome]" value="{{ $meta['mae_nome'] ?? '' }}" placeholder="Nome da mãe" class="border p-2 rounded w-full">
             <input name="event_meta[padrinho_nome]" value="{{ $meta['padrinho_nome'] ?? '' }}" placeholder="Nome do padrinho" class="border p-2 rounded w-full">
             <input name="event_meta[madrinha_nome]" value="{{ $meta['madrinha_nome'] ?? '' }}" placeholder="Nome da madrinha" class="border p-2 rounded w-full">
-            <input name="event_meta[contacto_pais]" value="{{ $meta['contacto_pais'] ?? '' }}" placeholder="Contacto dos pais" class="border p-2 rounded w-full">
+            <input name="event_meta[contacto_pai]" value="{{ $meta['contacto_pai'] ?? ($meta['contacto_pais'] ?? '') }}" placeholder="Contacto do pai" class="border p-2 rounded w-full">
+            <input name="event_meta[contacto_mae]" value="{{ $meta['contacto_mae'] ?? '' }}" placeholder="Contacto da mãe" class="border p-2 rounded w-full">
             <input name="event_meta[morada]" value="{{ $meta['morada'] ?? '' }}" placeholder="Morada" class="border p-2 rounded w-full md:col-span-2">
-            <input name="event_meta[instagram_pais]" value="{{ $meta['instagram_pais'] ?? '' }}" placeholder="Instagram dos pais" class="border p-2 rounded w-full md:col-span-2">
         </div>
     </div>
 
@@ -367,7 +367,7 @@
         </div>
     </div>
 
-    <div class="event-card space-y-3">
+    <div id="event-couple-photo" class="event-card space-y-3">
         <div class="font-semibold">Foto dos noivos</div>
         <div>
             <label class="block text-sm">Tirar na hora (se tiver câmara)</label>
@@ -620,6 +620,7 @@
     const typeSelect = document.getElementById('event-type');
     const casamento = document.getElementById('event-meta-casamento');
     const batizado = document.getElementById('event-meta-batizado');
+    const couplePhoto = document.getElementById('event-couple-photo');
     const dateInput = document.getElementById('event-date');
     const clienteNoivo = document.getElementById('cliente-noivo-num');
     const clienteNoiva = document.getElementById('cliente-noiva-num');
@@ -655,6 +656,9 @@
         const v = typeSelect.value;
         casamento.classList.toggle('hidden', v !== 'casamento');
         batizado.classList.toggle('hidden', v !== 'batizado');
+        if (couplePhoto) {
+            couplePhoto.classList.toggle('hidden', v === 'batizado');
+        }
         ensureClientNumbers();
     }
 

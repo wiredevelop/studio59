@@ -88,8 +88,9 @@
         'mae_nome',
         'padrinho_nome',
         'madrinha_nome',
+        'contacto_pai',
+        'contacto_mae',
         'contacto_pais',
-        'instagram_pais',
         'morada',
         'casa_bebe_hora',
         'coordenadas',
@@ -167,7 +168,7 @@
     </div>
 </div>
 
-<form class="bg-white border rounded p-3 mb-4 flex gap-2">
+<form class="bg-white border rounded p-3 mb-4 flex flex-col md:flex-row gap-2">
     <input type="hidden" name="folder" value="{{ $folder }}">
     <input name="search" value="{{ $search }}" class="border rounded p-2 w-full" placeholder="Pesquisar por numero (ex: 0007)">
     <button class="bg-black text-white px-4 rounded">Pesquisar</button>
