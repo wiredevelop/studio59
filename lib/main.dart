@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:app_links/app_links.dart';
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -50,7 +51,14 @@ const Color kBrandBlack = Color(0xFF000000);
 const Color kBrandRose = Color(0xFFDBAB97);
 const Color kBrandRoseSoft = Color(0x33DBAB97);
 
-const String kApiBaseUrl = 'https://studio59.wiredevelop.pt/api';
+const String kApiBaseUrl = String.fromEnvironment(
+  'API_BASE_URL',
+  defaultValue: 'https://studio59.wiredevelop.pt/api',
+);
+const String kApiFallbackIp = String.fromEnvironment(
+  'API_FALLBACK_IP',
+  defaultValue: '185.118.113.130',
+);
 const String kMerchantCountryCode = 'PT';
 const String kApplePayMerchantId = 'merchant.com.wiredevelop.studio59';
 const bool kEnablePlatformPay = true;
@@ -72,6 +80,16 @@ bool isDesktopPlatform() {
 bool useDesktopLayout(BuildContext context) {
   // Unified layout: use the desktop UI everywhere, but make it responsive for narrow screens.
   return true;
+}
+
+String formatUiError(Object error) {
+  if (error is DioException &&
+      (error.type == DioExceptionType.connectionError ||
+          error.error is SocketException)) {
+    return 'Sem ligação ao servidor. Verifica a internet e tenta novamente.';
+  }
+  final text = error.toString().trim();
+  return text.startsWith('Exception: ') ? text.substring(11) : text;
 }
 
 const Color kDeskBg = Color(0xFF0B0A0A);
@@ -2145,7 +2163,11 @@ class _TicketPageState extends ConsumerState<TicketPage> {
           future: ref.read(apiProvider).orderDetail(widget.orderCode),
           builder: (_, snap) {
             if (!snap.hasData) {
-              if (snap.hasError) return Center(child: Text('Erro: ${snap.error}'));
+              if (snap.hasError) {
+                return Center(
+                  child: Text(formatUiError(snap.error ?? 'Erro desconhecido')),
+                );
+              }
               return const Center(child: CircularProgressIndicator());
             }
 
@@ -2310,7 +2332,11 @@ class OrderDetailPage extends ConsumerWidget {
           future: ref.read(apiProvider).orderDetail(orderCode),
           builder: (_, snap) {
             if (!snap.hasData) {
-              if (snap.hasError) return Center(child: Text('Erro: ${snap.error}'));
+              if (snap.hasError) {
+                return Center(
+                  child: Text(formatUiError(snap.error ?? 'Erro desconhecido')),
+                );
+              }
               return const Center(child: CircularProgressIndicator());
             }
             final o = snap.data!;
@@ -2967,7 +2993,14 @@ class _StaffAgendaPageState extends ConsumerState<StaffAgendaPage> {
               if (snap.hasError) {
                 return ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
-                  children: [Padding(padding: const EdgeInsets.all(16), child: Text('Erro: ${snap.error}'))],
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(
+                        formatUiError(snap.error ?? 'Erro desconhecido'),
+                      ),
+                    ),
+                  ],
                 );
               }
               return ListView(
@@ -5543,64 +5576,29 @@ class StaffEventDetailPage extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text(event.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          if (_displayReportNumber(event) != null) Text('Nº reportagem: ${_displayReportNumber(event)}'),
-          Text('Data: ${_formatEventDateTime(event.eventDate, event.eventTime)}'),
-          Text('Tipo: ${event.eventType ?? '-'}'),
-          if (event.basePrice != null) Text('Preço base: ${event.basePrice}'),
-          Text('Preço por foto: ${event.pricePerPhoto}'),
-          if (event.accessPin != null && event.accessPin!.isNotEmpty) Text('PIN: ${event.accessPin}'),
-          if (event.notes != null && event.notes!.isNotEmpty) Text('Notas: ${event.notes}'),
-          const SizedBox(height: 12),
-          if (user != null && user.hasPermission('events.update'))
-            FilledButton.tonal(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => StaffEventStaffPage(event: event)),
-                );
-              },
-              child: const Text('Gerir staff do evento'),
+          _EventHeroCard(event: event),
+          const SizedBox(height: 16),
+          _EventStatsGrid(event: event),
+          if (event.notes != null && event.notes!.trim().isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _DeskCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Notas', style: TextStyle(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 8),
+                  Text(event.notes!.trim()),
+                ],
+              ),
             ),
-          const SizedBox(height: 8),
-          FilledButton.tonal(
-            onPressed: token == null
-                ? null
-                : () async {
-                    showDialog(
-                      context: context,
-                      barrierDismissible: false,
-                      builder: (_) => const AlertDialog(
-                        content: SizedBox(
-                          height: 48,
-                          child: Center(child: CircularProgressIndicator()),
-                        ),
-                      ),
-                    );
-                    try {
-                      final bytes = await ref.read(apiProvider).staffEventPdf(token, event.id);
-                      final dir = await getTemporaryDirectory();
-                      final file = File('${dir.path}/evento-${event.id}.pdf');
-                      await file.writeAsBytes(bytes, flush: true);
-                      if (!context.mounted) return;
-                      await OpenFilex.open(file.path);
-                    } catch (e) {
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Erro a gerar PDF: $e')),
-                      );
-                    } finally {
-                      if (context.mounted) Navigator.pop(context);
-                    }
-                  },
-            child: const Text('PDF'),
-          ),
-          const SizedBox(height: 12),
-          if (meta.isNotEmpty) ...[
-            const Text('Detalhes', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
-            ...meta.entries.map((e) => Text('${_prettyMetaKey(e.key)}: ${e.value}')),
+          ],
+          const SizedBox(height: 16),
+          _EventActionCard(event: event, user: user, token: token),
+          const SizedBox(height: 16),
+          if (_eventMetaEntries(meta).isNotEmpty) ...[
+            _DeskCard(
+              child: _EventMetaSection(meta: meta),
+            ),
           ],
         ],
       ),
@@ -5625,91 +5623,375 @@ class DesktopEventDetailView extends ConsumerWidget {
         children: [
           _DeskSectionHeader('Resumo'),
           const SizedBox(height: 12),
-          _DeskCard(
+          _EventHeroCard(event: event),
+          const SizedBox(height: 20),
+          _DeskSectionHeader('Informação'),
+          const SizedBox(height: 12),
+          _EventStatsGrid(event: event),
+          if (event.notes != null && event.notes!.trim().isNotEmpty) ...[
+            const SizedBox(height: 20),
+            _DeskSectionHeader('Notas'),
+            const SizedBox(height: 12),
+            _DeskCard(child: Text(event.notes!.trim())),
+          ],
+          const SizedBox(height: 20),
+          _DeskSectionHeader('Ações'),
+          const SizedBox(height: 12),
+          _EventActionCard(event: event, user: user, token: token),
+          if (_eventMetaEntries(meta).isNotEmpty) ...[
+            const SizedBox(height: 20),
+            _DeskSectionHeader('Detalhes'),
+            const SizedBox(height: 12),
+            _DeskCard(child: _EventMetaSection(meta: meta)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _EventHeroCard extends StatelessWidget {
+  const _EventHeroCard({required this.event});
+
+  final StaffEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    final chips = <Widget>[
+      _EventBadge(
+        icon: Icons.event_outlined,
+        label: _formatEventDateTime(event.eventDate, event.eventTime),
+      ),
+      if ((event.eventType ?? '').trim().isNotEmpty)
+        _EventBadge(
+          icon: Icons.auto_awesome_mosaic_outlined,
+          label: event.eventType!.trim(),
+        ),
+      if (_displayReportNumber(event) != null)
+        _EventBadge(
+          icon: Icons.confirmation_number_outlined,
+          label: 'Rpt. ${_displayReportNumber(event)}',
+        ),
+      if ((event.accessPin ?? '').trim().isNotEmpty)
+        _EventBadge(
+          icon: Icons.lock_outline,
+          label: 'PIN ${event.accessPin!.trim()}',
+        ),
+    ];
+
+    return _DeskCard(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            event.name,
+            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, height: 1.1),
+          ),
+          const SizedBox(height: 10),
+          if ((event.location ?? '').trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                event.location!.trim(),
+                style: const TextStyle(color: kDeskMuted, fontSize: 15),
+              ),
+            ),
+          Wrap(spacing: 10, runSpacing: 10, children: chips),
+        ],
+      ),
+    );
+  }
+}
+
+class _EventStatsGrid extends StatelessWidget {
+  const _EventStatsGrid({required this.event});
+
+  final StaffEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    final cards = <_EventInfoCardData>[
+      _EventInfoCardData(
+        icon: Icons.sell_outlined,
+        title: 'Preço por foto',
+        value: _formatEventMoney(event.pricePerPhoto),
+      ),
+      if (event.basePrice != null)
+        _EventInfoCardData(
+          icon: Icons.payments_outlined,
+          title: 'Preço base',
+          value: _formatEventMoney(event.basePrice!),
+        ),
+      _EventInfoCardData(
+        icon: Icons.badge_outlined,
+        title: 'Estado',
+        value: event.isLocked ? 'Fechado' : 'Ativo',
+      ),
+      _EventInfoCardData(
+        icon: Icons.category_outlined,
+        title: 'Tipo',
+        value: (event.eventType ?? '').trim().isEmpty ? '-' : event.eventType!.trim(),
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth < 620
+            ? constraints.maxWidth
+            : (constraints.maxWidth - 12) / 2;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: cards
+              .map(
+                (card) => SizedBox(
+                  width: width,
+                  child: _EventInfoCard(data: card),
+                ),
+              )
+              .toList(),
+        );
+      },
+    );
+  }
+}
+
+class _EventActionCard extends ConsumerWidget {
+  const _EventActionCard({
+    required this.event,
+    required this.user,
+    required this.token,
+  });
+
+  final StaffEvent event;
+  final StaffUser? user;
+  final String? token;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return _DeskCard(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final fullWidth = constraints.maxWidth < 620;
+          return Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              if (user != null && user!.hasPermission('events.update'))
+                SizedBox(
+                  width: fullWidth ? constraints.maxWidth : null,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => StaffEventStaffPage(event: event)),
+                      );
+                    },
+                    icon: const Icon(Icons.groups_2_outlined),
+                    label: const Text('Gerir staff do evento'),
+                  ),
+                ),
+              SizedBox(
+                width: fullWidth ? constraints.maxWidth : null,
+                child: FilledButton.tonalIcon(
+                  onPressed: token == null ? null : () => _openEventPdf(context, ref, token!, event),
+                  icon: const Icon(Icons.picture_as_pdf_outlined),
+                  label: const Text('Abrir PDF'),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _EventMetaSection extends StatelessWidget {
+  const _EventMetaSection({required this.meta});
+
+  final Map<String, dynamic> meta;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = _eventMetaEntries(meta);
+    if (entries.isEmpty) {
+      return const Text('Sem detalhes adicionais.');
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Detalhes', style: TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 12),
+        ...entries.map(
+          (entry) => Padding(
+            padding: const EdgeInsets.only(bottom: 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(event.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                if (_displayReportNumber(event) != null) Text('Nº reportagem: ${_displayReportNumber(event)}'),
-                Text('Data: ${_formatEventDateTime(event.eventDate, event.eventTime)}'),
-                Text('Tipo: ${event.eventType ?? '-'}'),
-                if (event.basePrice != null) Text('Preço base: ${event.basePrice}'),
-                Text('Preço por foto: ${event.pricePerPhoto}'),
-                if (event.accessPin != null && event.accessPin!.isNotEmpty) Text('PIN: ${event.accessPin}'),
-                if (event.notes != null && event.notes!.isNotEmpty) Text('Notas: ${event.notes}'),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    if (user != null && user.hasPermission('events.update'))
-                      FilledButton.tonal(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => StaffEventStaffPage(event: event)),
-                          );
-                        },
-                        child: const Text('Gerir staff do evento'),
-                      ),
-                    FilledButton.tonal(
-                      onPressed: token == null
-                          ? null
-                          : () async {
-                              showDialog(
-                                context: context,
-                                barrierDismissible: false,
-                                builder: (_) => const AlertDialog(
-                                  content: SizedBox(
-                                    height: 48,
-                                    child: Center(child: CircularProgressIndicator()),
-                                  ),
-                                ),
-                              );
-                              try {
-                                final bytes = await ref.read(apiProvider).staffEventPdf(token, event.id);
-                                final dir = await getTemporaryDirectory();
-                                final file = File('${dir.path}/evento-${event.id}.pdf');
-                                await file.writeAsBytes(bytes, flush: true);
-                                if (!context.mounted) return;
-                                await OpenFilex.open(file.path);
-                              } catch (e) {
-                                if (!context.mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Erro a gerar PDF: $e')),
-                                );
-                              } finally {
-                                if (context.mounted) Navigator.pop(context);
-                              }
-                            },
-                      child: const Text('PDF'),
-                    ),
-                  ],
+                Text(
+                  entry.key,
+                  style: const TextStyle(
+                    color: kDeskMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
+                const SizedBox(height: 3),
+                Text(entry.value, style: const TextStyle(fontSize: 15)),
               ],
             ),
           ),
-          const SizedBox(height: 20),
-          _DeskSectionHeader('Detalhes'),
-          const SizedBox(height: 12),
-          _DeskCard(
-            child: meta.isEmpty
-                ? const Text('Sem detalhes adicionais.')
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: meta.entries.map((entry) {
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: Text('${entry.key}: ${entry.value}'),
-                      );
-                    }).toList(),
+        ),
+      ],
+    );
+  }
+}
+
+class _EventInfoCardData {
+  const _EventInfoCardData({
+    required this.icon,
+    required this.title,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String title;
+  final String value;
+}
+
+class _EventInfoCard extends StatelessWidget {
+  const _EventInfoCard({required this.data});
+
+  final _EventInfoCardData data;
+
+  @override
+  Widget build(BuildContext context) {
+    return _DeskCard(
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: kBrandRose.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(data.icon, color: kBrandRose),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  data.title,
+                  style: const TextStyle(
+                    color: kDeskMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
                   ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  data.value,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
+}
+
+class _EventBadge extends StatelessWidget {
+  const _EventBadge({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: kDeskCardAlt,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: kBrandRose.withOpacity(0.18)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: kBrandRose),
+          const SizedBox(width: 8),
+          Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _openEventPdf(
+  BuildContext context,
+  WidgetRef ref,
+  String token,
+  StaffEvent event,
+) async {
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => const AlertDialog(
+      content: SizedBox(
+        height: 48,
+        child: Center(child: CircularProgressIndicator()),
+      ),
+    ),
+  );
+  try {
+    final bytes = await ref.read(apiProvider).staffEventPdf(token, event.id);
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/evento-${event.id}.pdf');
+    await file.writeAsBytes(bytes, flush: true);
+    if (!context.mounted) return;
+    await OpenFilex.open(file.path);
+  } catch (e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Erro a gerar PDF: $e')),
+    );
+  } finally {
+    if (context.mounted) Navigator.pop(context);
+  }
+}
+
+List<MapEntry<String, String>> _eventMetaEntries(Map<String, dynamic> meta) {
+  return meta.entries
+      .map((entry) {
+        final value = _normalizeEventMetaValue(entry.value);
+        if (value == null) return null;
+        return MapEntry(_prettyMetaKey(entry.key), value);
+      })
+      .whereType<MapEntry<String, String>>()
+      .toList();
+}
+
+String? _normalizeEventMetaValue(dynamic value) {
+  if (value == null) return null;
+  final text = value.toString().trim();
+  if (text.isEmpty) return null;
+  if (text.toLowerCase() == 'null') return null;
+  return text;
+}
+
+String _formatEventMoney(num value) {
+  final amount = value.toDouble();
+  if (amount == amount.roundToDouble()) {
+    return '${amount.toStringAsFixed(0)}€';
+  }
+  return '${amount.toStringAsFixed(2)}€';
 }
 
 String _prettyMetaKey(String key) {
@@ -9235,8 +9517,13 @@ class SavedOrdersNotifier extends StateNotifier<List<String>> {
   }
 }
 class ApiService {
-  ApiService(this.baseUrl)
-    : dio = Dio(
+  ApiService(this.baseUrl) : dio = _buildDio(baseUrl);
+
+  final String baseUrl;
+  final Dio dio;
+
+  static Dio _buildDio(String baseUrl) {
+    final dio = Dio(
       BaseOptions(
         baseUrl: baseUrl,
         connectTimeout: const Duration(seconds: 20),
@@ -9248,9 +9535,40 @@ class ApiService {
         validateStatus: (status) => status != null && status < 500,
       ),
     );
+    dio.httpClientAdapter = IOHttpClientAdapter(
+      createHttpClient: () => _createHttpClient(baseUrl),
+    );
+    return dio;
+  }
 
-  final String baseUrl;
-  final Dio dio;
+  static HttpClient _createHttpClient(String baseUrl) {
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 20);
+    final apiHost = Uri.tryParse(baseUrl)?.host;
+    final fallbackIp = kApiFallbackIp.trim();
+    client.connectionFactory = (uri, proxyHost, proxyPort) async {
+      final proxyTargetHost = proxyHost;
+      final proxyTargetPort = proxyPort;
+      final isProxy = proxyTargetHost != null && proxyTargetPort != null;
+      final port = isProxy
+          ? proxyTargetPort
+          : (uri.hasPort ? uri.port : (uri.scheme == 'https' ? 443 : 80));
+      final host =
+          !isProxy &&
+                  fallbackIp.isNotEmpty &&
+                  apiHost != null &&
+                  uri.host == apiHost
+              ? fallbackIp
+              : (isProxy ? proxyTargetHost : uri.host);
+      final task = await Socket.startConnect(host, port);
+      if (isProxy || uri.scheme != 'https') return task;
+      return ConnectionTask.fromSocket(
+        task.socket.then((socket) => SecureSocket.secure(socket, host: uri.host)),
+        task.cancel,
+      );
+    };
+    return client;
+  }
 
   Uri get _publicBaseUri {
     final normalized = baseUrl.endsWith('/api') ? baseUrl.substring(0, baseUrl.length - 4) : baseUrl;
