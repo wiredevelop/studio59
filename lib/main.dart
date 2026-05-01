@@ -7434,6 +7434,24 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
         },
       ),
     );
+    if (user != null && useDesktopLayout(context)) {
+      return StaffDesktopShell(
+        user: user,
+        token: token,
+        initialId: 'events',
+        overrideTitle: widget.event == null ? 'Novo Evento' : 'Editar Evento',
+        overrideSubtitle: 'Eventos',
+        overrideShowSearch: false,
+        overrideContent: (ctx, u, t) => formBody,
+      );
+    }
+    return Scaffold(
+      appBar: buildNavAppBar(
+        context,
+        widget.event == null ? 'Novo Evento' : 'Editar Evento',
+      ),
+      body: formBody,
+    );
   }
 }
 
@@ -7821,21 +7839,6 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
             ],
           );
         },
-      );
-    if (user != null && useDesktopLayout(context)) {
-      return StaffDesktopShell(
-        user: user,
-        token: token,
-        initialId: 'events',
-        overrideTitle: widget.event == null ? 'Novo Evento' : 'Editar Evento',
-        overrideSubtitle: 'Eventos',
-        overrideShowSearch: false,
-        overrideContent: (ctx, u, t) => formBody,
-      );
-    }
-    return Scaffold(
-      appBar: buildNavAppBar(context, widget.event == null ? 'Novo Evento' : 'Editar Evento'),
-      body: formBody,
     );
   }
 
