@@ -2047,6 +2047,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
   int? downloadingPhotoId;
   bool downloadingAll = false;
   final _downloadDio = Dio();
+  late Future<OrderDetail> _orderFuture;
 
   Future<void> _showPermissionDialog() async {
     if (!mounted) return;
@@ -2055,7 +2056,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
       builder: (ctx) => AlertDialog(
         title: const Text('Permissão necessária'),
         content: const Text(
-          'Para guardar fotos na galeria, a app precisa de acesso às fotos.\n\nAtiva a permissão nas Definições do dispositivo.',
+          'Para guardar fotos na galeria, a app precisa de acesso às fotos.\n\nVai a:\nDefinições → Privacidade e Segurança → Fotos → Studio 59\n\nou\n\nDefinições → Studio 59 → Fotos',
         ),
         actions: [
           TextButton(
@@ -2191,8 +2192,13 @@ class _TicketPageState extends ConsumerState<TicketPage> {
   @override
   void initState() {
     super.initState();
+    _orderFuture = ref.read(apiProvider).orderDetail(widget.orderCode);
     timer = Timer.periodic(const Duration(seconds: 10), (_) {
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {
+          _orderFuture = ref.read(apiProvider).orderDetail(widget.orderCode);
+        });
+      }
     });
   }
 
@@ -2209,7 +2215,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
       child: Scaffold(
         appBar: buildNavAppBar(context, 'Ticket do Pedido'),
         body: FutureBuilder<OrderDetail>(
-          future: ref.read(apiProvider).orderDetail(widget.orderCode),
+          future: _orderFuture,
           builder: (_, snap) {
             if (!snap.hasData) {
               if (snap.hasError) {
@@ -7589,10 +7595,58 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
         overrideContent: (ctx, u, t) => formBody,
       );
     }
+    final eventActions = <Widget>[
+      if (widget.event != null && user != null && user.hasPermission('events.view'))
+        IconButton(
+          icon: const Icon(Icons.picture_as_pdf_outlined),
+          tooltip: 'Gerar PDF',
+          onPressed: () async {
+            showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder: (_) => const AlertDialog(
+                content: SizedBox(height: 48, child: Center(child: CircularProgressIndicator())),
+              ),
+            );
+            try {
+              final bytes = await ref.read(apiProvider).staffEventPdf(token, widget.event!.id);
+              final dir = await getTemporaryDirectory();
+              final file = File('${dir.path}/evento-${widget.event!.id}.pdf');
+              await file.writeAsBytes(bytes, flush: true);
+              if (!context.mounted) return;
+              await OpenFilex.open(file.path);
+            } catch (e) {
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro PDF: $e')));
+            } finally {
+              if (context.mounted) Navigator.pop(context);
+            }
+          },
+        ),
+      if (widget.event != null && user != null && user.hasPermission('events.delete'))
+        IconButton(
+          icon: const Icon(Icons.delete_outline),
+          tooltip: 'Apagar evento',
+          onPressed: () async {
+            final ok = await _confirm(context, 'Apagar evento?', 'Isto remove fotos e uploads associados.');
+            if (!ok || !context.mounted) return;
+            try {
+              await ref.read(apiProvider).deleteEvent(token, widget.event!.id);
+              if (!context.mounted) return;
+              Navigator.pop(context);
+            } catch (e) {
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+            }
+          },
+        ),
+    ];
+
     return Scaffold(
       appBar: buildNavAppBar(
         context,
         widget.event == null ? 'Novo Evento' : 'Editar Evento',
+        actions: eventActions,
       ),
       body: formBody,
     );
@@ -10081,7 +10135,9 @@ class ApiService {
 
   static HttpClient _createHttpClient(String baseUrl) {
     final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 20);
+      ..connectionTimeout = const Duration(seconds: 20)
+      ..idleTimeout = const Duration(seconds: 20)
+      ..maxConnectionsPerHost = 6;
     final apiHost = Uri.tryParse(baseUrl)?.host;
     final fallbackIp = kApiFallbackIp.trim();
     client.connectionFactory = (uri, proxyHost, proxyPort) async {

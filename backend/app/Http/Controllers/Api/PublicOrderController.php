@@ -49,6 +49,7 @@ class PublicOrderController extends Controller
         }
 
         $photos = Photo::query()
+            ->with('event')
             ->where('event_id', $request->integer('event_id'))
             ->whereIn('id', $photoIds)
             ->get();
@@ -66,7 +67,7 @@ class PublicOrderController extends Controller
         }
 
         $order = DB::transaction(function () use ($request, $photos, $photoItems) {
-            $price = (float) $photos->first()->event->price_per_photo;
+            $price = (float) ($photos->first()->event->price_per_photo ?? 0);
             $quantities = $photoItems->keyBy('photo_id');
             $itemsTotal = 0;
             foreach ($photos as $photo) {
@@ -184,6 +185,7 @@ class PublicOrderController extends Controller
         }
 
         $photos = Photo::query()
+            ->with('event')
             ->where('event_id', $request->integer('event_id'))
             ->whereIn('id', $photoIds)
             ->get();
@@ -193,7 +195,7 @@ class PublicOrderController extends Controller
         }
 
         $order = DB::transaction(function () use ($request, $photos, $photoItems) {
-            $price = (float) $photos->first()->event->price_per_photo;
+            $price = (float) ($photos->first()->event->price_per_photo ?? 0);
             $quantities = $photoItems->keyBy('photo_id');
             $itemsTotal = 0;
             foreach ($photos as $photo) {
@@ -372,6 +374,7 @@ class PublicOrderController extends Controller
         }
 
         $photos = Photo::query()
+            ->with('event')
             ->where('event_id', $request->integer('event_id'))
             ->whereIn('id', $photoIds)
             ->get();
@@ -381,7 +384,7 @@ class PublicOrderController extends Controller
         }
 
         $order = DB::transaction(function () use ($request, $photos, $photoItems) {
-            $price = (float) $photos->first()->event->price_per_photo;
+            $price = (float) ($photos->first()->event->price_per_photo ?? 0);
             $quantities = $photoItems->keyBy('photo_id');
             $itemsTotal = 0;
             foreach ($photos as $photo) {
@@ -520,11 +523,14 @@ class PublicOrderController extends Controller
             'wants_film' => $order->wants_film,
             'payment_method' => $order->payment_method,
             'customer_name' => $order->customer_name,
-            'photos' => $order->items->map(fn ($i) => [
-                'id' => $i->photo->id,
-                'number' => $i->photo->number,
-                'quantity' => $i->quantity ?? 1,
-            ]),
+            'photos' => $order->items
+                ->filter(fn ($i) => $i->photo !== null)
+                ->map(fn ($i) => [
+                    'id' => $i->photo->id,
+                    'number' => $i->photo->number,
+                    'quantity' => $i->quantity ?? 1,
+                ])
+                ->values(),
         ]);
     }
 
