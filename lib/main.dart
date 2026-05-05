@@ -532,7 +532,15 @@ class _HomePageState extends ConsumerState<HomePage> {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => target));
       }
     } else {
-      Navigator.push(context, MaterialPageRoute(builder: (_) => target));
+      if (lastRoute != null && lastRoute != 'dashboard') {
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffDashboardPage()));
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          Navigator.push(context, MaterialPageRoute(builder: (_) => target));
+        });
+      } else {
+        Navigator.push(context, MaterialPageRoute(builder: (_) => target));
+      }
     }
   }
 
@@ -2038,35 +2046,70 @@ class _TicketPageState extends ConsumerState<TicketPage> {
   Timer? timer;
   int? downloadingPhotoId;
   bool downloadingAll = false;
+  final _downloadDio = Dio();
+
+  Future<void> _showPermissionDialog() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Permissão necessária'),
+        content: const Text(
+          'Para guardar fotos na galeria, a app precisa de acesso às fotos.\n\nAtiva a permissão nas Definições do dispositivo.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await openAppSettings();
+            },
+            child: const Text('Abrir Definições'),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<bool> _ensureGalleryPermission() async {
     if (Platform.isIOS) {
       final addOnlyStatus = await Permission.photosAddOnly.status;
       if (addOnlyStatus.isGranted || addOnlyStatus.isLimited) return true;
       if (addOnlyStatus.isPermanentlyDenied) {
-        await openAppSettings();
+        await _showPermissionDialog();
         return false;
       }
       final photosStatus = await Permission.photos.status;
       if (photosStatus.isGranted || photosStatus.isLimited) return true;
       if (photosStatus.isPermanentlyDenied) {
-        await openAppSettings();
+        await _showPermissionDialog();
         return false;
       }
       final addOnly = await Permission.photosAddOnly.request();
       if (addOnly.isGranted || addOnly.isLimited) return true;
+      if (addOnly.isPermanentlyDenied) {
+        await _showPermissionDialog();
+        return false;
+      }
       final photos = await Permission.photos.request();
-      return photos.isGranted || photos.isLimited;
+      if (photos.isGranted || photos.isLimited) return true;
+      if (photos.isPermanentlyDenied) await _showPermissionDialog();
+      return false;
     }
     if (Platform.isAndroid) {
       final photos = await Permission.photos.request();
       if (photos.isGranted) return true;
       if (photos.isPermanentlyDenied) {
-        await openAppSettings();
+        await _showPermissionDialog();
         return false;
       }
       final storage = await Permission.storage.request();
-      return storage.isGranted;
+      if (storage.isGranted) return true;
+      if (storage.isPermanentlyDenied) await _showPermissionDialog();
+      return false;
     }
     return true;
   }
@@ -2105,7 +2148,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
           orderCode: order.orderCode,
           photoId: photo.id,
         );
-    final r = await Dio().get<List<int>>(
+    final r = await _downloadDio.get<List<int>>(
       url,
       options: Options(responseType: ResponseType.bytes),
     );
@@ -2156,6 +2199,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
   @override
   void dispose() {
     timer?.cancel();
+    _downloadDio.close(force: true);
     super.dispose();
   }
 
@@ -2391,35 +2435,118 @@ class StaffLoginPage extends ConsumerStatefulWidget {
 class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
   final loginCtrl = TextEditingController();
   final passCtrl = TextEditingController();
+  bool _loading = false;
+  bool _obscure = true;
+
+  Future<void> _submit() async {
+    if (_loading) return;
+    setState(() => _loading = true);
+    try {
+      final token = await ref.read(apiProvider).staffLogin(loginCtrl.text.trim(), passCtrl.text.trim());
+      ref.read(staffTokenProvider.notifier).state = token.token;
+      ref.read(staffUserProvider.notifier).state = token.user;
+      await saveStaffSession(token.token, token.user);
+      if (!context.mounted) return;
+      Navigator.pop(context, token);
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro login: $e')));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final inputBorder = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide(color: kBrandRose.withOpacity(0.3)),
+    );
+    final focusBorder = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: kBrandRose, width: 1.5),
+    );
+    final inputDecoration = InputDecoration(
+      filled: true,
+      fillColor: kDeskCard,
+      labelStyle: const TextStyle(color: kDeskMuted),
+      enabledBorder: inputBorder,
+      focusedBorder: focusBorder,
+      border: inputBorder,
+    );
+
     return Scaffold(
-      appBar: buildNavAppBar(context, 'Staff Login'),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(controller: loginCtrl, decoration: const InputDecoration(labelText: 'Email ou username', border: OutlineInputBorder())),
-            const SizedBox(height: 8),
-            TextField(controller: passCtrl, obscureText: true, decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder())),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: () async {
-                try {
-                  final token = await ref.read(apiProvider).staffLogin(loginCtrl.text.trim(), passCtrl.text.trim());
-                  ref.read(staffTokenProvider.notifier).state = token.token;
-                  ref.read(staffUserProvider.notifier).state = token.user;
-                  await saveStaffSession(token.token, token.user);
-                  if (!context.mounted) return;
-                  Navigator.pop(context, token);
-                } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro login: $e')));
-                }
-              },
-              child: const Text('Entrar'),
+      backgroundColor: kBrandBlack,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Image.asset('assets/app_icon.png', width: 80, height: 80),
+                const SizedBox(height: 12),
+                const Text(
+                  'Studio 59',
+                  style: TextStyle(
+                    color: kBrandRose,
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Acesso staff',
+                  style: TextStyle(color: kDeskMuted, fontSize: 13, letterSpacing: 0.5),
+                ),
+                const SizedBox(height: 40),
+                TextField(
+                  controller: loginCtrl,
+                  keyboardType: TextInputType.emailAddress,
+                  style: const TextStyle(color: kBrandRose),
+                  decoration: inputDecoration.copyWith(
+                    labelText: 'Email ou username',
+                    prefixIcon: const Icon(Icons.person_outline, color: kDeskMuted, size: 20),
+                  ),
+                  textInputAction: TextInputAction.next,
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: passCtrl,
+                  obscureText: _obscure,
+                  style: const TextStyle(color: kBrandRose),
+                  decoration: inputDecoration.copyWith(
+                    labelText: 'Password',
+                    prefixIcon: const Icon(Icons.lock_outline, color: kDeskMuted, size: 20),
+                    suffixIcon: IconButton(
+                      icon: Icon(_obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: kDeskMuted, size: 20),
+                      onPressed: () => setState(() => _obscure = !_obscure),
+                    ),
+                  ),
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _submit(),
+                ),
+                const SizedBox(height: 28),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: FilledButton(
+                    onPressed: _loading ? null : _submit,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: kBrandRose,
+                      foregroundColor: kBrandBlack,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 0.5),
+                    ),
+                    child: _loading
+                        ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: kBrandBlack))
+                        : const Text('Entrar'),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );

@@ -5,48 +5,123 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Política de Privacidade - Studio 59</title>
   <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; margin: 24px; color: #111; }
-    h1, h2 { color: #000; }
-    .container { max-width: 900px; margin: 0 auto; }
-    ul { padding-left: 20px; }
+    :root {
+      --bg: #f7f1ed;
+      --card: #ffffff;
+      --text: #1b1715;
+      --muted: #5f544f;
+      --line: #e7d7cf;
+      --accent: #dbab97;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      line-height: 1.65;
+      color: var(--text);
+      background: linear-gradient(180deg, #fffaf7 0%, var(--bg) 100%);
+    }
+    .container {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 32px 20px 56px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 28px;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.06);
+    }
+    h1, h2 {
+      color: #000;
+      margin-top: 0;
+    }
+    h1 {
+      font-size: 32px;
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 20px;
+      margin-top: 28px;
+      margin-bottom: 10px;
+    }
+    p, li {
+      font-size: 16px;
+    }
+    p.lead {
+      color: var(--muted);
+      margin-top: 0;
+    }
+    ul {
+      padding-left: 20px;
+      margin: 10px 0 0;
+    }
+    a {
+      color: #8f4f36;
+    }
+    .meta {
+      margin-top: 28px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Política de Privacidade</h1>
-    <p><strong>Studio 59</strong> respeita a sua privacidade. Esta política explica como tratamos os dados quando utiliza a aplicação.</p>
+    <div class="card">
+      <h1>Política de Privacidade</h1>
+      <p class="lead"><strong>Studio 59</strong> respeita a sua privacidade. Esta política explica que dados podem ser tratados quando utiliza a app e para que finalidades.</p>
 
-    <h2>Dados que recolhemos</h2>
-    <ul>
-      <li>Dados de conta e autenticação (ex.: email do staff).</li>
-      <li>Dados de eventos e pedidos associados ao seu uso da app.</li>
-      <li>Fotos carregadas pelo staff para eventos (quando aplicável).</li>
-      <li>Dados técnicos mínimos para funcionamento e segurança.</li>
-    </ul>
+      <h2>1. Finalidade da app</h2>
+      <p>A app Studio 59 permite aos clientes aceder a galerias privadas de eventos, consultar fotografias, pesquisar imagens associadas ao evento, selecionar fotos, efetuar encomendas e, quando aplicável, descarregar ficheiros disponibilizados após pagamento.</p>
 
-    <h2>Permissões</h2>
-    <ul>
-      <li><strong>Câmara</strong>: utilizada para captura de imagem em pesquisas ou operações dentro da app.</li>
-      <li><strong>Galeria/Armazenamento</strong>: utilizada para selecionar e guardar fotos.</li>
-    </ul>
+      <h2>2. Dados tratados</h2>
+      <ul>
+        <li>Dados introduzidos pelo utilizador para acesso ao evento, como PIN ou código associado ao evento.</li>
+        <li>Dados de encomenda e contacto fornecidos durante o processo de compra.</li>
+        <li>Fotografias do evento disponibilizadas na galeria privada.</li>
+        <li>Imagem captada ou selecionada pelo utilizador quando utiliza a funcionalidade de pesquisa por fotografia.</li>
+        <li>Dados técnicos mínimos necessários ao funcionamento, segurança e prevenção de abuso.</li>
+        <li>Token de notificações do dispositivo, quando o utilizador permite notificações.</li>
+      </ul>
 
-    <h2>Como usamos os dados</h2>
-    <ul>
-      <li>Para permitir o funcionamento da aplicação e gestão de eventos.</li>
-      <li>Para processar pedidos e disponibilizar fotos associadas a eventos.</li>
-      <li>Para cumprir obrigações legais e de segurança.</li>
-    </ul>
+      <h2>3. Como usamos os dados</h2>
+      <ul>
+        <li>Permitir o acesso à galeria privada do evento.</li>
+        <li>Apresentar fotografias e gerir seleções e encomendas.</li>
+        <li>Processar pagamentos e disponibilizar acesso aos ficheiros encomendados.</li>
+        <li>Enviar notificações relacionadas com o serviço, quando aplicável.</li>
+        <li>Garantir segurança, integridade e funcionamento da plataforma.</li>
+        <li>Cumprir obrigações legais.</li>
+      </ul>
 
-    <h2>Partilha de dados</h2>
-    <p>Não vendemos dados pessoais. Os dados podem ser partilhados apenas quando necessário para a prestação do serviço, cumprimento legal ou segurança.</p>
+      <h2>4. Permissões do dispositivo</h2>
+      <ul>
+        <li><strong>Câmara</strong>: usada para leitura de QR code e para funcionalidades de pesquisa por imagem.</li>
+        <li><strong>Fotografias / Galeria</strong>: usada para selecionar uma imagem para pesquisa e para guardar ficheiros disponibilizados ao utilizador.</li>
+        <li><strong>Notificações</strong>: usadas para comunicações relevantes sobre o serviço, quando autorizadas pelo utilizador.</li>
+      </ul>
 
-    <h2>Retenção</h2>
-    <p>Os dados são mantidos pelo tempo necessário para o funcionamento do serviço ou conforme exigido por lei.</p>
+      <h2>5. Pagamentos</h2>
+      <p>Pagamentos online podem ser processados por prestadores externos de pagamento. Os dados de pagamento são tratados por esses prestadores de acordo com as respetivas políticas e não são armazenados integralmente pela app.</p>
 
-    <h2>Contacto</h2>
-    <p>Se tiver dúvidas sobre esta política, contacte-nos em: <a href="mailto:geral@wiredevelop.pt">geral@wiredevelop.pt</a></p>
+      <h2>6. Partilha de dados</h2>
+      <p>Os dados podem ser partilhados apenas quando necessário para operar a app, processar pagamentos, alojar conteúdos, cumprir obrigações legais ou proteger a segurança do serviço. Não vendemos dados pessoais.</p>
 
-    <p>Última atualização: 2026-03-05</p>
+      <h2>7. Conservação</h2>
+      <p>Os dados são conservados apenas durante o período necessário para prestação do serviço, gestão de encomendas, segurança, cumprimento legal e resolução de litígios, quando aplicável.</p>
+
+      <h2>8. Segurança</h2>
+      <p>São aplicadas medidas técnicas e organizativas adequadas para proteger os dados e as comunicações com a plataforma.</p>
+
+      <h2>9. Contacto</h2>
+      <p>Para questões sobre privacidade ou exercício de direitos relacionados com os seus dados, contacte: <a href="mailto:geral@wiredevelop.pt">geral@wiredevelop.pt</a></p>
+
+      <div class="meta">Última atualização: 2026-05-05</div>
+    </div>
   </div>
 </body>
 </html>
