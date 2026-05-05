@@ -16,8 +16,8 @@ workflows:
       - name: Build IPA
         script: |
           BUILD_COUNTER="${CM_BUILD_NUMBER:-0}"
-          BUILD_SUFFIX=$(printf '%03d' $((BUILD_COUNTER % 1000)))
-          BUILD_NUMBER_OVERRIDE="$(date +%y%m%d)${BUILD_SUFFIX}"
+          BUILD_SUFFIX=$(printf '%04d' $((BUILD_COUNTER % 10000)))
+          BUILD_NUMBER_OVERRIDE="$(date +%Y%m%d)${BUILD_SUFFIX}"
           echo "Using build number: $BUILD_NUMBER_OVERRIDE"
           flutter build ipa --release --build-number=$BUILD_NUMBER_OVERRIDE
     artifacts:
@@ -38,8 +38,8 @@ workflows:
       - name: Build AAB
         script: |
           BUILD_COUNTER="${CM_BUILD_NUMBER:-0}"
-          BUILD_SUFFIX=$(printf '%03d' $((BUILD_COUNTER % 1000)))
-          BUILD_NUMBER_OVERRIDE="$(date +%y%m%d)${BUILD_SUFFIX}"
+          BUILD_SUFFIX=$(printf '%04d' $((BUILD_COUNTER % 10000)))
+          BUILD_NUMBER_OVERRIDE="$(date +%Y%m%d)${BUILD_SUFFIX}"
           echo "Using build number: $BUILD_NUMBER_OVERRIDE"
           TARGET_PLATFORMS="${TARGET_PLATFORMS:-android-arm,android-arm64,android-x64}"
           flutter build appbundle --release --build-number=$BUILD_NUMBER_OVERRIDE --target-platform "$TARGET_PLATFORMS"
