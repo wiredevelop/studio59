@@ -2056,7 +2056,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
       builder: (ctx) => AlertDialog(
         title: const Text('Permissão necessária'),
         content: const Text(
-          'Para guardar fotos na galeria, a app precisa de acesso às fotos.\n\nVai a:\nDefinições → Privacidade e Segurança → Fotos → Studio 59\n\nou\n\nDefinições → Studio 59 → Fotos',
+          'Para guardar fotos na galeria, a app precisa de acesso às fotos.\n\nClica em "Abrir Definições" e ativa a opção Fotos.',
         ),
         actions: [
           TextButton(
@@ -8458,6 +8458,10 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
   String status = '';
   final queryCtrl = TextEditingController();
   final selected = <int>{};
+  Future<List<StaffEvent>>? _eventsFuture;
+  Future<List<OrderListItem>>? _ordersFuture;
+  String? _lastToken;
+  String? _lastOrdersKey;
 
   @override
   void initState() {
@@ -8471,8 +8475,25 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
     super.dispose();
   }
 
-  Future<List<StaffEvent>> _loadEvents(String token, {required bool assignedOnly}) =>
-      ref.read(apiProvider).staffEvents(token, assignedOnly: assignedOnly);
+  Future<List<StaffEvent>> _loadEvents(String token, {required bool assignedOnly}) {
+    if (_eventsFuture == null || _lastToken != token) {
+      _lastToken = token;
+      _eventsFuture = ref.read(apiProvider).staffEvents(token, assignedOnly: assignedOnly);
+    }
+    return _eventsFuture!;
+  }
+
+  void _refreshEvents() {
+    final token = ref.read(staffTokenProvider);
+    final user = ref.read(staffUserProvider);
+    if (token == null || user == null) return;
+    setState(() {
+      _lastToken = null;
+      _eventsFuture = null;
+      _ordersFuture = null;
+      _lastOrdersKey = null;
+    });
+  }
 
   String _dateKey(DateTime date) {
     final y = date.year.toString().padLeft(4, '0');
@@ -8535,11 +8556,11 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
         title: const Text('Pedidos'),
         leading: navLeading(context),
         actions: navActions(context, extra: [
-          IconButton(onPressed: () => setState(() {}), icon: const Icon(Icons.refresh)),
+          IconButton(onPressed: _refreshEvents, icon: const Icon(Icons.refresh)),
         ]),
       ),
       body: RefreshIndicator(
-        onRefresh: () async => setState(() {}),
+        onRefresh: () async => _refreshEvents(),
         child: FutureBuilder<List<StaffEvent>>(
         future: _loadEvents(token, assignedOnly: !_canSeeAllEvents(user)),
         builder: (_, snap) {
@@ -8572,14 +8593,9 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
           final desiredDateKey = selectedDate != null ? _dateKey(selectedDate!) : '';
           if (availableDates.isNotEmpty && (selectedDate == null || !availableDates.contains(desiredDateKey))) {
             final nextKey = availableDates.contains(todayKey) ? todayKey : availableDates.first;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-              setState(() {
-                selectedDate = _parseDateKey(nextKey);
-                selectedEventType = '';
-                selected.clear();
-              });
-            });
+            selectedDate = _parseDateKey(nextKey);
+            selectedEventType = '';
+            selected.clear();
           }
           final resolvedDate = selectedDate ?? _parseDateKey(availableDates.first);
           final resolvedDateKey = _dateKey(resolvedDate);
@@ -8591,15 +8607,9 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
               .toList()
             ..sort();
           if (selectedEventType.isNotEmpty && !eventTypes.contains(selectedEventType)) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-              setState(() => selectedEventType = '');
-            });
+            selectedEventType = '';
           } else if (selectedEventType.isEmpty && eventTypes.length == 1) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-              setState(() => selectedEventType = eventTypes.first);
-            });
+            selectedEventType = eventTypes.first;
           }
           final filteredEvents = selectedEventType.isEmpty
               ? eventsForDate
@@ -8630,6 +8640,8 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                 selectedDate = picked;
                                 selectedEventType = '';
                                 selected.clear();
+                                _ordersFuture = null;
+                                _lastOrdersKey = null;
                               });
                             },
                             child: Text('Data: ${_formatDateLabel(resolvedDate)}'),
@@ -8646,6 +8658,8 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                             onChanged: (v) => setState(() {
                               selectedEventType = v ?? '';
                               selected.clear();
+                              _ordersFuture = null;
+                              _lastOrdersKey = null;
                             }),
                             decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Tipo evento'),
                           ),
@@ -8725,13 +8739,20 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
               ),
               Expanded(
                 child: FutureBuilder<List<OrderListItem>>(
-                  future: _loadOrdersFiltered(
-                    token,
-                    eventDate: resolvedDateKey,
-                    eventType: selectedEventType,
-                    status: status,
-                    query: queryCtrl.text.trim(),
-                  ),
+                  future: () {
+                    final key = '$resolvedDateKey|$selectedEventType|$status|${queryCtrl.text.trim()}';
+                    if (_ordersFuture == null || _lastOrdersKey != key) {
+                      _lastOrdersKey = key;
+                      _ordersFuture = _loadOrdersFiltered(
+                        token,
+                        eventDate: resolvedDateKey,
+                        eventType: selectedEventType,
+                        status: status,
+                        query: queryCtrl.text.trim(),
+                      );
+                    }
+                    return _ordersFuture!;
+                  }(),
                   builder: (_, orderSnap) {
                     if (!orderSnap.hasData) {
                       if (orderSnap.hasError) return Center(child: Text('Erro: ${orderSnap.error}'));
@@ -10118,8 +10139,8 @@ class ApiService {
     final dio = Dio(
       BaseOptions(
         baseUrl: baseUrl,
-        connectTimeout: const Duration(seconds: 20),
-        receiveTimeout: const Duration(seconds: 30),
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 45),
         headers: const {
           'Accept': 'application/json',
           'Content-Type': 'application/json',
@@ -10135,9 +10156,8 @@ class ApiService {
 
   static HttpClient _createHttpClient(String baseUrl) {
     final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 20)
-      ..idleTimeout = const Duration(seconds: 20)
-      ..maxConnectionsPerHost = 6;
+      ..connectionTimeout = const Duration(seconds: 30)
+      ..idleTimeout = const Duration(seconds: 30);
     final apiHost = Uri.tryParse(baseUrl)?.host;
     final fallbackIp = kApiFallbackIp.trim();
     client.connectionFactory = (uri, proxyHost, proxyPort) async {
