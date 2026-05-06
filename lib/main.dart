@@ -2046,7 +2046,6 @@ class _TicketPageState extends ConsumerState<TicketPage> {
   Timer? timer;
   int? downloadingPhotoId;
   bool downloadingAll = false;
-  final _downloadDio = Dio();
   late Future<OrderDetail> _orderFuture;
 
   Future<void> _showPermissionDialog() async {
@@ -2077,27 +2076,15 @@ class _TicketPageState extends ConsumerState<TicketPage> {
 
   Future<bool> _ensureGalleryPermission() async {
     if (Platform.isIOS) {
-      final addOnlyStatus = await Permission.photosAddOnly.status;
-      if (addOnlyStatus.isGranted || addOnlyStatus.isLimited) return true;
-      if (addOnlyStatus.isPermanentlyDenied) {
+      var status = await Permission.photosAddOnly.status;
+      if (status.isGranted || status.isLimited) return true;
+      if (status.isRestricted || status.isPermanentlyDenied) {
         await _showPermissionDialog();
         return false;
       }
-      final photosStatus = await Permission.photos.status;
-      if (photosStatus.isGranted || photosStatus.isLimited) return true;
-      if (photosStatus.isPermanentlyDenied) {
-        await _showPermissionDialog();
-        return false;
-      }
-      final addOnly = await Permission.photosAddOnly.request();
-      if (addOnly.isGranted || addOnly.isLimited) return true;
-      if (addOnly.isPermanentlyDenied) {
-        await _showPermissionDialog();
-        return false;
-      }
-      final photos = await Permission.photos.request();
-      if (photos.isGranted || photos.isLimited) return true;
-      if (photos.isPermanentlyDenied) await _showPermissionDialog();
+      status = await Permission.photosAddOnly.request();
+      if (status.isGranted || status.isLimited) return true;
+      if (status.isPermanentlyDenied) await _showPermissionDialog();
       return false;
     }
     if (Platform.isAndroid) {
@@ -2149,9 +2136,13 @@ class _TicketPageState extends ConsumerState<TicketPage> {
           orderCode: order.orderCode,
           photoId: photo.id,
         );
-    final r = await _downloadDio.get<List<int>>(
+    final r = await ref.read(apiProvider).dio.get<List<int>>(
       url,
-      options: Options(responseType: ResponseType.bytes),
+      options: Options(
+        responseType: ResponseType.bytes,
+        receiveTimeout: const Duration(minutes: 3),
+        validateStatus: (s) => s == 200,
+      ),
     );
     final bytes = Uint8List.fromList(r.data ?? []);
     if (bytes.isEmpty) {
@@ -2205,7 +2196,6 @@ class _TicketPageState extends ConsumerState<TicketPage> {
   @override
   void dispose() {
     timer?.cancel();
-    _downloadDio.close(force: true);
     super.dispose();
   }
 
@@ -8668,14 +8658,18 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
-                      initialValue: status,
+                      value: status,
                       items: const [
                         DropdownMenuItem(value: '', child: Text('Todos status')),
                         DropdownMenuItem(value: 'pending', child: Text('pending')),
                         DropdownMenuItem(value: 'paid', child: Text('paid')),
                         DropdownMenuItem(value: 'delivered', child: Text('delivered')),
                       ],
-                      onChanged: (v) => setState(() => status = v ?? ''),
+                      onChanged: (v) => setState(() {
+                        status = v ?? '';
+                        _ordersFuture = null;
+                        _lastOrdersKey = null;
+                      }),
                       decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Status'),
                     ),
                     const SizedBox(height: 8),
@@ -8749,13 +8743,33 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                         eventType: selectedEventType,
                         status: status,
                         query: queryCtrl.text.trim(),
+                      ).timeout(
+                        const Duration(seconds: 30),
+                        onTimeout: () => throw TimeoutException('Tempo limite ao carregar pedidos'),
                       );
                     }
                     return _ordersFuture!;
                   }(),
                   builder: (_, orderSnap) {
                     if (!orderSnap.hasData) {
-                      if (orderSnap.hasError) return Center(child: Text('Erro: ${orderSnap.error}'));
+                      if (orderSnap.hasError) {
+                        return Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('Erro: ${orderSnap.error}', textAlign: TextAlign.center),
+                              const SizedBox(height: 12),
+                              FilledButton(
+                                onPressed: () => setState(() {
+                                  _ordersFuture = null;
+                                  _lastOrdersKey = null;
+                                }),
+                                child: const Text('Tentar novamente'),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
                       return const Center(child: CircularProgressIndicator());
                     }
                     final orders = orderSnap.data!;
