@@ -1,0 +1,1725 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
+
+import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+
+const String kOfflineHostSessionFileName = 'studio59_offline_host_session.json';
+const String kOfflineOrdersFileName = 'studio59_offline_orders.json';
+const String kOfflineAccessFileName = 'studio59_offline_access.json';
+const int kOfflineDiscoveryPort = 40059;
+const String kOfflineDiscoveryType = 'studio59_offline_discovery';
+const String kOfflineDiscoveryResponseType =
+    'studio59_offline_discovery_response';
+
+bool looksLikeLocalApiBaseUrl(String url) {
+  final uri = Uri.tryParse(url.trim());
+  if (uri == null) return false;
+  final host = uri.host.toLowerCase();
+  if (host == 'localhost' || host == '127.0.0.1') return true;
+  if (host.startsWith('10.')) return true;
+  if (host.startsWith('192.168.')) return true;
+  if (host.startsWith('172.16.') ||
+      host.startsWith('172.17.') ||
+      host.startsWith('172.18.') ||
+      host.startsWith('172.19.') ||
+      host.startsWith('172.20.') ||
+      host.startsWith('172.21.') ||
+      host.startsWith('172.22.') ||
+      host.startsWith('172.23.') ||
+      host.startsWith('172.24.') ||
+      host.startsWith('172.25.') ||
+      host.startsWith('172.26.') ||
+      host.startsWith('172.27.') ||
+      host.startsWith('172.28.') ||
+      host.startsWith('172.29.') ||
+      host.startsWith('172.30.') ||
+      host.startsWith('172.31.')) {
+    return true;
+  }
+  return false;
+}
+
+String _pathJoin(String dir, String leaf) {
+  final sep = Platform.pathSeparator;
+  if (dir.endsWith(sep)) return '$dir$leaf';
+  return '$dir$sep$leaf';
+}
+
+String _basenameWithoutExtension(String path) {
+  final normalized = path.replaceAll('\\', '/');
+  final file = normalized.split('/').last;
+  final idx = file.lastIndexOf('.');
+  if (idx <= 0) return file;
+  return file.substring(0, idx);
+}
+
+String _mimeTypeForPath(String path) {
+  final ext = path.toLowerCase();
+  if (ext.endsWith('.png')) return 'image/png';
+  if (ext.endsWith('.webp')) return 'image/webp';
+  if (ext.endsWith('.gif')) return 'image/gif';
+  if (ext.endsWith('.heic')) return 'image/heic';
+  if (ext.endsWith('.heif')) return 'image/heif';
+  return 'image/jpeg';
+}
+
+String generateOfflinePassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  final rnd = Random.secure();
+  return List.generate(10, (_) => chars[rnd.nextInt(chars.length)]).join();
+}
+
+String generateOfflineUsername(String eventName) {
+  final base = eventName
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '.')
+      .replaceAll(RegExp(r'\.+'), '.')
+      .replaceAll(RegExp(r'^\.|\.$'), '');
+  final suffix = Random.secure().nextInt(9000) + 1000;
+  if (base.isEmpty) return 'offline.$suffix';
+  return '${base.substring(0, min(base.length, 16))}.$suffix';
+}
+
+String generateOfflineToken() {
+  const chars =
+      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  final rnd = Random.secure();
+  return List.generate(48, (_) => chars[rnd.nextInt(chars.length)]).join();
+}
+
+String generateOfflineOrderCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  final rnd = Random.secure();
+  return 'S59-${List.generate(8, (_) => chars[rnd.nextInt(chars.length)]).join()}';
+}
+
+class OfflineDiscoveryResult {
+  const OfflineDiscoveryResult({
+    required this.serverUrl,
+    required this.eventName,
+    required this.sessionId,
+    required this.qrUrl,
+    required this.host,
+    required this.port,
+  });
+
+  final String serverUrl;
+  final String eventName;
+  final String sessionId;
+  final String qrUrl;
+  final String host;
+  final int port;
+
+  factory OfflineDiscoveryResult.fromJson(Map<String, dynamic> json) =>
+      OfflineDiscoveryResult(
+        serverUrl: json['server_url']?.toString() ?? '',
+        eventName: json['event_name']?.toString() ?? '',
+        sessionId: json['session_id']?.toString() ?? '',
+        qrUrl: json['qr_url']?.toString() ?? '',
+        host: json['host']?.toString() ?? '',
+        port: (json['port'] as num?)?.toInt() ?? 4000,
+      );
+}
+
+class OfflineHostPhoto {
+  const OfflineHostPhoto({
+    required this.id,
+    required this.number,
+    required this.path,
+  });
+
+  final int id;
+  final String number;
+  final String path;
+
+  Map<String, dynamic> toJson() => {'id': id, 'number': number, 'path': path};
+
+  factory OfflineHostPhoto.fromJson(Map<String, dynamic> json) =>
+      OfflineHostPhoto(
+        id: (json['id'] as num?)?.toInt() ?? 0,
+        number: json['number']?.toString() ?? '',
+        path: json['path']?.toString() ?? '',
+      );
+}
+
+class OfflineHostOrderItem {
+  const OfflineHostOrderItem({
+    required this.photoId,
+    required this.photoNumber,
+    required this.quantity,
+    required this.price,
+  });
+
+  final int photoId;
+  final String photoNumber;
+  final int quantity;
+  final num price;
+
+  Map<String, dynamic> toJson() => {
+    'photo_id': photoId,
+    'photo_number': photoNumber,
+    'quantity': quantity,
+    'price': price,
+  };
+
+  factory OfflineHostOrderItem.fromJson(Map<String, dynamic> json) =>
+      OfflineHostOrderItem(
+        photoId: (json['photo_id'] as num?)?.toInt() ?? 0,
+        photoNumber: json['photo_number']?.toString() ?? '',
+        quantity: (json['quantity'] as num?)?.toInt() ?? 1,
+        price: json['price'] is num
+            ? json['price'] as num
+            : num.tryParse(json['price']?.toString() ?? '') ?? 0,
+      );
+}
+
+class OfflineHostOrder {
+  const OfflineHostOrder({
+    required this.id,
+    required this.orderCode,
+    required this.customerName,
+    required this.customerPhone,
+    required this.customerEmail,
+    required this.productType,
+    required this.deliveryType,
+    required this.deliveryAddress,
+    required this.wantsFilm,
+    required this.filmFee,
+    required this.shippingFee,
+    required this.extrasTotal,
+    required this.itemsTotal,
+    required this.paymentMethod,
+    required this.status,
+    required this.totalAmount,
+    required this.items,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final int id;
+  final String orderCode;
+  final String customerName;
+  final String customerPhone;
+  final String customerEmail;
+  final String productType;
+  final String? deliveryType;
+  final String deliveryAddress;
+  final bool wantsFilm;
+  final num filmFee;
+  final num shippingFee;
+  final num extrasTotal;
+  final num itemsTotal;
+  final String paymentMethod;
+  final String status;
+  final num totalAmount;
+  final List<OfflineHostOrderItem> items;
+  final String createdAt;
+  final String updatedAt;
+
+  OfflineHostOrder copyWith({
+    String? customerName,
+    String? customerPhone,
+    String? customerEmail,
+    String? paymentMethod,
+    String? status,
+    String? updatedAt,
+  }) => OfflineHostOrder(
+    id: id,
+    orderCode: orderCode,
+    customerName: customerName ?? this.customerName,
+    customerPhone: customerPhone ?? this.customerPhone,
+    customerEmail: customerEmail ?? this.customerEmail,
+    productType: productType,
+    deliveryType: deliveryType,
+    deliveryAddress: deliveryAddress,
+    wantsFilm: wantsFilm,
+    filmFee: filmFee,
+    shippingFee: shippingFee,
+    extrasTotal: extrasTotal,
+    itemsTotal: itemsTotal,
+    paymentMethod: paymentMethod ?? this.paymentMethod,
+    status: status ?? this.status,
+    totalAmount: totalAmount,
+    items: items,
+    createdAt: createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'order_code': orderCode,
+    'customer_name': customerName,
+    'customer_phone': customerPhone,
+    'customer_email': customerEmail,
+    'product_type': productType,
+    'delivery_type': deliveryType,
+    'delivery_address': deliveryAddress,
+    'wants_film': wantsFilm,
+    'film_fee': filmFee,
+    'shipping_fee': shippingFee,
+    'extras_total': extrasTotal,
+    'items_total': itemsTotal,
+    'payment_method': paymentMethod,
+    'status': status,
+    'total_amount': totalAmount,
+    'items': items.map((e) => e.toJson()).toList(),
+    'created_at': createdAt,
+    'updated_at': updatedAt,
+  };
+
+  Map<String, dynamic> toOrderDetailJson() => {
+    'order_code': orderCode,
+    'status': status,
+    'total_amount': totalAmount,
+    'items_total': itemsTotal,
+    'extras_total': extrasTotal,
+    'shipping_fee': shippingFee,
+    'film_fee': filmFee,
+    'product_type': productType,
+    'delivery_type': deliveryType,
+    'delivery_address': deliveryAddress,
+    'wants_film': wantsFilm,
+    'payment_method': paymentMethod,
+    'customer_name': customerName,
+    'customer_email': customerEmail,
+    'customer_phone': customerPhone,
+    'offline_mode': true,
+    'photos': items
+        .map(
+          (item) => {
+            'id': item.photoId,
+            'number': item.photoNumber,
+            'quantity': item.quantity,
+          },
+        )
+        .toList(),
+  };
+
+  Map<String, dynamic> toStaffListJson(Map<String, dynamic> event) => {
+    'id': id,
+    'order_code': orderCode,
+    'customer_name': customerName,
+    'customer_phone': customerPhone,
+    'customer_email': customerEmail,
+    'payment_method': paymentMethod,
+    'status': status,
+    'total_amount': totalAmount,
+    'event': event,
+  };
+
+  factory OfflineHostOrder.fromJson(Map<String, dynamic> json) =>
+      OfflineHostOrder(
+        id: (json['id'] as num?)?.toInt() ?? 0,
+        orderCode: json['order_code']?.toString() ?? '',
+        customerName: json['customer_name']?.toString() ?? '',
+        customerPhone: json['customer_phone']?.toString() ?? '',
+        customerEmail: json['customer_email']?.toString() ?? '',
+        productType: json['product_type']?.toString() ?? 'digital',
+        deliveryType: json['delivery_type']?.toString(),
+        deliveryAddress: json['delivery_address']?.toString() ?? '',
+        wantsFilm: json['wants_film'] == true || json['wants_film'] == 1,
+        filmFee: json['film_fee'] is num
+            ? json['film_fee'] as num
+            : num.tryParse(json['film_fee']?.toString() ?? '') ?? 0,
+        shippingFee: json['shipping_fee'] is num
+            ? json['shipping_fee'] as num
+            : num.tryParse(json['shipping_fee']?.toString() ?? '') ?? 0,
+        extrasTotal: json['extras_total'] is num
+            ? json['extras_total'] as num
+            : num.tryParse(json['extras_total']?.toString() ?? '') ?? 0,
+        itemsTotal: json['items_total'] is num
+            ? json['items_total'] as num
+            : num.tryParse(json['items_total']?.toString() ?? '') ?? 0,
+        paymentMethod: json['payment_method']?.toString() ?? 'cash',
+        status: json['status']?.toString() ?? 'pending',
+        totalAmount: json['total_amount'] is num
+            ? json['total_amount'] as num
+            : num.tryParse(json['total_amount']?.toString() ?? '') ?? 0,
+        items: ((json['items'] as List?) ?? const [])
+            .map(
+              (item) => OfflineHostOrderItem.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            )
+            .toList(),
+        createdAt:
+            json['created_at']?.toString() ?? DateTime.now().toIso8601String(),
+        updatedAt:
+            json['updated_at']?.toString() ?? DateTime.now().toIso8601String(),
+      );
+}
+
+class OfflineHostSession {
+  const OfflineHostSession({
+    required this.isActive,
+    required this.sessionId,
+    required this.eventId,
+    required this.eventName,
+    required this.eventDate,
+    required this.eventType,
+    required this.location,
+    required this.pricePerPhoto,
+    required this.basePrice,
+    required this.accessPin,
+    required this.qrToken,
+    required this.guestToken,
+    required this.photoDir,
+    required this.photos,
+    required this.orders,
+    required this.eventMeta,
+    required this.staffUsername,
+    required this.staffPassword,
+    required this.staffToken,
+    required this.staffName,
+    required this.staffUserId,
+    required this.port,
+    required this.serverHost,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final bool isActive;
+  final String sessionId;
+  final int eventId;
+  final String eventName;
+  final String eventDate;
+  final String eventType;
+  final String location;
+  final num pricePerPhoto;
+  final num basePrice;
+  final String accessPin;
+  final String qrToken;
+  final String guestToken;
+  final String photoDir;
+  final List<OfflineHostPhoto> photos;
+  final List<OfflineHostOrder> orders;
+  final Map<String, dynamic> eventMeta;
+  final String staffUsername;
+  final String staffPassword;
+  final String staffToken;
+  final String staffName;
+  final int staffUserId;
+  final int port;
+  final String serverHost;
+  final String createdAt;
+  final String updatedAt;
+
+  String get localApiBaseUrl => 'http://127.0.0.1:$port/api';
+  String get lanApiBaseUrl => 'http://$serverHost:$port/api';
+  String get publicQrUrl =>
+      'http://$serverHost:$port/api/public/events/qr/$qrToken';
+  String get ordersFilePath => _pathJoin(photoDir, kOfflineOrdersFileName);
+  String get accessFilePath => _pathJoin(photoDir, kOfflineAccessFileName);
+
+  OfflineHostSession copyWith({
+    bool? isActive,
+    List<OfflineHostPhoto>? photos,
+    List<OfflineHostOrder>? orders,
+    Map<String, dynamic>? eventMeta,
+    int? port,
+    String? serverHost,
+    String? updatedAt,
+  }) => OfflineHostSession(
+    isActive: isActive ?? this.isActive,
+    sessionId: sessionId,
+    eventId: eventId,
+    eventName: eventName,
+    eventDate: eventDate,
+    eventType: eventType,
+    location: location,
+    pricePerPhoto: pricePerPhoto,
+    basePrice: basePrice,
+    accessPin: accessPin,
+    qrToken: qrToken,
+    guestToken: guestToken,
+    photoDir: photoDir,
+    photos: photos ?? this.photos,
+    orders: orders ?? this.orders,
+    eventMeta: eventMeta ?? this.eventMeta,
+    staffUsername: staffUsername,
+    staffPassword: staffPassword,
+    staffToken: staffToken,
+    staffName: staffName,
+    staffUserId: staffUserId,
+    port: port ?? this.port,
+    serverHost: serverHost ?? this.serverHost,
+    createdAt: createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'is_active': isActive,
+    'session_id': sessionId,
+    'event_id': eventId,
+    'event_name': eventName,
+    'event_date': eventDate,
+    'event_type': eventType,
+    'location': location,
+    'price_per_photo': pricePerPhoto,
+    'base_price': basePrice,
+    'access_pin': accessPin,
+    'qr_token': qrToken,
+    'guest_token': guestToken,
+    'photo_dir': photoDir,
+    'photos': photos.map((e) => e.toJson()).toList(),
+    'orders': orders.map((e) => e.toJson()).toList(),
+    'event_meta': eventMeta,
+    'staff_username': staffUsername,
+    'staff_password': staffPassword,
+    'staff_token': staffToken,
+    'staff_name': staffName,
+    'staff_user_id': staffUserId,
+    'port': port,
+    'server_host': serverHost,
+    'created_at': createdAt,
+    'updated_at': updatedAt,
+  };
+
+  Map<String, dynamic> buildExportPayload() => {
+    'session_id': sessionId,
+    'event': {
+      'id': eventId,
+      'name': eventName,
+      'event_date': eventDate,
+      'event_type': eventType,
+      'location': location,
+      'price_per_photo': pricePerPhoto,
+      'base_price': basePrice,
+      'qr_token': qrToken,
+      'access_pin': accessPin,
+      'event_meta': eventMeta,
+    },
+    'orders': orders.map((e) => e.toJson()).toList(),
+    'photos': photos
+        .map(
+          (photo) => {
+            'id': photo.id,
+            'number': photo.number,
+            'original_path': photo.path,
+            'preview_path': photo.path,
+            'status': 'active',
+          },
+        )
+        .toList(),
+    'selections': const <Map<String, dynamic>>[],
+    'exported_at': DateTime.now().toIso8601String(),
+  };
+
+  factory OfflineHostSession.fromJson(
+    Map<String, dynamic> json,
+  ) => OfflineHostSession(
+    isActive: json['is_active'] == true,
+    sessionId: json['session_id']?.toString() ?? '',
+    eventId: (json['event_id'] as num?)?.toInt() ?? 0,
+    eventName: json['event_name']?.toString() ?? '',
+    eventDate: json['event_date']?.toString() ?? '',
+    eventType: json['event_type']?.toString() ?? '',
+    location: json['location']?.toString() ?? '',
+    pricePerPhoto: json['price_per_photo'] is num
+        ? json['price_per_photo'] as num
+        : num.tryParse(json['price_per_photo']?.toString() ?? '') ?? 0,
+    basePrice: json['base_price'] is num
+        ? json['base_price'] as num
+        : num.tryParse(json['base_price']?.toString() ?? '') ?? 0,
+    accessPin: json['access_pin']?.toString() ?? '',
+    qrToken: json['qr_token']?.toString() ?? '',
+    guestToken: json['guest_token']?.toString() ?? '',
+    photoDir: json['photo_dir']?.toString() ?? '',
+    photos: ((json['photos'] as List?) ?? const [])
+        .map(
+          (item) =>
+              OfflineHostPhoto.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList(),
+    orders: ((json['orders'] as List?) ?? const [])
+        .map(
+          (item) =>
+              OfflineHostOrder.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList(),
+    eventMeta: json['event_meta'] is Map<String, dynamic>
+        ? Map<String, dynamic>.from(json['event_meta'] as Map<String, dynamic>)
+        : (json['event_meta'] is Map
+              ? Map<String, dynamic>.from(json['event_meta'] as Map)
+              : <String, dynamic>{}),
+    staffUsername: json['staff_username']?.toString() ?? '',
+    staffPassword: json['staff_password']?.toString() ?? '',
+    staffToken: json['staff_token']?.toString() ?? '',
+    staffName: json['staff_name']?.toString() ?? 'Offline',
+    staffUserId: (json['staff_user_id'] as num?)?.toInt() ?? 1,
+    port: (json['port'] as num?)?.toInt() ?? 4000,
+    serverHost: json['server_host']?.toString() ?? '127.0.0.1',
+    createdAt:
+        json['created_at']?.toString() ?? DateTime.now().toIso8601String(),
+    updatedAt:
+        json['updated_at']?.toString() ?? DateTime.now().toIso8601String(),
+  );
+}
+
+Future<File> _offlineHostSessionFile() async {
+  final dir = await getApplicationDocumentsDirectory();
+  return File(_pathJoin(dir.path, kOfflineHostSessionFileName));
+}
+
+Future<OfflineHostSession?> readOfflineHostSession() async {
+  final file = await _offlineHostSessionFile();
+  if (!await file.exists()) return null;
+  final raw = await file.readAsString();
+  if (raw.trim().isEmpty) return null;
+  final decoded = jsonDecode(raw);
+  if (decoded is Map<String, dynamic>) {
+    return OfflineHostSession.fromJson(decoded);
+  }
+  if (decoded is Map) {
+    return OfflineHostSession.fromJson(Map<String, dynamic>.from(decoded));
+  }
+  return null;
+}
+
+Future<void> saveOfflineHostSession(OfflineHostSession session) async {
+  final file = await _offlineHostSessionFile();
+  await file.writeAsString(jsonEncode(session.toJson()));
+}
+
+Future<void> clearOfflineHostSession() async {
+  final file = await _offlineHostSessionFile();
+  if (await file.exists()) {
+    await file.delete();
+  }
+}
+
+Future<List<OfflineHostPhoto>> scanOfflinePhotos(String directoryPath) async {
+  final dir = Directory(directoryPath);
+  if (!await dir.exists()) return const <OfflineHostPhoto>[];
+  final files = <File>[];
+  await for (final entity in dir.list(recursive: true, followLinks: false)) {
+    if (entity is! File) continue;
+    final lower = entity.path.toLowerCase();
+    if (lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.png') ||
+        lower.endsWith('.webp') ||
+        lower.endsWith('.heic') ||
+        lower.endsWith('.heif')) {
+      files.add(entity);
+    }
+  }
+  files.sort((a, b) => a.path.compareTo(b.path));
+  return [
+    for (var i = 0; i < files.length; i++)
+      OfflineHostPhoto(
+        id: i + 1,
+        number: _basenameWithoutExtension(files[i].path),
+        path: files[i].path,
+      ),
+  ];
+}
+
+Future<OfflineDiscoveryResult?> discoverOfflineSession({
+  Duration timeout = const Duration(seconds: 3),
+}) async {
+  RawDatagramSocket? socket;
+  try {
+    socket = await RawDatagramSocket.bind(
+      InternetAddress.anyIPv4,
+      0,
+      reuseAddress: true,
+      reusePort: true,
+    );
+    socket.broadcastEnabled = true;
+    final completer = Completer<OfflineDiscoveryResult?>();
+    late final StreamSubscription<RawSocketEvent> sub;
+    sub = socket.listen((event) {
+      if (event != RawSocketEvent.read) return;
+      final datagram = socket?.receive();
+      if (datagram == null) return;
+      final text = utf8.decode(datagram.data, allowMalformed: true).trim();
+      if (text.isEmpty) return;
+      try {
+        final decoded = jsonDecode(text);
+        if (decoded is! Map) return;
+        final map = Map<String, dynamic>.from(decoded);
+        if (map['type']?.toString() != kOfflineDiscoveryResponseType) return;
+        if (!completer.isCompleted) {
+          completer.complete(OfflineDiscoveryResult.fromJson(map));
+        }
+      } catch (_) {}
+    });
+    final payload = utf8.encode(
+      jsonEncode({
+        'type': kOfflineDiscoveryType,
+        'ts': DateTime.now().millisecondsSinceEpoch,
+      }),
+    );
+    final targets = <InternetAddress>{InternetAddress('255.255.255.255')};
+    try {
+      final interfaces = await NetworkInterface.list(
+        includeLoopback: false,
+        type: InternetAddressType.IPv4,
+      );
+      for (final iface in interfaces) {
+        for (final address in iface.addresses) {
+          final parts = address.address.split('.');
+          if (parts.length == 4) {
+            targets.add(
+              InternetAddress('${parts[0]}.${parts[1]}.${parts[2]}.255'),
+            );
+          }
+        }
+      }
+    } catch (_) {}
+    for (final target in targets) {
+      socket.send(payload, target, kOfflineDiscoveryPort);
+    }
+    final result = await completer.future.timeout(
+      timeout,
+      onTimeout: () => null,
+    );
+    await sub.cancel();
+    socket.close();
+    return result;
+  } catch (_) {
+    socket?.close();
+    return null;
+  }
+}
+
+class OfflineHostStartResult {
+  const OfflineHostStartResult({
+    required this.session,
+    required this.localApiBaseUrl,
+    required this.lanApiBaseUrl,
+  });
+
+  final OfflineHostSession session;
+  final String localApiBaseUrl;
+  final String lanApiBaseUrl;
+}
+
+class OfflineHostServer {
+  OfflineHostServer._();
+
+  static final OfflineHostServer instance = OfflineHostServer._();
+
+  HttpServer? _server;
+  RawDatagramSocket? _discoverySocket;
+  OfflineHostSession? _session;
+  bool get isRunning => _server != null;
+  OfflineHostSession? get session => _session;
+
+  Future<OfflineHostStartResult> start(OfflineHostSession session) async {
+    await stop(clearSessionFile: false);
+    final host = await _resolveLanHost();
+    final server = await _bindServer(session.port);
+    _server = server;
+    _session = session.copyWith(
+      isActive: true,
+      port: server.port,
+      serverHost: host,
+      updatedAt: DateTime.now().toIso8601String(),
+    );
+    await _startDiscoveryResponder();
+    await _persistArtifacts();
+    unawaited(_listen(server));
+    return OfflineHostStartResult(
+      session: _session!,
+      localApiBaseUrl: _session!.localApiBaseUrl,
+      lanApiBaseUrl: _session!.lanApiBaseUrl,
+    );
+  }
+
+  Future<void> stop({bool clearSessionFile = true}) async {
+    final server = _server;
+    final discoverySocket = _discoverySocket;
+    _server = null;
+    _discoverySocket = null;
+    if (server != null) {
+      await server.close(force: true);
+    }
+    discoverySocket?.close();
+    if (_session != null && clearSessionFile) {
+      await clearOfflineHostSession();
+    } else if (_session != null) {
+      await saveOfflineHostSession(_session!.copyWith(isActive: false));
+    }
+    _session = null;
+  }
+
+  Future<void> _persistArtifacts() async {
+    final session = _session;
+    if (session == null) return;
+    await saveOfflineHostSession(session);
+    await File(
+      session.ordersFilePath,
+    ).writeAsString(jsonEncode(session.buildExportPayload()), flush: true);
+    await File(session.accessFilePath).writeAsString(
+      jsonEncode({
+        'session_id': session.sessionId,
+        'event_name': session.eventName,
+        'api_base_url': session.lanApiBaseUrl,
+        'public_qr_url': session.publicQrUrl,
+        'staff_username': session.staffUsername,
+        'staff_password': session.staffPassword,
+        'client_pin': session.accessPin,
+        'photo_count': session.photos.length,
+        'generated_at': DateTime.now().toIso8601String(),
+      }),
+      flush: true,
+    );
+  }
+
+  Future<HttpServer> _bindServer(int preferredPort) async {
+    final ports = <int>[preferredPort, 4000, 4001, 4002, 4010, 4100];
+    for (final port in ports.toSet()) {
+      try {
+        return await HttpServer.bind(
+          InternetAddress.anyIPv4,
+          port,
+          shared: true,
+        );
+      } catch (_) {}
+    }
+    return HttpServer.bind(InternetAddress.anyIPv4, 0, shared: true);
+  }
+
+  Future<void> _startDiscoveryResponder() async {
+    final socket = await RawDatagramSocket.bind(
+      InternetAddress.anyIPv4,
+      kOfflineDiscoveryPort,
+      reuseAddress: true,
+      reusePort: true,
+    );
+    socket.broadcastEnabled = true;
+    _discoverySocket = socket;
+    socket.listen((event) {
+      if (event != RawSocketEvent.read) return;
+      final datagram = socket.receive();
+      if (datagram == null) return;
+      final text = utf8.decode(datagram.data, allowMalformed: true).trim();
+      if (text.isEmpty) return;
+      try {
+        final decoded = jsonDecode(text);
+        if (decoded is! Map) return;
+        final map = Map<String, dynamic>.from(decoded);
+        if (map['type']?.toString() != kOfflineDiscoveryType) return;
+        final session = _session;
+        if (session == null || !session.isActive) return;
+        final response = utf8.encode(
+          jsonEncode({
+            'type': kOfflineDiscoveryResponseType,
+            'server_url': session.lanApiBaseUrl,
+            'event_name': session.eventName,
+            'session_id': session.sessionId,
+            'qr_url': session.publicQrUrl,
+            'host': session.serverHost,
+            'port': session.port,
+          }),
+        );
+        socket.send(response, datagram.address, datagram.port);
+      } catch (_) {}
+    });
+  }
+
+  Future<String> _resolveLanHost() async {
+    try {
+      final interfaces = await NetworkInterface.list(
+        includeLoopback: false,
+        type: InternetAddressType.IPv4,
+      );
+      for (final iface in interfaces) {
+        for (final address in iface.addresses) {
+          if (!address.isLoopback &&
+              looksLikeLocalApiBaseUrl('http://${address.address}')) {
+            return address.address;
+          }
+        }
+      }
+    } catch (_) {}
+    return '127.0.0.1';
+  }
+
+  Future<void> _listen(HttpServer server) async {
+    try {
+      await for (final request in server) {
+        unawaited(_handle(request));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _handle(HttpRequest request) async {
+    try {
+      if (request.method == 'OPTIONS') {
+        _writeCors(request.response);
+        request.response.statusCode = HttpStatus.noContent;
+        await request.response.close();
+        return;
+      }
+      final path = request.uri.path;
+      if (path.startsWith('/offline/photos/')) {
+        await _servePhoto(request);
+        return;
+      }
+      if (path == '/api/public/events/today' && request.method == 'GET') {
+        await _handleTodayEvents(request);
+        return;
+      }
+      if (path == '/api/public/events/pin' && request.method == 'POST') {
+        await _handleEnterByPin(request);
+        return;
+      }
+      if (path.startsWith('/api/public/events/') &&
+          path.endsWith('/enter') &&
+          request.method == 'POST') {
+        await _handleEnterById(request);
+        return;
+      }
+      if (path.startsWith('/api/public/events/qr/') &&
+          request.method == 'GET') {
+        await _handleEnterByQr(request);
+        return;
+      }
+      if (path.startsWith('/api/public/events/') &&
+          path.endsWith('/photos') &&
+          request.method == 'GET') {
+        await _handlePhotos(request);
+        return;
+      }
+      if (path == '/api/public/orders' && request.method == 'POST') {
+        await _handleCreateOrder(request);
+        return;
+      }
+      if (path.startsWith('/api/public/orders/') &&
+          path.endsWith('/download-link') &&
+          request.method == 'POST') {
+        await _handleDownloadLink(request);
+        return;
+      }
+      if (path.startsWith('/api/public/orders/') && request.method == 'GET') {
+        await _handlePublicOrderDetail(request);
+        return;
+      }
+      if (path == '/api/public/logs' && request.method == 'POST') {
+        await _json(request, HttpStatus.ok, {'ok': true});
+        return;
+      }
+      if (path == '/api/auth/login' && request.method == 'POST') {
+        await _handleStaffLogin(request);
+        return;
+      }
+      if (path == '/api/auth/logout' && request.method == 'POST') {
+        await _json(request, HttpStatus.ok, {'message': 'Logged out'});
+        return;
+      }
+      if (path == '/api/auth/me' && request.method == 'GET') {
+        await _handleStaffMe(request);
+        return;
+      }
+      if (path == '/api/events' && request.method == 'GET') {
+        await _handleStaffEvents(request);
+        return;
+      }
+      if (path == '/api/orders' && request.method == 'GET') {
+        await _handleStaffOrdersList(request);
+        return;
+      }
+      if (path == '/api/orders/bulk-status' && request.method == 'POST') {
+        await _handleBulkStatus(request);
+        return;
+      }
+      if (path.startsWith('/api/events/') &&
+          path.endsWith('/orders') &&
+          request.method == 'GET') {
+        await _handleStaffEventOrders(request);
+        return;
+      }
+      if (path.startsWith('/api/orders/') &&
+          path.endsWith('/mark-paid') &&
+          request.method == 'POST') {
+        await _handleMarkPaid(request);
+        return;
+      }
+      if (path.startsWith('/api/orders/') &&
+          path.endsWith('/send-download-link') &&
+          request.method == 'POST') {
+        await _handleSendDownloadLink(request);
+        return;
+      }
+      if (path.startsWith('/api/orders/') &&
+          path.endsWith('/download-all') &&
+          request.method == 'GET') {
+        await _json(request, HttpStatus.unprocessableEntity, {
+          'message': 'Indisponível offline.',
+        });
+        return;
+      }
+      if (path.startsWith('/api/orders/') && request.method == 'GET') {
+        await _handleStaffOrderDetail(request);
+        return;
+      }
+      if (path.startsWith('/api/orders/') && request.method == 'PUT') {
+        await _handleUpdateOrder(request);
+        return;
+      }
+      if (path.startsWith('/api/offline/events/') &&
+          path.endsWith('/export') &&
+          request.method == 'GET') {
+        await _handleOfflineExport(request);
+        return;
+      }
+      if (path.startsWith('/api/offline/events/') &&
+          path.endsWith('/import') &&
+          request.method == 'POST') {
+        await _json(request, HttpStatus.ok, {
+          'message': 'Import local não necessário.',
+        });
+        return;
+      }
+      await _json(request, HttpStatus.notFound, {'message': 'Not found'});
+    } catch (e, st) {
+      debugPrint('offline host error: $e\n$st');
+      try {
+        await _json(request, HttpStatus.internalServerError, {
+          'message': 'Erro interno offline.',
+        });
+      } catch (_) {
+        try {
+          await request.response.close();
+        } catch (_) {}
+      }
+    }
+  }
+
+  void _writeCors(HttpResponse response) {
+    response.headers.set(HttpHeaders.accessControlAllowOriginHeader, '*');
+    response.headers.set(
+      HttpHeaders.accessControlAllowHeadersHeader,
+      'Content-Type, Authorization',
+    );
+    response.headers.set(
+      HttpHeaders.accessControlAllowMethodsHeader,
+      'GET, POST, PUT, OPTIONS',
+    );
+  }
+
+  Future<Map<String, dynamic>> _readJsonBody(HttpRequest request) async {
+    final raw = await utf8.decoder.bind(request).join();
+    if (raw.trim().isEmpty) return <String, dynamic>{};
+    final decoded = jsonDecode(raw);
+    if (decoded is Map<String, dynamic>) return decoded;
+    if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    return <String, dynamic>{};
+  }
+
+  Future<void> _json(
+    HttpRequest request,
+    int status,
+    Map<String, dynamic> body,
+  ) async {
+    _writeCors(request.response);
+    request.response.statusCode = status;
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(jsonEncode(body));
+    await request.response.close();
+  }
+
+  OfflineHostSession _requireSession() {
+    final session = _session;
+    if (session == null) {
+      throw StateError('Offline session unavailable');
+    }
+    return session;
+  }
+
+  Map<String, dynamic> _eventJson(OfflineHostSession session) => {
+    'id': session.eventId,
+    'name': session.eventName,
+    'event_type': session.eventType,
+    'event_meta': session.eventMeta,
+    'event_date': session.eventDate,
+    'location': session.location,
+    'base_price': session.basePrice,
+    'price_per_photo': session.pricePerPhoto,
+    'qr_token': session.qrToken,
+    'access_pin': session.accessPin,
+  };
+
+  Map<String, dynamic> _guestSessionJson(OfflineHostSession session) => {
+    'event_session_token': session.guestToken,
+    'event': _eventJson(session),
+  };
+
+  Map<String, dynamic> _staffUserJson(OfflineHostSession session) => {
+    'id': session.staffUserId,
+    'name': session.staffName,
+    'username': session.staffUsername,
+    'email': '',
+    'role': 'staff',
+    'permissions': [
+      'dashboard.view',
+      'events.list',
+      'events.view',
+      'orders.list',
+      'orders.view',
+      'orders.update',
+      'offline.export',
+    ],
+  };
+
+  Future<void> _servePhoto(HttpRequest request) async {
+    final session = _requireSession();
+    final idText = request.uri.pathSegments.isNotEmpty
+        ? request.uri.pathSegments.last
+        : '';
+    final photoId = int.tryParse(idText);
+    final photo = session.photos.cast<OfflineHostPhoto?>().firstWhere(
+      (item) => item?.id == photoId,
+      orElse: () => null,
+    );
+    if (photo == null || !await File(photo.path).exists()) {
+      await _json(request, HttpStatus.notFound, {
+        'message': 'Foto não encontrada.',
+      });
+      return;
+    }
+    _writeCors(request.response);
+    request.response.statusCode = HttpStatus.ok;
+    request.response.headers.contentType = ContentType.parse(
+      _mimeTypeForPath(photo.path),
+    );
+    await request.response.addStream(File(photo.path).openRead());
+    await request.response.close();
+  }
+
+  bool _hasGuestToken(HttpRequest request, OfflineHostSession session) {
+    final header = request.headers.value(HttpHeaders.authorizationHeader) ?? '';
+    return header == 'Bearer ${session.guestToken}';
+  }
+
+  bool _hasStaffToken(HttpRequest request, OfflineHostSession session) {
+    final header = request.headers.value(HttpHeaders.authorizationHeader) ?? '';
+    return header == 'Bearer ${session.staffToken}';
+  }
+
+  Future<void> _handleTodayEvents(HttpRequest request) async {
+    final session = _requireSession();
+    await _json(request, HttpStatus.ok, {
+      'data': [
+        {
+          'id': session.eventId,
+          'name': session.eventName,
+          'event_date': session.eventDate,
+          'location': session.location,
+        },
+      ],
+    });
+  }
+
+  Future<void> _handleEnterByPin(HttpRequest request) async {
+    final session = _requireSession();
+    final body = await _readJsonBody(request);
+    final pin = body['pin']?.toString().trim() ?? '';
+    if (pin.isEmpty || pin != session.accessPin) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Invalid PIN',
+      });
+      return;
+    }
+    await _json(request, HttpStatus.ok, _guestSessionJson(session));
+  }
+
+  Future<void> _handleEnterById(HttpRequest request) async {
+    final session = _requireSession();
+    final body = await _readJsonBody(request);
+    final pin = (body['pin']?.toString() ?? body['password']?.toString() ?? '')
+        .trim();
+    if (pin.isEmpty || pin != session.accessPin) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Invalid PIN',
+      });
+      return;
+    }
+    await _json(request, HttpStatus.ok, _guestSessionJson(session));
+  }
+
+  Future<void> _handleEnterByQr(HttpRequest request) async {
+    final session = _requireSession();
+    final token = request.uri.pathSegments.isNotEmpty
+        ? request.uri.pathSegments.last
+        : '';
+    if (token != session.qrToken) {
+      await _json(request, HttpStatus.notFound, {
+        'message': 'Event not available',
+      });
+      return;
+    }
+    await _json(request, HttpStatus.ok, _guestSessionJson(session));
+  }
+
+  Future<void> _handlePhotos(HttpRequest request) async {
+    final session = _requireSession();
+    if (!_hasGuestToken(request, session)) {
+      await _json(request, HttpStatus.forbidden, {
+        'message': 'Sessão inválida.',
+      });
+      return;
+    }
+    final search =
+        request.uri.queryParameters['search']?.trim().toLowerCase() ?? '';
+    final page = int.tryParse(request.uri.queryParameters['page'] ?? '1') ?? 1;
+    final perPage =
+        int.tryParse(request.uri.queryParameters['per_page'] ?? '50') ?? 50;
+    final filtered = session.photos
+        .where(
+          (photo) =>
+              search.isEmpty || photo.number.toLowerCase().contains(search),
+        )
+        .toList();
+    final safePerPage = perPage < 1 ? 50 : min(perPage, 200);
+    final safePage = page < 1 ? 1 : page;
+    final total = filtered.length;
+    final lastPage = total == 0 ? 1 : ((total - 1) ~/ safePerPage) + 1;
+    final start = (safePage - 1) * safePerPage;
+    final slice = start >= total
+        ? <OfflineHostPhoto>[]
+        : filtered.skip(start).take(safePerPage).toList();
+    final host =
+        request.headers.host ?? '${session.serverHost}:${session.port}';
+    await _json(request, HttpStatus.ok, {
+      'data': [
+        for (final photo in slice)
+          {
+            'id': photo.id,
+            'number': photo.number,
+            'preview_url': 'http://$host/offline/photos/${photo.id}',
+          },
+      ],
+      'total': total,
+      'current_page': safePage,
+      'last_page': lastPage,
+      'per_page': safePerPage,
+    });
+  }
+
+  Future<void> _handleCreateOrder(HttpRequest request) async {
+    final session = _requireSession();
+    if (!_hasGuestToken(request, session)) {
+      await _json(request, HttpStatus.forbidden, {
+        'message': 'Sessão inválida.',
+      });
+      return;
+    }
+    final body = await _readJsonBody(request);
+    final customerName = body['customer_name']?.toString().trim() ?? '';
+    final customerPhone = body['customer_phone']?.toString().trim() ?? '';
+    final customerEmail = body['customer_email']?.toString().trim() ?? '';
+    final productType = body['product_type']?.toString().trim() ?? 'digital';
+    final deliveryTypeRaw = body['delivery_type']?.toString().trim();
+    final deliveryType = deliveryTypeRaw == null || deliveryTypeRaw.isEmpty
+        ? null
+        : deliveryTypeRaw;
+    final deliveryAddress = body['delivery_address']?.toString().trim() ?? '';
+    final wantsFilm = body['wants_film'] == true || body['wants_film'] == 1;
+    final paymentMethod = body['payment_method']?.toString().trim() ?? 'cash';
+    final photoItemsRaw = (body['photo_items'] as List?) ?? const [];
+    if (customerName.isEmpty || customerPhone.isEmpty) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Nome e telemóvel são obrigatórios.',
+      });
+      return;
+    }
+    if ((productType == 'digital' || productType == 'both') &&
+        customerEmail.isEmpty) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Email obrigatório para entrega digital.',
+      });
+      return;
+    }
+    if (customerEmail.isNotEmpty &&
+        !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(customerEmail)) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Email inválido.',
+      });
+      return;
+    }
+    if (productType != 'digital' && deliveryType == null) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Escolhe o tipo de entrega.',
+      });
+      return;
+    }
+    if (deliveryType == 'shipping' && deliveryAddress.isEmpty) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Morada obrigatória para envio.',
+      });
+      return;
+    }
+    if (paymentMethod != 'cash') {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Offline só suporta pagamento físico.',
+      });
+      return;
+    }
+    final quantityByPhoto = <int, int>{};
+    for (final item in photoItemsRaw) {
+      if (item is! Map) continue;
+      final photoId = int.tryParse(item['photo_id']?.toString() ?? '') ?? 0;
+      final quantity = max(
+        1,
+        int.tryParse(item['quantity']?.toString() ?? '') ?? 1,
+      );
+      if (photoId > 0) {
+        quantityByPhoto[photoId] = quantity;
+      }
+    }
+    if (quantityByPhoto.isEmpty) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Seleciona pelo menos 1 foto.',
+      });
+      return;
+    }
+    final photos = session.photos
+        .where((photo) => quantityByPhoto.containsKey(photo.id))
+        .toList();
+    if (photos.length != quantityByPhoto.length) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Algumas fotos não existem nesta sessão.',
+      });
+      return;
+    }
+    final items = [
+      for (final photo in photos)
+        OfflineHostOrderItem(
+          photoId: photo.id,
+          photoNumber: photo.number,
+          quantity: quantityByPhoto[photo.id] ?? 1,
+          price: session.pricePerPhoto,
+        ),
+    ];
+    final itemsTotal = items.fold<num>(
+      0,
+      (sum, item) => sum + (item.quantity * item.price),
+    );
+    final shippingFee = deliveryType == 'shipping' ? 5.0 : 0.0;
+    final filmFee = wantsFilm ? 30.0 : 0.0;
+    final extrasTotal = shippingFee + filmFee;
+    final totalAmount = itemsTotal + extrasTotal;
+    final now = DateTime.now().toIso8601String();
+    final order = OfflineHostOrder(
+      id: (session.orders.map((e) => e.id).fold<int>(0, max)) + 1,
+      orderCode: generateOfflineOrderCode(),
+      customerName: customerName,
+      customerPhone: customerPhone,
+      customerEmail: customerEmail,
+      productType: productType,
+      deliveryType: deliveryType,
+      deliveryAddress: deliveryAddress,
+      wantsFilm: wantsFilm,
+      filmFee: filmFee,
+      shippingFee: shippingFee,
+      extrasTotal: extrasTotal,
+      itemsTotal: itemsTotal,
+      paymentMethod: 'cash',
+      status: 'pending',
+      totalAmount: totalAmount,
+      items: items,
+      createdAt: now,
+      updatedAt: now,
+    );
+    _session = session.copyWith(
+      orders: [...session.orders, order],
+      updatedAt: now,
+    );
+    await _persistArtifacts();
+    await _json(request, HttpStatus.created, {
+      'order_code': order.orderCode,
+      'status': order.status,
+      'total_amount': order.totalAmount,
+    });
+  }
+
+  Future<void> _handlePublicOrderDetail(HttpRequest request) async {
+    final session = _requireSession();
+    final orderCode = request.uri.pathSegments.isNotEmpty
+        ? request.uri.pathSegments.last
+        : '';
+    final order = session.orders.cast<OfflineHostOrder?>().firstWhere(
+      (item) => item?.orderCode == orderCode,
+      orElse: () => null,
+    );
+    if (order == null) {
+      await _json(request, HttpStatus.notFound, {
+        'message': 'Pedido não encontrado.',
+      });
+      return;
+    }
+    await _json(request, HttpStatus.ok, order.toOrderDetailJson());
+  }
+
+  Future<void> _handleDownloadLink(HttpRequest request) async {
+    final session = _requireSession();
+    final orderCode = request.uri.pathSegments.length >= 4
+        ? request.uri.pathSegments[3]
+        : '';
+    final order = session.orders.cast<OfflineHostOrder?>().firstWhere(
+      (item) => item?.orderCode == orderCode,
+      orElse: () => null,
+    );
+    if (order == null) {
+      await _json(request, HttpStatus.notFound, {
+        'message': 'Pedido não encontrado.',
+      });
+      return;
+    }
+    if (order.status != 'paid') {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Order is not paid',
+      });
+      return;
+    }
+    await _json(request, HttpStatus.unprocessableEntity, {
+      'message': 'Download indisponível offline. Sincroniza primeiro.',
+    });
+  }
+
+  Future<void> _handleStaffLogin(HttpRequest request) async {
+    final session = _requireSession();
+    final body = await _readJsonBody(request);
+    final login =
+        body['login']?.toString().trim() ??
+        body['email']?.toString().trim() ??
+        '';
+    final password = body['password']?.toString() ?? '';
+    if (login != session.staffUsername || password != session.staffPassword) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Invalid credentials',
+      });
+      return;
+    }
+    await _json(request, HttpStatus.ok, {
+      'token': session.staffToken,
+      'user': _staffUserJson(session),
+      'offline_mode': true,
+    });
+  }
+
+  Future<void> _handleStaffMe(HttpRequest request) async {
+    final session = _requireSession();
+    if (!_hasStaffToken(request, session)) {
+      await _json(request, HttpStatus.unauthorized, {
+        'message': 'Unauthorized',
+      });
+      return;
+    }
+    await _json(request, HttpStatus.ok, _staffUserJson(session));
+  }
+
+  Future<void> _handleStaffEvents(HttpRequest request) async {
+    final session = _requireSession();
+    if (!_hasStaffToken(request, session)) {
+      await _json(request, HttpStatus.unauthorized, {
+        'message': 'Unauthorized',
+      });
+      return;
+    }
+    await _json(request, HttpStatus.ok, {
+      'data': [
+        {
+          'id': session.eventId,
+          'name': session.eventName,
+          'event_date': session.eventDate,
+          'event_time': null,
+          'price_per_photo': session.pricePerPhoto,
+          'base_price': session.basePrice,
+          'is_active_today': true,
+          'location': session.location,
+          'event_type': session.eventType,
+          'event_meta': session.eventMeta,
+          'qr_token': session.qrToken,
+          'access_pin': session.accessPin,
+          'notes': 'Sessão offline local',
+          'is_locked': false,
+        },
+      ],
+      'current_page': 1,
+      'last_page': 1,
+      'per_page': 200,
+      'total': 1,
+    });
+  }
+
+  Future<void> _handleStaffOrdersList(HttpRequest request) async {
+    final session = _requireSession();
+    if (!_hasStaffToken(request, session)) {
+      await _json(request, HttpStatus.unauthorized, {
+        'message': 'Unauthorized',
+      });
+      return;
+    }
+    final q = request.uri.queryParameters['q']?.trim().toLowerCase() ?? '';
+    final status = request.uri.queryParameters['status']?.trim() ?? '';
+    final eventDate = request.uri.queryParameters['event_date']?.trim() ?? '';
+    if (eventDate.isNotEmpty && eventDate != session.eventDate) {
+      await _json(request, HttpStatus.ok, {
+        'data': const <Map<String, dynamic>>[],
+        'current_page': 1,
+        'last_page': 1,
+        'per_page': 30,
+        'total': 0,
+      });
+      return;
+    }
+    final event = {
+      'id': session.eventId,
+      'name': session.eventName,
+      'event_date': session.eventDate,
+    };
+    final filtered = session.orders.where((order) {
+      if (status.isNotEmpty && order.status != status) return false;
+      if (q.isEmpty) return true;
+      return order.customerName.toLowerCase().contains(q) ||
+          order.orderCode.toLowerCase().contains(q) ||
+          order.customerPhone.toLowerCase().contains(q) ||
+          order.customerEmail.toLowerCase().contains(q);
+    }).toList()..sort((a, b) => b.id.compareTo(a.id));
+    await _json(request, HttpStatus.ok, {
+      'data': filtered.map((order) => order.toStaffListJson(event)).toList(),
+      'current_page': 1,
+      'last_page': 1,
+      'per_page': 30,
+      'total': filtered.length,
+    });
+  }
+
+  Future<void> _handleStaffEventOrders(HttpRequest request) async {
+    final session = _requireSession();
+    if (!_hasStaffToken(request, session)) {
+      await _json(request, HttpStatus.unauthorized, {
+        'message': 'Unauthorized',
+      });
+      return;
+    }
+    final status = request.uri.queryParameters['status']?.trim() ?? '';
+    final q = request.uri.queryParameters['q']?.trim().toLowerCase() ?? '';
+    final filtered = session.orders.where((order) {
+      if (status.isNotEmpty && order.status != status) return false;
+      if (q.isEmpty) return true;
+      return order.customerName.toLowerCase().contains(q) ||
+          order.orderCode.toLowerCase().contains(q);
+    }).toList()..sort((a, b) => b.id.compareTo(a.id));
+    await _json(request, HttpStatus.ok, {
+      'data': filtered
+          .map(
+            (order) => {
+              'id': order.id,
+              'order_code': order.orderCode,
+              'customer_name': order.customerName,
+              'status': order.status,
+            },
+          )
+          .toList(),
+      'current_page': 1,
+      'last_page': 1,
+      'per_page': 30,
+      'total': filtered.length,
+    });
+  }
+
+  OfflineHostOrder? _findOrderById(int id) {
+    final session = _session;
+    if (session == null) return null;
+    for (final order in session.orders) {
+      if (order.id == id) return order;
+    }
+    return null;
+  }
+
+  Future<void> _handleStaffOrderDetail(HttpRequest request) async {
+    final session = _requireSession();
+    if (!_hasStaffToken(request, session)) {
+      await _json(request, HttpStatus.unauthorized, {
+        'message': 'Unauthorized',
+      });
+      return;
+    }
+    final idText = request.uri.pathSegments.isNotEmpty
+        ? request.uri.pathSegments.last
+        : '';
+    final id = int.tryParse(idText);
+    final order = id == null ? null : _findOrderById(id);
+    if (order == null) {
+      await _json(request, HttpStatus.notFound, {
+        'message': 'Pedido não encontrado.',
+      });
+      return;
+    }
+    await _json(request, HttpStatus.ok, {
+      ...order.toStaffListJson({
+        'id': session.eventId,
+        'name': session.eventName,
+        'event_date': session.eventDate,
+      }),
+      'photos': [
+        for (final item in order.items)
+          {
+            'id': item.photoId,
+            'number': item.photoNumber,
+            'quantity': item.quantity,
+          },
+      ],
+    });
+  }
+
+  Future<void> _handleUpdateOrder(HttpRequest request) async {
+    final session = _requireSession();
+    if (!_hasStaffToken(request, session)) {
+      await _json(request, HttpStatus.unauthorized, {
+        'message': 'Unauthorized',
+      });
+      return;
+    }
+    final idText = request.uri.pathSegments.isNotEmpty
+        ? request.uri.pathSegments.last
+        : '';
+    final id = int.tryParse(idText);
+    final current = id == null ? null : _findOrderById(id);
+    if (current == null) {
+      await _json(request, HttpStatus.notFound, {
+        'message': 'Pedido não encontrado.',
+      });
+      return;
+    }
+    final body = await _readJsonBody(request);
+    final updated = current.copyWith(
+      customerName: body['customer_name']?.toString().trim().isNotEmpty == true
+          ? body['customer_name']?.toString().trim()
+          : current.customerName,
+      customerEmail:
+          body['customer_email']?.toString().trim() ?? current.customerEmail,
+      customerPhone:
+          body['customer_phone']?.toString().trim() ?? current.customerPhone,
+      paymentMethod:
+          body['payment_method']?.toString().trim().isNotEmpty == true
+          ? body['payment_method']?.toString().trim()
+          : current.paymentMethod,
+      status: body['status']?.toString().trim().isNotEmpty == true
+          ? body['status']?.toString().trim()
+          : current.status,
+      updatedAt: DateTime.now().toIso8601String(),
+    );
+    _session = session.copyWith(
+      orders: [
+        for (final order in session.orders)
+          if (order.id == updated.id) updated else order,
+      ],
+      updatedAt: DateTime.now().toIso8601String(),
+    );
+    await _persistArtifacts();
+    await _handleStaffOrderDetail(request);
+  }
+
+  Future<void> _handleBulkStatus(HttpRequest request) async {
+    final session = _requireSession();
+    if (!_hasStaffToken(request, session)) {
+      await _json(request, HttpStatus.unauthorized, {
+        'message': 'Unauthorized',
+      });
+      return;
+    }
+    final body = await _readJsonBody(request);
+    final ids = ((body['order_ids'] as List?) ?? const [])
+        .map((e) => int.tryParse(e.toString()) ?? 0)
+        .where((id) => id > 0)
+        .toSet();
+    final status = body['status']?.toString().trim() ?? '';
+    if (ids.isEmpty || status.isEmpty) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Dados inválidos.',
+      });
+      return;
+    }
+    var updatedCount = 0;
+    _session = session.copyWith(
+      orders: [
+        for (final order in session.orders)
+          if (ids.contains(order.id))
+            (() {
+              updatedCount += 1;
+              return order.copyWith(
+                status: status,
+                updatedAt: DateTime.now().toIso8601String(),
+              );
+            })()
+          else
+            order,
+      ],
+      updatedAt: DateTime.now().toIso8601String(),
+    );
+    await _persistArtifacts();
+    await _json(request, HttpStatus.ok, {'updated': updatedCount});
+  }
+
+  Future<void> _handleMarkPaid(HttpRequest request) async {
+    final session = _requireSession();
+    if (!_hasStaffToken(request, session)) {
+      await _json(request, HttpStatus.unauthorized, {
+        'message': 'Unauthorized',
+      });
+      return;
+    }
+    final idText = request.uri.pathSegments.length >= 3
+        ? request.uri.pathSegments[2]
+        : '';
+    final id = int.tryParse(idText);
+    final current = id == null ? null : _findOrderById(id);
+    if (current == null) {
+      await _json(request, HttpStatus.notFound, {
+        'message': 'Pedido não encontrado.',
+      });
+      return;
+    }
+    final updated = current.copyWith(
+      status: 'paid',
+      updatedAt: DateTime.now().toIso8601String(),
+    );
+    _session = session.copyWith(
+      orders: [
+        for (final order in session.orders)
+          if (order.id == updated.id) updated else order,
+      ],
+      updatedAt: DateTime.now().toIso8601String(),
+    );
+    await _persistArtifacts();
+    await _json(request, HttpStatus.ok, {
+      'message': 'Order marked paid',
+      'download_link_emailed': false,
+    });
+  }
+
+  Future<void> _handleSendDownloadLink(HttpRequest request) async {
+    final session = _requireSession();
+    if (!_hasStaffToken(request, session)) {
+      await _json(request, HttpStatus.unauthorized, {
+        'message': 'Unauthorized',
+      });
+      return;
+    }
+    await _json(request, HttpStatus.ok, {
+      'message': 'O email será enviado após sincronização online.',
+      'sent': false,
+    });
+  }
+
+  Future<void> _handleOfflineExport(HttpRequest request) async {
+    final session = _requireSession();
+    if (!_hasStaffToken(request, session)) {
+      await _json(request, HttpStatus.unauthorized, {
+        'message': 'Unauthorized',
+      });
+      return;
+    }
+    await _json(request, HttpStatus.ok, session.buildExportPayload());
+  }
+}

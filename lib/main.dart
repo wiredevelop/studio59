@@ -28,6 +28,8 @@ import 'package:table_calendar/table_calendar.dart';
 import 'package:uuid/uuid.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'offline_host.dart';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _initFirebase();
@@ -68,7 +70,9 @@ const String kRuntimeConfigKey = 'app_runtime_config';
 bool isDesktopPlatform() {
   if (kIsWeb) return false;
   final platform = defaultTargetPlatform;
-  if (platform == TargetPlatform.windows || platform == TargetPlatform.macOS || platform == TargetPlatform.linux) {
+  if (platform == TargetPlatform.windows ||
+      platform == TargetPlatform.macOS ||
+      platform == TargetPlatform.linux) {
     return true;
   }
   try {
@@ -109,11 +113,7 @@ class OnlineMethodOption {
   final bool opensWeb;
 }
 
-const Set<String> kOnlineWebMethods = {
-  'mb_way',
-  'paypal',
-  'revolut_pay',
-};
+const Set<String> kOnlineWebMethods = {'mb_way', 'paypal', 'revolut_pay'};
 
 List<OnlineMethodOption> buildOnlineMethodOptions({
   required bool supportsApplePay,
@@ -128,6 +128,7 @@ List<OnlineMethodOption> buildOnlineMethodOptions({
     const OnlineMethodOption('revolut_pay', 'Revolut Pay', opensWeb: true),
   ];
 }
+
 const Map<String, String> kStaffPermissions = {
   'dashboard.view': 'Ver dashboard',
   'events.list': 'Ver calendário de eventos',
@@ -177,6 +178,7 @@ const Set<String> kStaffDefaultPermissions = {
   'photos.bulk_delete',
   'photos.original',
 };
+
 class AppRuntimeConfig {
   const AppRuntimeConfig({
     required this.apiBaseUrl,
@@ -212,15 +214,27 @@ class AppRuntimeConfig {
     'stripe_url_scheme': stripeUrlScheme,
   };
 
-  factory AppRuntimeConfig.fromJson(Map<String, dynamic> json) => AppRuntimeConfig(
+  factory AppRuntimeConfig.fromJson(
+    Map<String, dynamic> json,
+  ) => AppRuntimeConfig(
     apiBaseUrl: (json['api_base_url'] as String? ?? defaults.apiBaseUrl).trim(),
-    apiFallbackIp: (json['api_fallback_ip'] as String? ?? defaults.apiFallbackIp).trim(),
-    merchantCountryCode: (json['merchant_country_code'] as String? ?? defaults.merchantCountryCode).trim(),
-    applePayMerchantId: (json['apple_pay_merchant_id'] as String? ?? defaults.applePayMerchantId).trim(),
+    apiFallbackIp:
+        (json['api_fallback_ip'] as String? ?? defaults.apiFallbackIp).trim(),
+    merchantCountryCode:
+        (json['merchant_country_code'] as String? ??
+                defaults.merchantCountryCode)
+            .trim(),
+    applePayMerchantId:
+        (json['apple_pay_merchant_id'] as String? ??
+                defaults.applePayMerchantId)
+            .trim(),
     enablePlatformPay: json.containsKey('enable_platform_pay')
-        ? (json['enable_platform_pay'] == true || json['enable_platform_pay'] == 1)
+        ? (json['enable_platform_pay'] == true ||
+              json['enable_platform_pay'] == 1)
         : defaults.enablePlatformPay,
-    stripeUrlScheme: (json['stripe_url_scheme'] as String? ?? defaults.stripeUrlScheme).trim(),
+    stripeUrlScheme:
+        (json['stripe_url_scheme'] as String? ?? defaults.stripeUrlScheme)
+            .trim(),
   );
 
   AppRuntimeConfig copyWith({
@@ -240,17 +254,33 @@ class AppRuntimeConfig {
   );
 }
 
-final appRuntimeConfigProvider = StateProvider<AppRuntimeConfig>((_) => AppRuntimeConfig.defaults);
+final appRuntimeConfigProvider = StateProvider<AppRuntimeConfig>(
+  (_) => AppRuntimeConfig.defaults,
+);
 final guestSessionProvider = StateProvider<GuestSession?>((_) => null);
 final staffTokenProvider = StateProvider<String?>((_) => null);
 final staffUserProvider = StateProvider<StaffUser?>((_) => null);
-final apiProvider = Provider<ApiService>((ref) => ApiService(ref.watch(appRuntimeConfigProvider)));
-final cartProvider = StateNotifierProvider<CartNotifier, Map<int, CartItem>>((_) => CartNotifier());
-final savedOrdersProvider = StateNotifierProvider<SavedOrdersNotifier, List<String>>((_) => SavedOrdersNotifier());
+final offlineHostSessionProvider = StateProvider<OfflineHostSession?>(
+  (_) => null,
+);
+final apiProvider = Provider<ApiService>(
+  (ref) => ApiService(ref.watch(appRuntimeConfigProvider)),
+);
+final cartProvider = StateNotifierProvider<CartNotifier, Map<int, CartItem>>(
+  (_) => CartNotifier(),
+);
+final savedOrdersProvider =
+    StateNotifierProvider<SavedOrdersNotifier, List<String>>(
+      (_) => SavedOrdersNotifier(),
+    );
 final wantsFilmProvider = StateProvider<bool>((_) => false);
 
 const String kStaffLastRouteKey = 'staff_last_route';
 const String kStaffLastRouteUserKey = 'staff_last_route_user_id';
+const String kStaffBackupTokenKey = 'staff_token_backup';
+const String kStaffBackupUserKey = 'staff_user_backup';
+const String kStaffBackupRouteKey = 'staff_route_backup';
+const String kRuntimeConfigBackupKey = 'runtime_config_backup';
 
 class Studio59App extends ConsumerStatefulWidget {
   const Studio59App({super.key});
@@ -272,7 +302,22 @@ class _Studio59AppState extends ConsumerState<Studio59App> {
   }
 
   Future<void> _bootstrap() async {
-    final config = await readAppRuntimeConfig();
+    var config = await readAppRuntimeConfig();
+    final offline = await readOfflineHostSession();
+    if (offline != null) {
+      ref.read(offlineHostSessionProvider.notifier).state = offline;
+      if (offline.isActive && isDesktopPlatform()) {
+        try {
+          final started = await OfflineHostServer.instance.start(offline);
+          ref.read(offlineHostSessionProvider.notifier).state = started.session;
+          config = config.copyWith(
+            apiBaseUrl: started.localApiBaseUrl,
+            apiFallbackIp: '',
+          );
+          await saveAppRuntimeConfig(config);
+        } catch (_) {}
+      }
+    }
     ref.read(appRuntimeConfigProvider.notifier).state = config;
     await _initAppLinks();
     if (mounted) {
@@ -287,13 +332,18 @@ class _Studio59AppState extends ConsumerState<Studio59App> {
         _handleAppLink(initial);
       }
     } catch (_) {}
-    _appLinkSub = _appLinks.uriLinkStream.listen(_handleAppLink, onError: (_) {});
+    _appLinkSub = _appLinks.uriLinkStream.listen(
+      _handleAppLink,
+      onError: (_) {},
+    );
   }
 
   void _handleAppLink(Uri uri) {
-    if (uri.scheme != ref.read(appRuntimeConfigProvider).stripeUrlScheme) return;
+    if (uri.scheme != ref.read(appRuntimeConfigProvider).stripeUrlScheme)
+      return;
     if (uri.host != 'checkout') return;
-    final orderCode = uri.queryParameters['order_code'] ?? uri.queryParameters['order'] ?? '';
+    final orderCode =
+        uri.queryParameters['order_code'] ?? uri.queryParameters['order'] ?? '';
     if (orderCode.isEmpty) return;
     final nav = _navKey.currentState;
     if (nav == null) return;
@@ -345,7 +395,12 @@ class _Studio59AppState extends ConsumerState<Studio59App> {
         colorScheme: colorScheme,
         scaffoldBackgroundColor: kBrandBlack,
         fontFamily: '.SF Pro Text',
-        fontFamilyFallback: const ['SF Pro Text', 'SF Pro Display', 'Helvetica Neue', 'Arial'],
+        fontFamilyFallback: const [
+          'SF Pro Text',
+          'SF Pro Display',
+          'Helvetica Neue',
+          'Arial',
+        ],
         pageTransitionsTheme: const PageTransitionsTheme(
           builders: {
             TargetPlatform.android: CupertinoPageTransitionsBuilder(),
@@ -380,7 +435,10 @@ class _Studio59AppState extends ConsumerState<Studio59App> {
         ),
         dividerTheme: const DividerThemeData(color: kBrandRose),
         iconTheme: const IconThemeData(color: kBrandRose),
-        textTheme: ThemeData.dark().textTheme.apply(bodyColor: kBrandRose, displayColor: kBrandRose),
+        textTheme: ThemeData.dark().textTheme.apply(
+          bodyColor: kBrandRose,
+          displayColor: kBrandRose,
+        ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: kBrandBlack,
@@ -410,7 +468,9 @@ class _Studio59AppState extends ConsumerState<Studio59App> {
           style: OutlinedButton.styleFrom(
             foregroundColor: kBrandRose,
             side: const BorderSide(color: kBrandRose),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
           ),
         ),
         textButtonTheme: TextButtonThemeData(
@@ -420,7 +480,9 @@ class _Studio59AppState extends ConsumerState<Studio59App> {
           style: FilledButton.styleFrom(
             backgroundColor: kBrandRose,
             foregroundColor: kBrandBlack,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
           ),
         ),
         snackBarTheme: const SnackBarThemeData(
@@ -430,7 +492,11 @@ class _Studio59AppState extends ConsumerState<Studio59App> {
         ),
         dialogTheme: const DialogThemeData(
           backgroundColor: kBrandBlack,
-          titleTextStyle: TextStyle(color: kBrandRose, fontSize: 18, fontWeight: FontWeight.w600),
+          titleTextStyle: TextStyle(
+            color: kBrandRose,
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+          ),
           contentTextStyle: TextStyle(color: kBrandRose),
         ),
       ),
@@ -453,15 +519,21 @@ class _HomePageState extends ConsumerState<HomePage> {
   bool _showScanner = false;
   bool _handlingScan = false;
   bool _pinSubmitting = false;
+  bool _discoveringOffline = false;
   int _logoTapCount = 0;
   DateTime? _firstTapAt;
   bool _autoOpenedStaff = false;
+  OfflineDiscoveryResult? _offlineDiscovery;
+  String? _offlineDiscoveryError;
 
   @override
   void initState() {
     super.initState();
     _restoreStaffSession();
     _pinCtrl.addListener(_handlePinInput);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _discoverOfflineSession();
+    });
   }
 
   @override
@@ -500,16 +572,133 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
   }
 
-  Future<void> _enterByQrToken(String token) async {
+  Future<void> _applyOfflineDiscovery(OfflineDiscoveryResult discovery) async {
+    final current = ref.read(appRuntimeConfigProvider);
+    if (current.apiBaseUrl == discovery.serverUrl) return;
+    if (!looksLikeLocalApiBaseUrl(current.apiBaseUrl)) {
+      await backupRuntimeConfig(current);
+    }
+    final next = current.copyWith(
+      apiBaseUrl: discovery.serverUrl,
+      apiFallbackIp: '',
+    );
+    await saveAppRuntimeConfig(next);
+    ref.read(appRuntimeConfigProvider.notifier).state = next;
+    ref.read(staffTokenProvider.notifier).state = null;
+    ref.read(staffUserProvider.notifier).state = null;
+    await clearStaffSession();
+  }
+
+  Future<void> _discoverOfflineSession({bool manual = false}) async {
+    if (_discoveringOffline) return;
+    setState(() {
+      _discoveringOffline = true;
+      if (manual) _offlineDiscoveryError = null;
+    });
     try {
+      final currentConfig = ref.read(appRuntimeConfigProvider);
+      final onlineReachable = await ref.read(apiProvider).pingPublic();
+      if (onlineReachable) {
+        if (!mounted) return;
+        setState(() {
+          _discoveringOffline = false;
+          _offlineDiscovery = null;
+          _offlineDiscoveryError = null;
+        });
+        return;
+      }
+      if (looksLikeLocalApiBaseUrl(currentConfig.apiBaseUrl)) {
+        final backupConfig = await restoreBackedUpRuntimeConfig();
+        if (backupConfig != null) {
+          final backupReachable = await ApiService(backupConfig).pingPublic();
+          if (backupReachable) {
+            await saveAppRuntimeConfig(backupConfig);
+            ref.read(appRuntimeConfigProvider.notifier).state = backupConfig;
+            await clearBackedUpRuntimeConfig();
+            if (!mounted) return;
+            setState(() {
+              _discoveringOffline = false;
+              _offlineDiscovery = null;
+              _offlineDiscoveryError = null;
+            });
+            return;
+          }
+        }
+      }
+      final discovery = await discoverOfflineSession(
+        timeout: manual
+            ? const Duration(seconds: 4)
+            : const Duration(seconds: 2),
+      );
+      if (!mounted) return;
+      if (discovery == null) {
+        setState(() {
+          _discoveringOffline = false;
+          _offlineDiscovery = null;
+          _offlineDiscoveryError = manual
+              ? 'Nenhuma sessão offline encontrada.'
+              : null;
+        });
+        return;
+      }
+      await _applyOfflineDiscovery(discovery);
+      if (!mounted) return;
+      setState(() {
+        _discoveringOffline = false;
+        _offlineDiscovery = discovery;
+        _offlineDiscoveryError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _discoveringOffline = false;
+        _offlineDiscoveryError = manual ? e.toString() : null;
+      });
+    }
+  }
+
+  Future<void> _maybeApplyQrRuntimeConfig(String raw) async {
+    final uri = Uri.tryParse(raw.trim());
+    if (uri == null ||
+        !uri.hasScheme ||
+        !uri.path.contains('/api/public/events/qr/'))
+      return;
+    final apiPath = uri.path.substring(
+      0,
+      uri.path.indexOf('/public/events/qr/'),
+    );
+    final apiBaseUrl = uri
+        .replace(path: apiPath, query: null, fragment: null)
+        .toString();
+    if (!looksLikeLocalApiBaseUrl(apiBaseUrl)) return;
+    final current = ref.read(appRuntimeConfigProvider);
+    final next = current.copyWith(apiBaseUrl: apiBaseUrl, apiFallbackIp: '');
+    await saveAppRuntimeConfig(next);
+    ref.read(appRuntimeConfigProvider.notifier).state = next;
+    ref.read(staffTokenProvider.notifier).state = null;
+    ref.read(staffUserProvider.notifier).state = null;
+    await clearStaffSession();
+  }
+
+  Future<void> _enterByQrToken(String raw) async {
+    try {
+      await _maybeApplyQrRuntimeConfig(raw);
+      final token = extractQrToken(raw);
       final session = await ref.read(apiProvider).enterEventByQr(token);
       ref.read(guestSessionProvider.notifier).state = session;
       ref.read(cartProvider.notifier).clear();
       if (!context.mounted) return;
-      Navigator.push(context, MaterialPageRoute(builder: (_) => GuestCatalogPage(eventId: session.eventId)));
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => GuestCatalogPage(eventId: session.eventId),
+        ),
+      );
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Falha ao entrar: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Falha ao entrar: $e')));
     }
   }
 
@@ -519,10 +708,17 @@ class _HomePageState extends ConsumerState<HomePage> {
       ref.read(guestSessionProvider.notifier).state = session;
       ref.read(cartProvider.notifier).clear();
       if (!context.mounted) return;
-      Navigator.push(context, MaterialPageRoute(builder: (_) => GuestCatalogPage(eventId: session.eventId)));
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => GuestCatalogPage(eventId: session.eventId),
+        ),
+      );
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Falha ao entrar: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Falha ao entrar: $e')));
     }
   }
 
@@ -537,7 +733,8 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   void _handleLogoTap() {
     final now = DateTime.now();
-    if (_firstTapAt == null || now.difference(_firstTapAt!) > const Duration(seconds: 3)) {
+    if (_firstTapAt == null ||
+        now.difference(_firstTapAt!) > const Duration(seconds: 3)) {
       _firstTapAt = now;
       _logoTapCount = 1;
     } else {
@@ -570,7 +767,10 @@ class _HomePageState extends ConsumerState<HomePage> {
     await saveStaffSession(result.token, result.user);
     if (!mounted) return;
     await saveStaffLastRoute('dashboard', userId: result.user.id);
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffDashboardPage()));
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const StaffDashboardPage()),
+    );
   }
 
   Future<void> _openStaffRoute({bool replace = false}) async {
@@ -605,6 +805,9 @@ class _HomePageState extends ConsumerState<HomePage> {
       case 'sync':
         target = const StaffSyncPage();
         break;
+      case 'offline-host':
+        target = const StaffOfflineHostPage();
+        break;
       case 'dashboard':
       default:
         target = const StaffDashboardPage();
@@ -613,17 +816,26 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (!mounted) return;
     if (replace) {
       if (lastRoute != null && lastRoute != 'dashboard') {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const StaffDashboardPage()));
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const StaffDashboardPage()),
+        );
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           Navigator.push(context, MaterialPageRoute(builder: (_) => target));
         });
       } else {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => target));
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => target),
+        );
       }
     } else {
       if (lastRoute != null && lastRoute != 'dashboard') {
-        Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffDashboardPage()));
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const StaffDashboardPage()),
+        );
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           Navigator.push(context, MaterialPageRoute(builder: (_) => target));
@@ -636,11 +848,12 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   void _onQrDetect(BarcodeCapture capture) {
     if (_handlingScan) return;
-    final raw = capture.barcodes.isNotEmpty ? capture.barcodes.first.rawValue : null;
+    final raw = capture.barcodes.isNotEmpty
+        ? capture.barcodes.first.rawValue
+        : null;
     if (raw == null || raw.trim().isEmpty) return;
     _handlingScan = true;
-    final token = extractQrToken(raw);
-    _enterByQrToken(token).whenComplete(() {
+    _enterByQrToken(raw).whenComplete(() {
       _handlingScan = false;
       if (mounted) {
         setState(() => _showScanner = false);
@@ -662,14 +875,80 @@ class _HomePageState extends ConsumerState<HomePage> {
                   children: [
                     GestureDetector(
                       onTap: _handleLogoTap,
-                      child: Image.asset('assets/app_icon.png', width: 72, height: 72),
+                      child: Image.asset(
+                        'assets/app_icon.png',
+                        width: 72,
+                        height: 72,
+                      ),
                     ),
                     const SizedBox(height: 8),
-                    const Text('Studio 59', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                    const Text(
+                      'Studio 59',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ],
                 ),
               ),
               const SizedBox(height: 32),
+              if (_offlineDiscovery != null ||
+                  _discoveringOffline ||
+                  _offlineDiscoveryError != null)
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 20),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: kBrandRose.withOpacity(0.5)),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _offlineDiscovery != null
+                            ? 'Sessão offline encontrada'
+                            : (_discoveringOffline
+                                  ? 'A procurar sessão offline...'
+                                  : 'Offline'),
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      if (_offlineDiscovery != null) ...[
+                        const SizedBox(height: 6),
+                        Text(_offlineDiscovery!.eventName),
+                        Text(
+                          _offlineDiscovery!.serverUrl,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ],
+                      if (_offlineDiscoveryError != null) ...[
+                        const SizedBox(height: 6),
+                        Text(_offlineDiscoveryError!),
+                      ],
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: OutlinedButton.icon(
+                          onPressed: _discoveringOffline
+                              ? null
+                              : () => _discoverOfflineSession(manual: true),
+                          icon: _discoveringOffline
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.refresh),
+                          label: const Text('Atualizar'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               GestureDetector(
                 onTap: () {
                   if (!_showScanner) {
@@ -706,7 +985,10 @@ class _HomePageState extends ConsumerState<HomePage> {
               TextField(
                 controller: _pinCtrl,
                 keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(4),
+                ],
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 18, letterSpacing: 6),
                 decoration: const InputDecoration(
@@ -741,7 +1023,11 @@ String extractQrToken(String raw) {
   return trimmed;
 }
 
-void showQrDialog(BuildContext context, {required String title, required String url}) {
+void showQrDialog(
+  BuildContext context, {
+  required String title,
+  required String url,
+}) {
   showDialog(
     context: context,
     builder: (_) => AlertDialog(
@@ -762,18 +1048,34 @@ void showQrDialog(BuildContext context, {required String title, required String 
               ),
             ),
             const SizedBox(height: 8),
-            Text(url, style: const TextStyle(fontSize: 11), textAlign: TextAlign.center),
+            Text(
+              url,
+              style: const TextStyle(fontSize: 11),
+              textAlign: TextAlign.center,
+            ),
           ],
         ),
       ),
-      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fechar'))],
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Fechar'),
+        ),
+      ],
     ),
   );
 }
 
-PreferredSizeWidget buildNavAppBar(BuildContext context, String title, {List<Widget> actions = const []}) {
+PreferredSizeWidget buildNavAppBar(
+  BuildContext context,
+  String title, {
+  List<Widget> actions = const [],
+}) {
   return AppBar(
-    title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600, letterSpacing: 0.3)),
+    title: Text(
+      title,
+      style: const TextStyle(fontWeight: FontWeight.w600, letterSpacing: 0.3),
+    ),
     leading: navLeading(context),
     actions: navActions(context, extra: actions),
     scrolledUnderElevation: 0,
@@ -782,7 +1084,13 @@ PreferredSizeWidget buildNavAppBar(BuildContext context, String title, {List<Wid
       child: Container(
         height: 1,
         decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [Colors.transparent, kBrandRose.withOpacity(0.35), Colors.transparent]),
+          gradient: LinearGradient(
+            colors: [
+              Colors.transparent,
+              kBrandRose.withOpacity(0.35),
+              Colors.transparent,
+            ],
+          ),
         ),
       ),
     ),
@@ -863,6 +1171,72 @@ Future<void> clearStaffSession() async {
   await prefs.remove(kStaffLastRouteUserKey);
 }
 
+Future<void> backupCurrentStaffSession() async {
+  final prefs = await SharedPreferences.getInstance();
+  final token = prefs.getString('staff_token');
+  final user = prefs.getString('staff_user');
+  if (token == null || user == null) return;
+  await prefs.setString(kStaffBackupTokenKey, token);
+  await prefs.setString(kStaffBackupUserKey, user);
+  final route = prefs.getString(kStaffLastRouteKey);
+  if (route != null && route.isNotEmpty) {
+    await prefs.setString(kStaffBackupRouteKey, route);
+  }
+}
+
+Future<StaffAuthResponse?> restoreBackedUpStaffSession() async {
+  final prefs = await SharedPreferences.getInstance();
+  final token = prefs.getString(kStaffBackupTokenKey);
+  final userRaw = prefs.getString(kStaffBackupUserKey);
+  if (token == null || userRaw == null) return null;
+  try {
+    final decoded = jsonDecode(userRaw);
+    if (decoded is Map<String, dynamic>) {
+      return StaffAuthResponse(token: token, user: StaffUser.fromJson(decoded));
+    }
+    if (decoded is Map) {
+      return StaffAuthResponse(
+        token: token,
+        user: StaffUser.fromJson(decoded.cast<String, dynamic>()),
+      );
+    }
+  } catch (_) {}
+  return null;
+}
+
+Future<void> clearBackedUpStaffSession() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove(kStaffBackupTokenKey);
+  await prefs.remove(kStaffBackupUserKey);
+  await prefs.remove(kStaffBackupRouteKey);
+}
+
+Future<void> backupRuntimeConfig(AppRuntimeConfig config) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(kRuntimeConfigBackupKey, jsonEncode(config.toJson()));
+}
+
+Future<AppRuntimeConfig?> restoreBackedUpRuntimeConfig() async {
+  final prefs = await SharedPreferences.getInstance();
+  final raw = prefs.getString(kRuntimeConfigBackupKey);
+  if (raw == null || raw.trim().isEmpty) return null;
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map<String, dynamic>) {
+      return AppRuntimeConfig.fromJson(decoded);
+    }
+    if (decoded is Map) {
+      return AppRuntimeConfig.fromJson(decoded.cast<String, dynamic>());
+    }
+  } catch (_) {}
+  return null;
+}
+
+Future<void> clearBackedUpRuntimeConfig() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove(kRuntimeConfigBackupKey);
+}
+
 Future<void> saveStaffLastRoute(String route, {int? userId}) async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setString(kStaffLastRouteKey, route);
@@ -896,24 +1270,37 @@ Future<Map<String, dynamic>> _readOfflinePayload(int eventId) async {
   return {'event_id': eventId, 'orders': []};
 }
 
-Future<void> _writeOfflinePayload(int eventId, Map<String, dynamic> payload) async {
+Future<void> _writeOfflinePayload(
+  int eventId,
+  Map<String, dynamic> payload,
+) async {
   final file = await _offlineFileForEvent(eventId);
   await file.writeAsString(jsonEncode(payload));
 }
 
-Future<void> enqueueOfflineOrder(int eventId, Map<String, dynamic> order) async {
+Future<void> enqueueOfflineOrder(
+  int eventId,
+  Map<String, dynamic> order,
+) async {
   final payload = await _readOfflinePayload(eventId);
-  final orders = (payload['orders'] as List? ?? []).cast<Map<String, dynamic>>();
+  final orders = (payload['orders'] as List? ?? [])
+      .cast<Map<String, dynamic>>();
   orders.add(order);
   payload['event_id'] = eventId;
   payload['orders'] = orders;
   payload['selections'] ??= [];
   payload['order_updates'] ??= [];
-  final clients = (payload['clients'] as List? ?? []).cast<Map<String, dynamic>>();
+  final clients = (payload['clients'] as List? ?? [])
+      .cast<Map<String, dynamic>>();
   final email = order['customer_email']?.toString().trim();
   final phone = order['customer_phone']?.toString().trim();
-  if ((email != null && email.isNotEmpty) || (phone != null && phone.isNotEmpty)) {
-    final exists = clients.any((c) => (email != null && c['email'] == email) || (phone != null && c['phone'] == phone));
+  if ((email != null && email.isNotEmpty) ||
+      (phone != null && phone.isNotEmpty)) {
+    final exists = clients.any(
+      (c) =>
+          (email != null && c['email'] == email) ||
+          (phone != null && c['phone'] == phone),
+    );
     if (!exists) {
       clients.add({
         'name': order['customer_name'] ?? 'Cliente',
@@ -930,7 +1317,8 @@ Future<void> enqueueOfflineOrder(int eventId, Map<String, dynamic> order) async 
 
 Future<void> enqueueSelection(int eventId, int photoId, String status) async {
   final payload = await _readOfflinePayload(eventId);
-  final selections = (payload['selections'] as List? ?? []).cast<Map<String, dynamic>>();
+  final selections = (payload['selections'] as List? ?? [])
+      .cast<Map<String, dynamic>>();
   selections.add({
     'uuid': const Uuid().v4(),
     'event_id': eventId,
@@ -948,7 +1336,8 @@ Future<void> enqueueSelection(int eventId, int photoId, String status) async {
 
 Future<void> enqueueOrderUpdate(int eventId, int orderId, String status) async {
   final payload = await _readOfflinePayload(eventId);
-  final updates = (payload['order_updates'] as List? ?? []).cast<Map<String, dynamic>>();
+  final updates = (payload['order_updates'] as List? ?? [])
+      .cast<Map<String, dynamic>>();
   updates.add({
     'uuid': const Uuid().v4(),
     'event_id': eventId,
@@ -981,9 +1370,13 @@ Future<void> clearOfflineQueue(int eventId) async {
   }
 }
 
-Future<File> writeOfflineExportFile(int eventId, Map<String, dynamic> payload) async {
+Future<File> writeOfflineExportFile(
+  int eventId,
+  Map<String, dynamic> payload,
+) async {
   final dir = await getApplicationDocumentsDirectory();
-  final path = '${dir.path}/offline_export_${eventId}_${DateTime.now().millisecondsSinceEpoch}.json';
+  final path =
+      '${dir.path}/offline_export_${eventId}_${DateTime.now().millisecondsSinceEpoch}.json';
   final file = File(path);
   await file.writeAsString(jsonEncode(payload));
   return file;
@@ -1008,7 +1401,9 @@ class _QrScanPageState extends State<QrScanPage> {
 
   void _onDetect(BarcodeCapture capture) {
     if (_handled) return;
-    final raw = capture.barcodes.isNotEmpty ? capture.barcodes.first.rawValue : null;
+    final raw = capture.barcodes.isNotEmpty
+        ? capture.barcodes.first.rawValue
+        : null;
     if (raw == null || raw.trim().isEmpty) return;
     _handled = true;
     final token = extractQrToken(raw);
@@ -1021,10 +1416,7 @@ class _QrScanPageState extends State<QrScanPage> {
       appBar: buildNavAppBar(context, 'Ler QR Code'),
       body: Stack(
         children: [
-          MobileScanner(
-            controller: _controller,
-            onDetect: _onDetect,
-          ),
+          MobileScanner(controller: _controller, onDetect: _onDetect),
           Align(
             alignment: Alignment.bottomCenter,
             child: Padding(
@@ -1076,7 +1468,10 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                         child: InteractiveViewer(
                           minScale: 1,
                           maxScale: 4,
-                          child: Image.network(photo.previewUrl!, fit: BoxFit.contain),
+                          child: Image.network(
+                            photo.previewUrl!,
+                            fit: BoxFit.contain,
+                          ),
                         ),
                       ),
                       Positioned.fill(
@@ -1101,7 +1496,10 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                   ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fechar')),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Fechar'),
+            ),
             FilledButton(
               onPressed: () {
                 ref.read(cartProvider.notifier).toggle(photo);
@@ -1140,20 +1538,24 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao abrir câmara: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro ao abrir câmara: $e')));
       return;
     }
     if (file == null) return;
 
     setState(() => faceSearching = true);
     try {
-      final results = await ref.read(apiProvider).faceSearch(widget.eventId, session.token, file.path);
+      final results = await ref
+          .read(apiProvider)
+          .faceSearch(widget.eventId, session.token, file.path);
       setState(() => suggested = results);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro pesquisa facial: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro pesquisa facial: $e')));
     } finally {
       if (mounted) setState(() => faceSearching = false);
     }
@@ -1162,7 +1564,8 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(guestSessionProvider);
-    if (session == null) return const Scaffold(body: Center(child: Text('Sessao expirada')));
+    if (session == null)
+      return const Scaffold(body: Center(child: Text('Sessao expirada')));
 
     return SecureScreen(
       child: Scaffold(
@@ -1173,7 +1576,9 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
             if (session.qrToken != null && session.qrToken!.isNotEmpty)
               IconButton(
                 onPressed: () {
-                  final url = ref.read(apiProvider).publicQrUrl(session.qrToken!);
+                  final url = ref
+                      .read(apiProvider)
+                      .publicQrUrl(session.qrToken!);
                   showQrDialog(context, title: 'QR Code do Evento', url: url);
                 },
                 icon: const Icon(Icons.qr_code_2),
@@ -1190,17 +1595,30 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                       child: ListView(
                         shrinkWrap: true,
                         children: [
-                          if (session.eventType != null && session.eventType!.isNotEmpty) Text('Tipo: ${session.eventType}'),
-                          if (session.eventDate != null && session.eventDate!.isNotEmpty)
-                            Text('Data: ${_formatEventDateTime(session.eventDate!, null)}'),
-                          if (session.basePrice != null) Text('Preço base: ${session.basePrice}'),
+                          if (session.eventType != null &&
+                              session.eventType!.isNotEmpty)
+                            Text('Tipo: ${session.eventType}'),
+                          if (session.eventDate != null &&
+                              session.eventDate!.isNotEmpty)
+                            Text(
+                              'Data: ${_formatEventDateTime(session.eventDate!, null)}',
+                            ),
+                          if (session.basePrice != null)
+                            Text('Preço base: ${session.basePrice}'),
                           Text('Preço por foto: ${session.pricePerPhoto}'),
                           const SizedBox(height: 8),
-                          ...session.eventMeta.entries.map((e) => Text('${_prettyMetaKey(e.key)}: ${e.value}')),
+                          ...session.eventMeta.entries.map(
+                            (e) => Text('${_prettyMetaKey(e.key)}: ${e.value}'),
+                          ),
                         ],
                       ),
                     ),
-                    actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fechar'))],
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Fechar'),
+                      ),
+                    ],
                   ),
                 );
               },
@@ -1210,14 +1628,22 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
             IconButton(
               onPressed: faceSearching ? null : () => _startFaceSearch(session),
               icon: faceSearching
-                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                   : const Icon(Icons.face_retouching_natural),
               tooltip: 'Pesquisa facial',
             ),
             IconButton(
               onPressed: () {
                 ref.read(cartProvider.notifier).clear();
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Novo convidado pronto. Carrinho limpo.')));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Novo convidado pronto. Carrinho limpo.'),
+                  ),
+                );
               },
               icon: const Icon(Icons.cleaning_services),
               tooltip: 'Novo convidado / limpar sessao',
@@ -1249,17 +1675,28 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
             ),
             Expanded(
               child: FutureBuilder<PhotosPage>(
-                future: ref.read(apiProvider).eventPhotosPage(widget.eventId, session.token, search: search, page: page, perPage: perPage),
+                future: ref
+                    .read(apiProvider)
+                    .eventPhotosPage(
+                      widget.eventId,
+                      session.token,
+                      search: search,
+                      page: page,
+                      perPage: perPage,
+                    ),
                 builder: (context, snap) {
                   if (!snap.hasData) {
-                    if (snap.hasError) return Center(child: Text('Erro: ${snap.error}'));
+                    if (snap.hasError)
+                      return Center(child: Text('Erro: ${snap.error}'));
                     return const Center(child: CircularProgressIndicator());
                   }
                   final pageData = snap.data!;
                   final photos = pageData.items;
                   final selected = ref.watch(cartProvider);
                   final suggestedIds = suggested.map((p) => p.id).toSet();
-                  final remaining = photos.where((p) => !suggestedIds.contains(p.id)).toList();
+                  final remaining = photos
+                      .where((p) => !suggestedIds.contains(p.id))
+                      .toList();
 
                   Widget buildPhotoCard(PhotoItem photo) {
                     final isSelected = selected.containsKey(photo.id);
@@ -1273,12 +1710,20 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                                   child: InkWell(
                                     onTap: () => _openPhotoPreview(photo),
                                     child: photo.previewUrl == null
-                                        ? const Center(child: Text('preview...'))
+                                        ? const Center(
+                                            child: Text('preview...'),
+                                          )
                                         : Image.network(
                                             photo.previewUrl!,
                                             fit: BoxFit.cover,
                                             width: double.infinity,
-                                            errorBuilder: (context, error, stackTrace) => const Center(child: Text('Sem preview')),
+                                            errorBuilder:
+                                                (context, error, stackTrace) =>
+                                                    const Center(
+                                                      child: Text(
+                                                        'Sem preview',
+                                                      ),
+                                                    ),
                                           ),
                                   ),
                                 ),
@@ -1305,13 +1750,25 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                                   top: 6,
                                   child: InkWell(
                                     onTap: () async {
-                                      ref.read(cartProvider.notifier).toggle(photo);
-                                      final nowSelected = ref.read(cartProvider).containsKey(photo.id);
-                                      await enqueueSelection(widget.eventId, photo.id, nowSelected ? 'selected' : 'unselected');
+                                      ref
+                                          .read(cartProvider.notifier)
+                                          .toggle(photo);
+                                      final nowSelected = ref
+                                          .read(cartProvider)
+                                          .containsKey(photo.id);
+                                      await enqueueSelection(
+                                        widget.eventId,
+                                        photo.id,
+                                        nowSelected ? 'selected' : 'unselected',
+                                      );
                                     },
                                     child: Icon(
-                                      isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
-                                      color: isSelected ? kBrandRose : kBrandRose.withOpacity(0.6),
+                                      isSelected
+                                          ? Icons.check_circle
+                                          : Icons.radio_button_unchecked,
+                                      color: isSelected
+                                          ? kBrandRose
+                                          : kBrandRose.withOpacity(0.6),
                                       size: 22,
                                     ),
                                   ),
@@ -1324,13 +1781,30 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text(photo.number, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                Text(
+                                  photo.number,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                                 IconButton(
-                                  icon: Icon(isSelected ? Icons.check_circle : Icons.circle_outlined),
+                                  icon: Icon(
+                                    isSelected
+                                        ? Icons.check_circle
+                                        : Icons.circle_outlined,
+                                  ),
                                   onPressed: () async {
-                                    ref.read(cartProvider.notifier).toggle(photo);
-                                    final nowSelected = ref.read(cartProvider).containsKey(photo.id);
-                                    await enqueueSelection(widget.eventId, photo.id, nowSelected ? 'selected' : 'unselected');
+                                    ref
+                                        .read(cartProvider.notifier)
+                                        .toggle(photo);
+                                    final nowSelected = ref
+                                        .read(cartProvider)
+                                        .containsKey(photo.id);
+                                    await enqueueSelection(
+                                      widget.eventId,
+                                      photo.id,
+                                      nowSelected ? 'selected' : 'unselected',
+                                    );
                                   },
                                 ),
                               ],
@@ -1354,29 +1828,43 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                       child: Row(
                         children: [
                           IconButton(
-                            onPressed: page > 1 ? () => goToPage(page - 1) : null,
+                            onPressed: page > 1
+                                ? () => goToPage(page - 1)
+                                : null,
                             icon: const Icon(Icons.chevron_left),
                           ),
                           ...List.generate(pageData.lastPage, (i) {
                             final p = i + 1;
                             final selected = p == page;
                             return Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 2,
+                              ),
                               child: OutlinedButton(
                                 onPressed: () => goToPage(p),
                                 style: OutlinedButton.styleFrom(
                                   backgroundColor: selected ? kBrandRose : null,
-                                  foregroundColor: selected ? kBrandBlack : null,
-                                  side: BorderSide(color: selected ? kBrandRose : kBrandRose.withOpacity(0.6)),
+                                  foregroundColor: selected
+                                      ? kBrandBlack
+                                      : null,
+                                  side: BorderSide(
+                                    color: selected
+                                        ? kBrandRose
+                                        : kBrandRose.withOpacity(0.6),
+                                  ),
                                   minimumSize: const Size(40, 36),
-                                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                  ),
                                 ),
                                 child: Text('$p'),
                               ),
                             );
                           }),
                           IconButton(
-                            onPressed: page < pageData.lastPage ? () => goToPage(page + 1) : null,
+                            onPressed: page < pageData.lastPage
+                                ? () => goToPage(page + 1)
+                                : null,
                             icon: const Icon(Icons.chevron_right),
                           ),
                         ],
@@ -1387,13 +1875,19 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                   return Column(
                     children: [
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
                         child: Row(
                           children: [
                             Expanded(
                               child: Text(
                                 'A mostrar ${pageData.total} fotos',
-                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                             pager(),
@@ -1412,40 +1906,68 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                           },
                           child: CustomScrollView(
                             slivers: [
-                      if (suggested.isNotEmpty) ...[
-                        const SliverToBoxAdapter(
-                          child: Padding(
-                            padding: EdgeInsets.fromLTRB(8, 4, 8, 6),
-                            child: Text('SUGESTOES', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                          ),
-                        ),
-                        SliverPadding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          sliver: SliverGrid(
-                            delegate: SliverChildBuilderDelegate(
-                              (context, i) => buildPhotoCard(suggested[i]),
-                              childCount: suggested.length,
-                            ),
-                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, childAspectRatio: 0.72),
-                          ),
-                        ),
-                      ],
-                      const SliverToBoxAdapter(
-                        child: Padding(
-                          padding: EdgeInsets.fromLTRB(8, 8, 8, 6),
-                          child: Text('TODAS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                        ),
-                      ),
-                      SliverPadding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        sliver: SliverGrid(
-                          delegate: SliverChildBuilderDelegate(
-                            (context, i) => buildPhotoCard(remaining[i]),
-                            childCount: remaining.length,
-                          ),
-                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, childAspectRatio: 0.72),
-                        ),
-                      ),
+                              if (suggested.isNotEmpty) ...[
+                                const SliverToBoxAdapter(
+                                  child: Padding(
+                                    padding: EdgeInsets.fromLTRB(8, 4, 8, 6),
+                                    child: Text(
+                                      'SUGESTOES',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                SliverPadding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  sliver: SliverGrid(
+                                    delegate: SliverChildBuilderDelegate(
+                                      (context, i) =>
+                                          buildPhotoCard(suggested[i]),
+                                      childCount: suggested.length,
+                                    ),
+                                    gridDelegate:
+                                        const SliverGridDelegateWithFixedCrossAxisCount(
+                                          crossAxisCount: 3,
+                                          childAspectRatio: 0.72,
+                                        ),
+                                  ),
+                                ),
+                              ],
+                              const SliverToBoxAdapter(
+                                child: Padding(
+                                  padding: EdgeInsets.fromLTRB(8, 8, 8, 6),
+                                  child: Text(
+                                    'TODAS',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              SliverPadding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                sliver: SliverGrid(
+                                  delegate: SliverChildBuilderDelegate(
+                                    (context, i) =>
+                                        buildPhotoCard(remaining[i]),
+                                    childCount: remaining.length,
+                                  ),
+                                  gridDelegate:
+                                      const SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: 3,
+                                        childAspectRatio: 0.72,
+                                      ),
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -1463,18 +1985,31 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
             children: [
               Expanded(
                 child: OutlinedButton(
-                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyOrdersPage())),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const MyOrdersPage()),
+                  ),
                   child: const Text('Os meus pedidos'),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: FilledButton(
-                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CartPage(eventId: widget.eventId))),
-                  child: Consumer(builder: (context, ref, child) {
-                    final count = ref.watch(cartProvider).values.fold<int>(0, (sum, item) => sum + item.quantity);
-                    return Text('Carrinho ($count)');
-                  }),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => CartPage(eventId: widget.eventId),
+                    ),
+                  ),
+                  child: Consumer(
+                    builder: (context, ref, child) {
+                      final count = ref
+                          .watch(cartProvider)
+                          .values
+                          .fold<int>(0, (sum, item) => sum + item.quantity);
+                      return Text('Carrinho ($count)');
+                    },
+                  ),
                 ),
               ),
             ],
@@ -1500,7 +2035,10 @@ class _CartPageState extends ConsumerState<CartPage> {
     final session = ref.watch(guestSessionProvider);
     final pricePerPhoto = session?.pricePerPhoto ?? 0;
     final items = cart.values.toList();
-    final itemsTotal = items.fold<num>(0, (sum, item) => sum + (item.quantity * pricePerPhoto));
+    final itemsTotal = items.fold<num>(
+      0,
+      (sum, item) => sum + (item.quantity * pricePerPhoto),
+    );
     final eventType = session?.eventType ?? '';
     final filmEligible = eventType == 'casamento' || eventType == 'batizado';
     final wantsFilm = ref.watch(wantsFilmProvider);
@@ -1527,8 +2065,17 @@ class _CartPageState extends ConsumerState<CartPage> {
                       final item = items[i];
                       return ListTile(
                         leading: item.previewUrl == null
-                            ? const SizedBox(width: 56, height: 56, child: Icon(Icons.photo))
-                            : Image.network(item.previewUrl!, width: 56, height: 56, fit: BoxFit.cover),
+                            ? const SizedBox(
+                                width: 56,
+                                height: 56,
+                                child: Icon(Icons.photo),
+                              )
+                            : Image.network(
+                                item.previewUrl!,
+                                width: 56,
+                                height: 56,
+                                fit: BoxFit.cover,
+                              ),
                         title: Text('Foto ${item.number}'),
                         subtitle: Text('Quantidade: ${item.quantity}'),
                         trailing: Wrap(
@@ -1538,21 +2085,35 @@ class _CartPageState extends ConsumerState<CartPage> {
                               icon: const Icon(Icons.remove_circle_outline),
                               onPressed: () async {
                                 final before = item.quantity;
-                                ref.read(cartProvider.notifier).decrement(item.photoId);
+                                ref
+                                    .read(cartProvider.notifier)
+                                    .decrement(item.photoId);
                                 if (before == 1) {
-                                  await enqueueSelection(widget.eventId, item.photoId, 'unselected');
+                                  await enqueueSelection(
+                                    widget.eventId,
+                                    item.photoId,
+                                    'unselected',
+                                  );
                                 }
                               },
                             ),
                             IconButton(
                               icon: const Icon(Icons.add_circle_outline),
-                              onPressed: () => ref.read(cartProvider.notifier).increment(item.photoId),
+                              onPressed: () => ref
+                                  .read(cartProvider.notifier)
+                                  .increment(item.photoId),
                             ),
                             IconButton(
                               icon: const Icon(Icons.delete_outline),
                               onPressed: () async {
-                                ref.read(cartProvider.notifier).remove(item.photoId);
-                                await enqueueSelection(widget.eventId, item.photoId, 'unselected');
+                                ref
+                                    .read(cartProvider.notifier)
+                                    .remove(item.photoId);
+                                await enqueueSelection(
+                                  widget.eventId,
+                                  item.photoId,
+                                  'unselected',
+                                );
                               },
                             ),
                           ],
@@ -1567,7 +2128,9 @@ class _CartPageState extends ConsumerState<CartPage> {
                     child: CheckboxListTile(
                       contentPadding: EdgeInsets.zero,
                       value: wantsFilm,
-                      onChanged: (v) => ref.read(wantsFilmProvider.notifier).state = v ?? false,
+                      onChanged: (v) =>
+                          ref.read(wantsFilmProvider.notifier).state =
+                              v ?? false,
                       title: const Text('Adicionar filme (+30€)'),
                     ),
                   ),
@@ -1585,7 +2148,10 @@ class _CartPageState extends ConsumerState<CartPage> {
                         onPressed: () {
                           Navigator.push(
                             context,
-                            MaterialPageRoute(builder: (_) => CheckoutPage(eventId: widget.eventId)),
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  CheckoutPage(eventId: widget.eventId),
+                            ),
                           );
                         },
                         child: const Text('Ir para checkout'),
@@ -1617,7 +2183,8 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
   String? deliveryType;
   final addressCtrl = TextEditingController();
   bool isSubmitting = false;
-  final stripe.CardFormEditController _cardFormController = stripe.CardFormEditController();
+  final stripe.CardFormEditController _cardFormController =
+      stripe.CardFormEditController();
   bool _cardComplete = false;
 
   Widget _paymentBadge(String label) {
@@ -1656,7 +2223,11 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
       backgroundColor: kBrandRose.withOpacity(0.2),
       child: Text(
         text,
-        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: kBrandRose),
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          color: kBrandRose,
+        ),
       ),
     );
   }
@@ -1686,7 +2257,10 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
     final items = cart.values.toList();
     final session = ref.watch(guestSessionProvider);
     final pricePerPhoto = session?.pricePerPhoto ?? 0;
-    final itemsTotal = items.fold<num>(0, (sum, item) => sum + (item.quantity * pricePerPhoto));
+    final itemsTotal = items.fold<num>(
+      0,
+      (sum, item) => sum + (item.quantity * pricePerPhoto),
+    );
     final eventType = session?.eventType ?? '';
     final filmEligible = eventType == 'casamento' || eventType == 'batizado';
     final wantsFilm = filmEligible && ref.watch(wantsFilmProvider);
@@ -1695,13 +2269,23 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
     final extrasTotal = filmFee + shippingFee;
     final total = itemsTotal + extrasTotal;
     final appConfig = ref.watch(appRuntimeConfigProvider);
+    final offlineCheckout = looksLikeLocalApiBaseUrl(appConfig.apiBaseUrl);
+    final requiresEmail =
+        !offlineCheckout || productType == 'digital' || productType == 'both';
     final supportsApplePay = appConfig.enablePlatformPay && Platform.isIOS;
     final supportsGooglePay = appConfig.enablePlatformPay && Platform.isAndroid;
+    if (offlineCheckout && paymentMethod != 'cash') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => paymentMethod = 'cash');
+      });
+    }
     final onlineOptions = buildOnlineMethodOptions(
       supportsApplePay: supportsApplePay,
       supportsGooglePay: supportsGooglePay,
     );
-    if (onlineOptions.isNotEmpty && !onlineOptions.any((option) => option.id == onlineMethod)) {
+    if (onlineOptions.isNotEmpty &&
+        !onlineOptions.any((option) => option.id == onlineMethod)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() => onlineMethod = onlineOptions.first.id);
@@ -1713,19 +2297,45 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            Align(alignment: Alignment.centerLeft, child: Text('Fotos selecionadas: ${items.length}')),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Fotos selecionadas: ${items.length}'),
+            ),
             const SizedBox(height: 12),
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
-            const SizedBox(height: 8),
-            TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Telemóvel', border: OutlineInputBorder())),
-            const SizedBox(height: 8),
             TextField(
-              controller: emailCtrl,
-              keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder()),
+              controller: nameCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Nome',
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 8),
-            Align(alignment: Alignment.centerLeft, child: Text('Produto', style: const TextStyle(fontWeight: FontWeight.w600))),
+            TextField(
+              controller: phoneCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Telemóvel',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (!offlineCheckout) ...[
+              const SizedBox(height: 8),
+              TextField(
+                controller: emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Produto',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
             CheckboxListTile(
               value: productType == 'digital',
               onChanged: (_) => setState(() {
@@ -1750,12 +2360,33 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
               }),
               title: const Text('Ambos'),
             ),
+            if (offlineCheckout && requiresEmail) ...[
+              const SizedBox(height: 8),
+              TextField(
+                controller: emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
             if (productType != 'digital') ...[
-              Align(alignment: Alignment.centerLeft, child: Text('Entrega', style: const TextStyle(fontWeight: FontWeight.w600))),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Entrega',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
               CheckboxListTile(
                 value: deliveryType == 'pickup',
                 onChanged: (_) => setState(() => deliveryType = 'pickup'),
-                title: Text(eventType == 'batizado' ? 'Entregar aos pais do bebé' : 'Entregar aos noivos'),
+                title: Text(
+                  eventType == 'batizado'
+                      ? 'Entregar aos pais do bebé'
+                      : 'Entregar aos noivos',
+                ),
               ),
               CheckboxListTile(
                 value: deliveryType == 'shipping',
@@ -1766,7 +2397,10 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                 const SizedBox(height: 8),
                 TextField(
                   controller: addressCtrl,
-                  decoration: const InputDecoration(labelText: 'Morada para envio', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                    labelText: 'Morada para envio',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
               ],
             ],
@@ -1778,21 +2412,34 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
               ),
             ],
             const SizedBox(height: 8),
-            Align(alignment: Alignment.centerLeft, child: Text('Pagamento', style: const TextStyle(fontWeight: FontWeight.w600))),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Pagamento',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
             CheckboxListTile(
               value: paymentMethod == 'cash',
               onChanged: (_) => setState(() => paymentMethod = 'cash'),
               title: const Text('Dinheiro (com fotógrafo)'),
             ),
-            CheckboxListTile(
-              value: paymentMethod == 'online',
-              onChanged: (_) => setState(() => paymentMethod = 'online'),
-              title: const Text('Pagamento online (Stripe)'),
-              subtitle: _paymentBadges(),
-            ),
+            if (!offlineCheckout)
+              CheckboxListTile(
+                value: paymentMethod == 'online',
+                onChanged: (_) => setState(() => paymentMethod = 'online'),
+                title: const Text('Pagamento online (Stripe)'),
+                subtitle: _paymentBadges(),
+              ),
             if (paymentMethod == 'online') ...[
               const SizedBox(height: 8),
-              Align(alignment: Alignment.centerLeft, child: Text('Método online', style: const TextStyle(fontWeight: FontWeight.w600))),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Método online',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
               const SizedBox(height: 6),
               ListView.separated(
                 shrinkWrap: true,
@@ -1805,11 +2452,14 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                     contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                     leading: _paymentMethodIcon(option.id),
                     title: Text(option.label),
-                    subtitle: option.opensWeb ? const Text('Abre no navegador') : null,
+                    subtitle: option.opensWeb
+                        ? const Text('Abre no navegador')
+                        : null,
                     trailing: Radio<String>(
                       value: option.id,
                       groupValue: onlineMethod,
-                      onChanged: (value) => setState(() => onlineMethod = value ?? option.id),
+                      onChanged: (value) =>
+                          setState(() => onlineMethod = value ?? option.id),
                     ),
                     onTap: () => setState(() => onlineMethod = option.id),
                   );
@@ -1819,7 +2469,10 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                 const SizedBox(height: 12),
                 const Align(
                   alignment: Alignment.centerLeft,
-                  child: Text('Dados do cartão', style: TextStyle(fontWeight: FontWeight.w600)),
+                  child: Text(
+                    'Dados do cartão',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
                 ),
                 const SizedBox(height: 6),
                 stripe.CardFormField(
@@ -1861,227 +2514,361 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                         final session = ref.read(guestSessionProvider);
                         if (session == null) return;
                         sessionToken = session.token;
-                        if (nameCtrl.text.trim().isEmpty || phoneCtrl.text.trim().isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome e telemóvel são obrigatórios.')));
+                        if (nameCtrl.text.trim().isEmpty ||
+                            phoneCtrl.text.trim().isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Nome e telemóvel são obrigatórios.',
+                              ),
+                            ),
+                          );
                           return;
                         }
                         final email = emailCtrl.text.trim();
-                        if (email.isNotEmpty && !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
+                        if (requiresEmail && email.isEmpty) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Email invalido. Exemplo: nome@email.com')),
+                            const SnackBar(
+                              content: Text(
+                                'Email obrigatório para entrega digital.',
+                              ),
+                            ),
+                          );
+                          return;
+                        }
+                        if (email.isNotEmpty &&
+                            !RegExp(
+                              r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                            ).hasMatch(email)) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Email invalido. Exemplo: nome@email.com',
+                              ),
+                            ),
                           );
                           return;
                         }
                         if (productType != 'digital' && deliveryType == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Escolhe o tipo de entrega.')));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Escolhe o tipo de entrega.'),
+                            ),
+                          );
                           return;
                         }
-                        if (deliveryType == 'shipping' && addressCtrl.text.trim().isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Morada obrigatória para envio.')));
+                        if (deliveryType == 'shipping' &&
+                            addressCtrl.text.trim().isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Morada obrigatória para envio.'),
+                            ),
+                          );
                           return;
                         }
 
                         if (paymentMethod == 'online') {
                           if (!Platform.isAndroid && !Platform.isIOS) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Pagamento online disponível apenas no telemóvel (Android/iOS).')),
+                              const SnackBar(
+                                content: Text(
+                                  'Pagamento online disponível apenas no telemóvel (Android/iOS).',
+                                ),
+                              ),
                             );
                             return;
                           }
-                          if (onlineMethod == 'card' && Platform.isIOS && !_cardComplete) {
+                          if (onlineMethod == 'card' &&
+                              Platform.isIOS &&
+                              !_cardComplete) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Preenche os dados do cartão.')),
+                              const SnackBar(
+                                content: Text('Preenche os dados do cartão.'),
+                              ),
                             );
                             return;
                           }
                           if (kOnlineWebMethods.contains(onlineMethod)) {
-                            final checkout = await ref.read(apiProvider).createStripeCheckoutSession(
-                              eventId: widget.eventId,
-                              token: session.token,
-                              customerName: nameCtrl.text.trim(),
-                              phone: phoneCtrl.text.trim(),
-                              email: email,
-                              photoItems: items.map((i) => CartItemPayload(photoId: i.photoId, quantity: i.quantity)).toList(),
-                              productType: productType,
-                              deliveryType: deliveryType,
-                              deliveryAddress: addressCtrl.text.trim(),
-                              wantsFilm: wantsFilm,
-                              paymentMethodType: onlineMethod,
-                            );
+                            final checkout = await ref
+                                .read(apiProvider)
+                                .createStripeCheckoutSession(
+                                  eventId: widget.eventId,
+                                  token: session.token,
+                                  customerName: nameCtrl.text.trim(),
+                                  phone: phoneCtrl.text.trim(),
+                                  email: email,
+                                  photoItems: items
+                                      .map(
+                                        (i) => CartItemPayload(
+                                          photoId: i.photoId,
+                                          quantity: i.quantity,
+                                        ),
+                                      )
+                                      .toList(),
+                                  productType: productType,
+                                  deliveryType: deliveryType,
+                                  deliveryAddress: addressCtrl.text.trim(),
+                                  wantsFilm: wantsFilm,
+                                  paymentMethodType: onlineMethod,
+                                );
                             if (checkout.checkoutUrl.isEmpty) {
-                              throw Exception('Pagamento online indisponível de momento.');
+                              throw Exception(
+                                'Pagamento online indisponível de momento.',
+                              );
                             }
                             final uri = Uri.tryParse(checkout.checkoutUrl);
                             if (uri == null) {
                               throw Exception('URL de pagamento inválido.');
                             }
-                            final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+                            final opened = await launchUrl(
+                              uri,
+                              mode: LaunchMode.externalApplication,
+                            );
                             if (!opened) {
-                              throw Exception('Não foi possível abrir o navegador.');
+                              throw Exception(
+                                'Não foi possível abrir o navegador.',
+                              );
                             }
-                            await ref.read(savedOrdersProvider.notifier).add(checkout.orderCode);
+                            await ref
+                                .read(savedOrdersProvider.notifier)
+                                .add(checkout.orderCode);
                             if (!context.mounted) return;
                             Navigator.pushAndRemoveUntil(
                               context,
-                              MaterialPageRoute(builder: (_) => TicketPage(orderCode: checkout.orderCode)),
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    TicketPage(orderCode: checkout.orderCode),
+                              ),
                               (route) => route.isFirst,
                             );
                             return;
                           }
-                          final intent = await ref.read(apiProvider).createStripeIntent(
-                            eventId: widget.eventId,
-                            token: session.token,
-                            customerName: nameCtrl.text.trim(),
-                            phone: phoneCtrl.text.trim(),
-                            email: email,
-                            photoItems: items.map((i) => CartItemPayload(photoId: i.photoId, quantity: i.quantity)).toList(),
-                            productType: productType,
-                            deliveryType: deliveryType,
-                            deliveryAddress: addressCtrl.text.trim(),
-                            wantsFilm: wantsFilm,
-                          );
+                          final intent = await ref
+                              .read(apiProvider)
+                              .createStripeIntent(
+                                eventId: widget.eventId,
+                                token: session.token,
+                                customerName: nameCtrl.text.trim(),
+                                phone: phoneCtrl.text.trim(),
+                                email: email,
+                                photoItems: items
+                                    .map(
+                                      (i) => CartItemPayload(
+                                        photoId: i.photoId,
+                                        quantity: i.quantity,
+                                      ),
+                                    )
+                                    .toList(),
+                                productType: productType,
+                                deliveryType: deliveryType,
+                                deliveryAddress: addressCtrl.text.trim(),
+                                wantsFilm: wantsFilm,
+                              );
                           stripe.Stripe.publishableKey = intent.publishableKey;
                           if (appConfig.enablePlatformPay && Platform.isIOS) {
-                            stripe.Stripe.merchantIdentifier = appConfig.applePayMerchantId;
+                            stripe.Stripe.merchantIdentifier =
+                                appConfig.applePayMerchantId;
                           }
                           stripe.Stripe.urlScheme = appConfig.stripeUrlScheme;
                           await stripe.Stripe.instance.applySettings();
-                          final isTestKey = intent.publishableKey.startsWith('pk_test_');
+                          final isTestKey = intent.publishableKey.startsWith(
+                            'pk_test_',
+                          );
                           if (onlineMethod == 'card') {
                             if (Platform.isIOS) {
-                              var confirmed = await stripe.Stripe.instance.confirmPayment(
-                                paymentIntentClientSecret: intent.clientSecret,
-                                data: stripe.PaymentMethodParams.card(
-                                  paymentMethodData: stripe.PaymentMethodData(
-                                    billingDetails: stripe.BillingDetails(
-                                      name: nameCtrl.text.trim(),
-                                      email: email,
-                                      phone: phoneCtrl.text.trim(),
+                              var confirmed = await stripe.Stripe.instance
+                                  .confirmPayment(
+                                    paymentIntentClientSecret:
+                                        intent.clientSecret,
+                                    data: stripe.PaymentMethodParams.card(
+                                      paymentMethodData:
+                                          stripe.PaymentMethodData(
+                                            billingDetails:
+                                                stripe.BillingDetails(
+                                                  name: nameCtrl.text.trim(),
+                                                  email: email,
+                                                  phone: phoneCtrl.text.trim(),
+                                                ),
+                                          ),
                                     ),
-                                  ),
-                                ),
-                              );
-                              if (confirmed.status == stripe.PaymentIntentsStatus.RequiresAction) {
-                                confirmed = await stripe.Stripe.instance.handleNextAction(
-                                  intent.clientSecret,
-                                  returnURL: '${appConfig.stripeUrlScheme}://redirect',
-                                );
+                                  );
+                              if (confirmed.status ==
+                                  stripe.PaymentIntentsStatus.RequiresAction) {
+                                confirmed = await stripe.Stripe.instance
+                                    .handleNextAction(
+                                      intent.clientSecret,
+                                      returnURL:
+                                          '${appConfig.stripeUrlScheme}://redirect',
+                                    );
                               }
                             } else {
                               await stripe.Stripe.instance.initPaymentSheet(
-                                paymentSheetParameters: stripe.SetupPaymentSheetParameters(
-                                  paymentIntentClientSecret: intent.clientSecret,
-                                  merchantDisplayName: 'Studio 59',
-                                  returnURL: '${appConfig.stripeUrlScheme}://redirect',
-                                  style: ThemeMode.dark,
-                                ),
+                                paymentSheetParameters:
+                                    stripe.SetupPaymentSheetParameters(
+                                      paymentIntentClientSecret:
+                                          intent.clientSecret,
+                                      merchantDisplayName: 'Studio 59',
+                                      returnURL:
+                                          '${appConfig.stripeUrlScheme}://redirect',
+                                      style: ThemeMode.dark,
+                                    ),
                               );
-                              await stripe.Stripe.instance.presentPaymentSheet();
+                              await stripe.Stripe.instance
+                                  .presentPaymentSheet();
                             }
                           } else if (onlineMethod == 'apple_pay') {
                             if (!Platform.isIOS) {
-                              throw Exception('Apple Pay só está disponível em iOS.');
+                              throw Exception(
+                                'Apple Pay só está disponível em iOS.',
+                              );
                             }
-                            final platformPaySupported = await stripe.Stripe.instance.isPlatformPaySupported(
-                              googlePay: stripe.IsGooglePaySupportedParams(
-                                testEnv: isTestKey,
-                                existingPaymentMethodRequired: false,
-                              ),
-                            );
+                            final platformPaySupported = await stripe
+                                .Stripe
+                                .instance
+                                .isPlatformPaySupported(
+                                  googlePay: stripe.IsGooglePaySupportedParams(
+                                    testEnv: isTestKey,
+                                    existingPaymentMethodRequired: false,
+                                  ),
+                                );
                             if (!platformPaySupported) {
-                              throw Exception('Apple Pay não está disponível neste dispositivo.');
+                              throw Exception(
+                                'Apple Pay não está disponível neste dispositivo.',
+                              );
                             }
-                            await stripe.Stripe.instance.confirmPlatformPayPaymentIntent(
-                              clientSecret: intent.clientSecret,
-                              confirmParams: stripe.PlatformPayConfirmParams.applePay(
-                                applePay: stripe.ApplePayParams(
-                                  merchantCountryCode: appConfig.merchantCountryCode,
-                                  currencyCode: 'EUR',
-                                  cartItems: [
-                                    stripe.ApplePayCartSummaryItem.immediate(
-                                      label: 'Studio 59',
-                                      amount: total.toStringAsFixed(2),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
+                            await stripe.Stripe.instance
+                                .confirmPlatformPayPaymentIntent(
+                                  clientSecret: intent.clientSecret,
+                                  confirmParams:
+                                      stripe.PlatformPayConfirmParams.applePay(
+                                        applePay: stripe.ApplePayParams(
+                                          merchantCountryCode:
+                                              appConfig.merchantCountryCode,
+                                          currencyCode: 'EUR',
+                                          cartItems: [
+                                            stripe
+                                                .ApplePayCartSummaryItem.immediate(
+                                              label: 'Studio 59',
+                                              amount: total.toStringAsFixed(2),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                );
                           } else if (onlineMethod == 'google_pay') {
                             if (!Platform.isAndroid) {
-                              throw Exception('Google Pay só está disponível em Android.');
+                              throw Exception(
+                                'Google Pay só está disponível em Android.',
+                              );
                             }
-                            final platformPaySupported = await stripe.Stripe.instance.isPlatformPaySupported(
-                              googlePay: stripe.IsGooglePaySupportedParams(
-                                testEnv: isTestKey,
-                                existingPaymentMethodRequired: false,
-                              ),
-                            );
+                            final platformPaySupported = await stripe
+                                .Stripe
+                                .instance
+                                .isPlatformPaySupported(
+                                  googlePay: stripe.IsGooglePaySupportedParams(
+                                    testEnv: isTestKey,
+                                    existingPaymentMethodRequired: false,
+                                  ),
+                                );
                             if (!platformPaySupported) {
-                              throw Exception('Google Pay não está disponível neste dispositivo.');
+                              throw Exception(
+                                'Google Pay não está disponível neste dispositivo.',
+                              );
                             }
-                            await stripe.Stripe.instance.confirmPlatformPayPaymentIntent(
-                              clientSecret: intent.clientSecret,
-                              confirmParams: stripe.PlatformPayConfirmParams.googlePay(
-                                googlePay: stripe.GooglePayParams(
-                                  testEnv: isTestKey,
-                                  merchantCountryCode: appConfig.merchantCountryCode,
-                                  currencyCode: 'EUR',
-                                  merchantName: 'Studio 59',
-                                ),
-                              ),
-                            );
+                            await stripe.Stripe.instance
+                                .confirmPlatformPayPaymentIntent(
+                                  clientSecret: intent.clientSecret,
+                                  confirmParams:
+                                      stripe.PlatformPayConfirmParams.googlePay(
+                                        googlePay: stripe.GooglePayParams(
+                                          testEnv: isTestKey,
+                                          merchantCountryCode:
+                                              appConfig.merchantCountryCode,
+                                          currencyCode: 'EUR',
+                                          merchantName: 'Studio 59',
+                                        ),
+                                      ),
+                                );
                           } else {
                             throw Exception('Método de pagamento inválido.');
                           }
 
                           final code = intent.orderCode;
-                          await ref.read(savedOrdersProvider.notifier).add(code);
+                          await ref
+                              .read(savedOrdersProvider.notifier)
+                              .add(code);
                           ref.read(cartProvider.notifier).clear();
                           ref.read(wantsFilmProvider.notifier).state = false;
                           if (!context.mounted) return;
                           Navigator.pushReplacement(
                             context,
-                            MaterialPageRoute(builder: (_) => TicketPage(orderCode: code)),
+                            MaterialPageRoute(
+                              builder: (_) => TicketPage(orderCode: code),
+                            ),
                           );
                           return;
                         }
 
-                        final code = await ref.read(apiProvider).createOrder(
-                          eventId: widget.eventId,
-                          token: session.token,
-                          customerName: nameCtrl.text.trim(),
-                          phone: phoneCtrl.text.trim(),
-                          email: email,
-                          paymentMethod: 'cash',
-                          photoItems: items.map((i) => CartItemPayload(photoId: i.photoId, quantity: i.quantity)).toList(),
-                          pricePerPhoto: pricePerPhoto,
-                          productType: productType,
-                          deliveryType: deliveryType,
-                          deliveryAddress: addressCtrl.text.trim(),
-                          wantsFilm: wantsFilm,
-                        );
+                        final code = await ref
+                            .read(apiProvider)
+                            .createOrder(
+                              eventId: widget.eventId,
+                              token: session.token,
+                              customerName: nameCtrl.text.trim(),
+                              phone: phoneCtrl.text.trim(),
+                              email: email,
+                              paymentMethod: 'cash',
+                              photoItems: items
+                                  .map(
+                                    (i) => CartItemPayload(
+                                      photoId: i.photoId,
+                                      quantity: i.quantity,
+                                    ),
+                                  )
+                                  .toList(),
+                              pricePerPhoto: pricePerPhoto,
+                              productType: productType,
+                              deliveryType: deliveryType,
+                              deliveryAddress: addressCtrl.text.trim(),
+                              wantsFilm: wantsFilm,
+                            );
                         await ref.read(savedOrdersProvider.notifier).add(code);
                         ref.read(cartProvider.notifier).clear();
                         ref.read(wantsFilmProvider.notifier).state = false;
                         if (!context.mounted) return;
                         if (code.startsWith('OFF-')) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Sem internet. Pedido guardado para sincronizar.')),
+                            const SnackBar(
+                              content: Text(
+                                'Sem internet. Pedido guardado para sincronizar.',
+                              ),
+                            ),
                           );
                         }
                         Navigator.pushReplacement(
                           context,
-                          MaterialPageRoute(builder: (_) => TicketPage(orderCode: code)),
+                          MaterialPageRoute(
+                            builder: (_) => TicketPage(orderCode: code),
+                          ),
                         );
                       } on stripe.StripeException catch (e) {
                         if (!context.mounted) return;
-                        final message = e.error.localizedMessage ?? e.error.message ?? 'Pagamento cancelado.';
+                        final message =
+                            e.error.localizedMessage ??
+                            e.error.message ??
+                            'Pagamento cancelado.';
                         final type = e.error.type;
                         final code = e.error.code;
-                        final suffix = [type, code].where((v) => v != null && v.toString().isNotEmpty).join(' / ');
-                        final fullMessage = suffix.isNotEmpty ? '$message ($suffix)' : message;
+                        final suffix = [type, code]
+                            .where((v) => v != null && v.toString().isNotEmpty)
+                            .join(' / ');
+                        final fullMessage = suffix.isNotEmpty
+                            ? '$message ($suffix)'
+                            : message;
                         if (sessionToken != null) {
-                          await ref.read(apiProvider).logClientIssue(
+                          await ref
+                              .read(apiProvider)
+                              .logClientIssue(
                                 token: sessionToken!,
                                 message: 'stripe_exception',
                                 context: {
@@ -2093,13 +2880,15 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                                 },
                               );
                         }
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(fullMessage)),
-                        );
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text(fullMessage)));
                       } catch (e) {
                         if (!context.mounted) return;
                         if (sessionToken != null) {
-                          await ref.read(apiProvider).logClientIssue(
+                          await ref
+                              .read(apiProvider)
+                              .logClientIssue(
                                 token: sessionToken!,
                                 message: 'payment_flow_error',
                                 context: {
@@ -2134,7 +2923,9 @@ class MyOrdersPage extends ConsumerWidget {
     return Scaffold(
       appBar: buildNavAppBar(context, 'Os meus pedidos'),
       body: codes.isEmpty
-          ? const Center(child: Text('Sem pedidos guardados neste dispositivo.'))
+          ? const Center(
+              child: Text('Sem pedidos guardados neste dispositivo.'),
+            )
           : ListView.builder(
               itemCount: codes.length,
               itemBuilder: (_, i) {
@@ -2142,7 +2933,12 @@ class MyOrdersPage extends ConsumerWidget {
                 return ListTile(
                   title: Text(code),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OrderDetailPage(orderCode: code))),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => OrderDetailPage(orderCode: code),
+                    ),
+                  ),
                 );
               },
             ),
@@ -2159,8 +2955,11 @@ class TicketPage extends ConsumerStatefulWidget {
 }
 
 class _TicketPageState extends ConsumerState<TicketPage> {
-  static const MethodChannel _galleryChannel = MethodChannel('studio59/gallery');
-  static const String _galleryPermissionDeniedMessage = 'Permissão para guardar fotos negada.';
+  static const MethodChannel _galleryChannel = MethodChannel(
+    'studio59/gallery',
+  );
+  static const String _galleryPermissionDeniedMessage =
+      'Permissão para guardar fotos negada.';
   Timer? timer;
   int? downloadingPhotoId;
   bool downloadingAll = false;
@@ -2243,23 +3042,30 @@ class _TicketPageState extends ConsumerState<TicketPage> {
       await _showPermissionDialog();
     }
     if (!mounted) return;
-    final text = photoNumber == null ? 'Erro ao descarregar: $message' : 'Erro no download da foto $photoNumber: $message';
+    final text = photoNumber == null
+        ? 'Erro ao descarregar: $message'
+        : 'Erro no download da foto $photoNumber: $message';
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
-  Future<void> _downloadPhotoToGallery(OrderDetail order, OrderPhoto photo) async {
-    final url = await ref.read(apiProvider).orderDownloadLink(
-          orderCode: order.orderCode,
-          photoId: photo.id,
+  Future<void> _downloadPhotoToGallery(
+    OrderDetail order,
+    OrderPhoto photo,
+  ) async {
+    final url = await ref
+        .read(apiProvider)
+        .orderDownloadLink(orderCode: order.orderCode, photoId: photo.id);
+    final r = await ref
+        .read(apiProvider)
+        .dio
+        .get<List<int>>(
+          url,
+          options: Options(
+            responseType: ResponseType.bytes,
+            receiveTimeout: const Duration(minutes: 3),
+            validateStatus: (s) => s == 200,
+          ),
         );
-    final r = await ref.read(apiProvider).dio.get<List<int>>(
-      url,
-      options: Options(
-        responseType: ResponseType.bytes,
-        receiveTimeout: const Duration(minutes: 3),
-        validateStatus: (s) => s == 200,
-      ),
-    );
     final bytes = Uint8List.fromList(r.data ?? []);
     if (bytes.isEmpty) {
       throw 'Download vazio';
@@ -2276,7 +3082,9 @@ class _TicketPageState extends ConsumerState<TicketPage> {
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Download concluído. Fotos guardadas na galeria.')),
+        const SnackBar(
+          content: Text('Download concluído. Fotos guardadas na galeria.'),
+        ),
       );
     } catch (e) {
       await _showGalleryError(e);
@@ -2324,6 +3132,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
             final order = snap.data!;
             final isPaid = order.status == 'paid';
             final isOnline = order.paymentMethod == 'online';
+            final isOfflineOrder = order.isOffline;
 
             return ListView(
               padding: const EdgeInsets.all(16),
@@ -2339,18 +3148,27 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        isPaid
+                        isOfflineOrder && isPaid
+                            ? 'Pagamento registado offline!'
+                            : isPaid
                             ? 'Pagamento confirmado!'
-                            : (isOnline ? 'A confirmar pagamento online' : 'Mostra este ecrã ao fotografo'),
-                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                            : (isOnline
+                                  ? 'A confirmar pagamento online'
+                                  : 'Mostra este ecrã ao fotografo'),
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        isPaid
+                        isOfflineOrder && isPaid
+                            ? 'O pedido ficou guardado no PC do fotógrafo. O email com o link sai depois da sincronização online.'
+                            : isPaid
                             ? 'As tuas fotos estão prontas. Vais receber/recebeste um link único no email para download dos originais.'
                             : (isOnline
-                                ? 'Estamos a confirmar o pagamento. Assim que estiver pago o download fica disponível.'
-                                : 'Dirige-te ao fotografo, paga e mostra este ticket para ele marcar como PAID.'),
+                                  ? 'Estamos a confirmar o pagamento. Assim que estiver pago o download fica disponível.'
+                                  : 'Dirige-te ao fotografo, paga e mostra este ticket para ele marcar como PAID.'),
                       ),
                     ],
                   ),
@@ -2362,24 +3180,43 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Ticket: ${order.orderCode}', style: const TextStyle(fontWeight: FontWeight.w700)),
+                        Text(
+                          'Ticket: ${order.orderCode}',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
                         Text('Nome: ${order.customerName}'),
                         Text('Estado: ${order.status.toUpperCase()}'),
-                        Text('Pagamento: ${isOnline ? 'ONLINE (STRIPE)' : 'DINHEIRO'}'),
+                        Text(
+                          'Pagamento: ${isOnline ? 'ONLINE (STRIPE)' : 'DINHEIRO'}',
+                        ),
                         Text('Total: ${order.totalAmount} EUR'),
-                        if (order.productType != null) Text('Produto: ${order.productType}'),
-                        if (order.deliveryType != null) Text('Entrega: ${order.deliveryType}'),
-                        if (order.deliveryAddress != null && order.deliveryAddress!.isNotEmpty) Text('Morada: ${order.deliveryAddress}'),
+                        if (order.productType != null)
+                          Text('Produto: ${order.productType}'),
+                        if (order.deliveryType != null)
+                          Text('Entrega: ${order.deliveryType}'),
+                        if (order.deliveryAddress != null &&
+                            order.deliveryAddress!.isNotEmpty)
+                          Text('Morada: ${order.deliveryAddress}'),
                         if (order.wantsFilm) Text('Filme: +${order.filmFee}€'),
-                        if (order.shippingFee > 0) Text('Envio: +${order.shippingFee}€'),
-                        Text('Fotos: ${order.itemsTotal}€ | Extras: ${order.extrasTotal}€'),
+                        if (order.shippingFee > 0)
+                          Text('Envio: +${order.shippingFee}€'),
+                        Text(
+                          'Fotos: ${order.itemsTotal}€ | Extras: ${order.extrasTotal}€',
+                        ),
                         const SizedBox(height: 8),
-                        const Text('Fotos:', style: TextStyle(fontWeight: FontWeight.w700)),
+                        const Text(
+                          'Fotos:',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
                         Wrap(
                           spacing: 8,
                           runSpacing: 8,
                           children: order.photos
-                              .map((p) => Chip(label: Text('#${p.number} x${p.quantity}')))
+                              .map(
+                                (p) => Chip(
+                                  label: Text('#${p.number} x${p.quantity}'),
+                                ),
+                              )
                               .toList(),
                         ),
                       ],
@@ -2387,11 +3224,16 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                if (isPaid) ...[
-                  const Text('Downloads', style: TextStyle(fontWeight: FontWeight.w700)),
+                if (isPaid && !isOfflineOrder) ...[
+                  const Text(
+                    'Downloads',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
                   const SizedBox(height: 8),
                   FilledButton.icon(
-                    onPressed: downloadingAll ? null : () => _downloadAllToGallery(order),
+                    onPressed: downloadingAll
+                        ? null
+                        : () => _downloadAllToGallery(order),
                     icon: downloadingAll
                         ? const SizedBox(
                             width: 14,
@@ -2416,19 +3258,29 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                                   await _downloadPhotoToGallery(order, p);
                                   if (!context.mounted) return;
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Foto ${p.number} guardada na galeria.')),
+                                    SnackBar(
+                                      content: Text(
+                                        'Foto ${p.number} guardada na galeria.',
+                                      ),
+                                    ),
                                   );
                                 } catch (e) {
-                                  await _showGalleryError(e, photoNumber: p.number);
+                                  await _showGalleryError(
+                                    e,
+                                    photoNumber: p.number,
+                                  );
                                 } finally {
-                                  if (mounted) setState(() => downloadingPhotoId = null);
+                                  if (mounted)
+                                    setState(() => downloadingPhotoId = null);
                                 }
                               },
                         icon: loading
                             ? const SizedBox(
                                 width: 14,
                                 height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.download),
                         label: Text('#${p.number}'),
@@ -2483,11 +3335,15 @@ class OrderDetailPage extends ConsumerWidget {
             return ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                Text('Status: ${o.status.toUpperCase()}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                Text(
+                  'Status: ${o.status.toUpperCase()}',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
                 Text('Total: ${o.totalAmount} EUR'),
                 if (o.productType != null) Text('Produto: ${o.productType}'),
                 if (o.deliveryType != null) Text('Entrega: ${o.deliveryType}'),
-                if (o.deliveryAddress != null && o.deliveryAddress!.isNotEmpty) Text('Morada: ${o.deliveryAddress}'),
+                if (o.deliveryAddress != null && o.deliveryAddress!.isNotEmpty)
+                  Text('Morada: ${o.deliveryAddress}'),
                 if (o.wantsFilm) Text('Filme: +${o.filmFee}€'),
                 if (o.shippingFee > 0) Text('Envio: +${o.shippingFee}€'),
                 const SizedBox(height: 12),
@@ -2495,18 +3351,22 @@ class OrderDetailPage extends ConsumerWidget {
                   child: Padding(
                     padding: const EdgeInsets.all(12),
                     child: Text(
-                      o.status == 'paid'
+                      o.isOffline && o.status == 'paid'
+                          ? 'Pagamento registado offline. O email com o link segue depois da sincronização online.'
+                          : o.status == 'paid'
                           ? 'Pedido pago. O download e enviado por link unico para o email do pedido.'
                           : 'A aguardar pagamento. Depois o staff envia o link por email.',
                     ),
                   ),
                 ),
                 const SizedBox(height: 8),
-                ...o.photos.map((p) => ListTile(
-                  title: Text('Foto ${p.number}'),
-                  subtitle: Text('Quantidade: ${p.quantity}'),
-                  trailing: const Icon(Icons.image_outlined),
-                )),
+                ...o.photos.map(
+                  (p) => ListTile(
+                    title: Text('Foto ${p.number}'),
+                    subtitle: Text('Quantidade: ${p.quantity}'),
+                    trailing: const Icon(Icons.image_outlined),
+                  ),
+                ),
               ],
             );
           },
@@ -2533,7 +3393,9 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
     if (_loading) return;
     setState(() => _loading = true);
     try {
-      final token = await ref.read(apiProvider).staffLogin(loginCtrl.text.trim(), passCtrl.text.trim());
+      final token = await ref
+          .read(apiProvider)
+          .staffLogin(loginCtrl.text.trim(), passCtrl.text.trim());
       ref.read(staffTokenProvider.notifier).state = token.token;
       ref.read(staffUserProvider.notifier).state = token.user;
       await saveStaffSession(token.token, token.user);
@@ -2541,7 +3403,9 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
       Navigator.pop(context, token);
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro login: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro login: $e')));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -2589,7 +3453,11 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
                 const SizedBox(height: 4),
                 Text(
                   'Acesso staff',
-                  style: TextStyle(color: kDeskMuted, fontSize: 13, letterSpacing: 0.5),
+                  style: TextStyle(
+                    color: kDeskMuted,
+                    fontSize: 13,
+                    letterSpacing: 0.5,
+                  ),
                 ),
                 const SizedBox(height: 40),
                 TextField(
@@ -2598,7 +3466,11 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
                   style: const TextStyle(color: kBrandRose),
                   decoration: inputDecoration.copyWith(
                     labelText: 'Email ou username',
-                    prefixIcon: const Icon(Icons.person_outline, color: kDeskMuted, size: 20),
+                    prefixIcon: const Icon(
+                      Icons.person_outline,
+                      color: kDeskMuted,
+                      size: 20,
+                    ),
                   ),
                   textInputAction: TextInputAction.next,
                 ),
@@ -2609,9 +3481,19 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
                   style: const TextStyle(color: kBrandRose),
                   decoration: inputDecoration.copyWith(
                     labelText: 'Password',
-                    prefixIcon: const Icon(Icons.lock_outline, color: kDeskMuted, size: 20),
+                    prefixIcon: const Icon(
+                      Icons.lock_outline,
+                      color: kDeskMuted,
+                      size: 20,
+                    ),
                     suffixIcon: IconButton(
-                      icon: Icon(_obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: kDeskMuted, size: 20),
+                      icon: Icon(
+                        _obscure
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        color: kDeskMuted,
+                        size: 20,
+                      ),
                       onPressed: () => setState(() => _obscure = !_obscure),
                     ),
                   ),
@@ -2627,11 +3509,24 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
                     style: FilledButton.styleFrom(
                       backgroundColor: kBrandRose,
                       foregroundColor: kBrandBlack,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 0.5),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.5,
+                      ),
                     ),
                     child: _loading
-                        ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: kBrandBlack))
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: kBrandBlack,
+                            ),
+                          )
                         : const Text('Entrar'),
                   ),
                 ),
@@ -2651,7 +3546,8 @@ class StaffDashboardPage extends ConsumerStatefulWidget {
   ConsumerState<StaffDashboardPage> createState() => _StaffDashboardPageState();
 }
 
-DateTime _startOfDay(DateTime date) => DateTime(date.year, date.month, date.day);
+DateTime _startOfDay(DateTime date) =>
+    DateTime(date.year, date.month, date.day);
 
 DateTime? _parseEventDate(String raw) {
   final trimmed = raw.trim();
@@ -2797,7 +3693,9 @@ String _eventTypeLabel(StaffEvent event) {
   final type = (event.eventType ?? '').toLowerCase();
   if (type.contains('batiz')) return 'Batizado';
   if (type.contains('casam')) return 'Casamento';
-  return event.eventType?.trim().isNotEmpty == true ? event.eventType!.trim() : 'Evento';
+  return event.eventType?.trim().isNotEmpty == true
+      ? event.eventType!.trim()
+      : 'Evento';
 }
 
 String _eventTypeInitial(StaffEvent event) {
@@ -2836,7 +3734,10 @@ bool _eventMatchesUserTeam(StaffEvent event, StaffUser user) {
   final username = user.username?.trim() ?? '';
   if (username.isNotEmpty) candidates.add(username);
   final name = user.name.trim();
-  final nameParts = name.split(RegExp(r'\\s+')).where((p) => p.isNotEmpty).toList();
+  final nameParts = name
+      .split(RegExp(r'\\s+'))
+      .where((p) => p.isNotEmpty)
+      .toList();
   if (name.isNotEmpty) {
     final initials = _initialsFromName(name);
     if (initials.isNotEmpty) candidates.add(initials);
@@ -2848,10 +3749,12 @@ bool _eventMatchesUserTeam(StaffEvent event, StaffUser user) {
   }
   if (nameParts.length == 1) {
     final singleName = _normalizeToken(nameParts.first);
-    if (singleName.isNotEmpty && normalizedTeam.contains(' $singleName ')) return true;
+    if (singleName.isNotEmpty && normalizedTeam.contains(' $singleName '))
+      return true;
   }
   final normalizedName = _normalizeRaw(name).trim();
-  if (normalizedName.isNotEmpty && normalizedTeam.contains(' $normalizedName ')) return true;
+  if (normalizedName.isNotEmpty && normalizedTeam.contains(' $normalizedName '))
+    return true;
 
   return false;
 }
@@ -2906,7 +3809,12 @@ int _eventPhotoCount(StaffEvent event) {
 
 double _eventSalesTotal(StaffEvent event) {
   final meta = event.eventMeta ?? const <String, dynamic>{};
-  for (final key in ['total_sales', 'vendas_total', 'sales_total', 'total_vendas']) {
+  for (final key in [
+    'total_sales',
+    'vendas_total',
+    'sales_total',
+    'total_vendas',
+  ]) {
     final raw = meta[key];
     if (raw == null) continue;
     final value = double.tryParse(raw.toString());
@@ -2917,7 +3825,11 @@ double _eventSalesTotal(StaffEvent event) {
 
 String _initialsFromName(String? name) {
   if (name == null) return '';
-  final parts = name.trim().split(RegExp(r'\\s+')).where((p) => p.isNotEmpty).toList();
+  final parts = name
+      .trim()
+      .split(RegExp(r'\\s+'))
+      .where((p) => p.isNotEmpty)
+      .toList();
   if (parts.isEmpty) return '';
   final first = parts.first;
   final last = parts.length > 1 ? parts.last : parts.first;
@@ -2931,7 +3843,11 @@ List<String> _splitTeamTokens(String raw) {
   text = text.replaceAll(RegExp(r'\\s*[+,&;\\/]+\\s*'), ',');
   text = text.replaceAll(RegExp(r'\\s+e\\s+', caseSensitive: false), ',');
   text = text.replaceAll(RegExp(r'\\s+and\\s+', caseSensitive: false), ',');
-  return text.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+  return text
+      .split(',')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
 }
 
 String _normalizeRaw(String raw) {
@@ -3066,11 +3982,26 @@ class _DashboardStatCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
                 const SizedBox(height: 4),
-                Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 const SizedBox(height: 2),
-                Text(subtitle, style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 12,
+                  ),
+                ),
               ],
             ),
           ),
@@ -3079,7 +4010,11 @@ class _DashboardStatCard extends StatelessWidget {
     );
 
     if (onTap == null) return card;
-    return InkWell(onTap: onTap, borderRadius: BorderRadius.circular(14), child: card);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: card,
+    );
   }
 }
 
@@ -3099,7 +4034,10 @@ class _UpcomingEventCard extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: InkWell(
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => StaffEventDetailPage(event: event))),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => StaffEventDetailPage(event: event)),
+        ),
         borderRadius: BorderRadius.circular(14),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -3120,7 +4058,11 @@ class _UpcomingEventCard extends StatelessWidget {
                 ),
                 child: Text(
                   typeInitial,
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: kBrandRose),
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: kBrandRose,
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -3128,15 +4070,36 @@ class _UpcomingEventCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(dateLabel, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    Text(
+                      dateLabel,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
                     const SizedBox(height: 4),
                     if (team.isNotEmpty)
-                      Text('Equipa: $team', style: TextStyle(color: Colors.white.withOpacity(0.75), fontSize: 12)),
+                      Text(
+                        'Equipa: $team',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.75),
+                          fontSize: 12,
+                        ),
+                      ),
                     const SizedBox(height: 2),
-                    Text('Tipo: $typeLabel', style: TextStyle(color: Colors.white.withOpacity(0.75), fontSize: 12)),
+                    Text(
+                      'Tipo: $typeLabel',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.75),
+                        fontSize: 12,
+                      ),
+                    ),
                     if (studioTime.isNotEmpty) ...[
                       const SizedBox(height: 2),
-                      Text('Estúdio: $studioTime', style: TextStyle(color: Colors.white.withOpacity(0.75), fontSize: 12)),
+                      Text(
+                        'Estúdio: $studioTime',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.75),
+                          fontSize: 12,
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -3165,12 +4128,21 @@ class _StaffAgendaPageState extends ConsumerState<StaffAgendaPage> {
   DateTime _focusedDay = _startOfDay(DateTime.now());
   DateTime? _selectedDay;
 
-  void _ensureFuture(String token, {required bool assignedOnly, String? fromDate}) {
-    if (_future == null || _token != token || _assignedOnly != assignedOnly || _fromDate != fromDate) {
+  void _ensureFuture(
+    String token, {
+    required bool assignedOnly,
+    String? fromDate,
+  }) {
+    if (_future == null ||
+        _token != token ||
+        _assignedOnly != assignedOnly ||
+        _fromDate != fromDate) {
       _token = token;
       _assignedOnly = assignedOnly;
       _fromDate = fromDate;
-      _future = ref.read(apiProvider).staffEvents(token, assignedOnly: assignedOnly, fromDate: fromDate);
+      _future = ref
+          .read(apiProvider)
+          .staffEvents(token, assignedOnly: assignedOnly, fromDate: fromDate);
     }
   }
 
@@ -3178,7 +4150,8 @@ class _StaffAgendaPageState extends ConsumerState<StaffAgendaPage> {
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
     final user = ref.watch(staffUserProvider);
-    if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null || user == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     if (useDesktopLayout(context)) {
       return StaffDesktopShell(
         user: user,
@@ -3191,7 +4164,8 @@ class _StaffAgendaPageState extends ConsumerState<StaffAgendaPage> {
       );
     }
     final canSeeAllEvents = _canSeeAllEvents(user);
-    final canCalendar = user.hasPermission('events.list') || user.hasPermission('events.view');
+    final canCalendar =
+        user.hasPermission('events.list') || user.hasPermission('events.view');
     final now = DateTime.now();
     final fromDate =
         '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
@@ -3208,111 +4182,157 @@ class _StaffAgendaPageState extends ConsumerState<StaffAgendaPage> {
       body: !canCalendar
           ? const Center(child: Text('Sem permissões para ver o calendário.'))
           : RefreshIndicator(
-        onRefresh: () async => setState(() {}),
-        child: FutureBuilder<List<StaffEvent>>(
-          future: _future,
-          builder: (_, snap) {
-            if (!snap.hasData) {
-              if (snap.hasError) {
-                return ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text(
-                        formatUiError(snap.error ?? 'Erro desconhecido'),
-                      ),
-                    ),
-                  ],
-                );
-              }
-              return ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: const [SizedBox(height: 300, child: Center(child: CircularProgressIndicator()))],
-              );
-            }
-            final events = _filterEventsForUser(snap.data!, user);
-            if (events.isEmpty) {
-              return ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: const [Padding(padding: EdgeInsets.all(16), child: Text('Sem eventos'))],
-              );
-            }
-            final eventsByDay = _eventsByDay(events);
-            final selected = _selectedDay ?? _focusedDay;
-            final selectedKey = _startOfDay(selected);
-            final dayEvents = eventsByDay[selectedKey] ?? const <StaffEvent>[];
-
-            return ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                TableCalendar<StaffEvent>(
-                  firstDay: _calendarFirstDay(events),
-                  lastDay: _calendarLastDay(events),
-                  focusedDay: _focusedDay,
-                  selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-                  eventLoader: (day) => eventsByDay[_startOfDay(day)] ?? const <StaffEvent>[],
-                  availableGestures: AvailableGestures.all,
-                  pageJumpingEnabled: true,
-                  headerStyle: const HeaderStyle(formatButtonVisible: false, titleCentered: true),
-                  calendarStyle: CalendarStyle(
-                    outsideDaysVisible: false,
-                    todayDecoration: BoxDecoration(color: Colors.orange.shade200, shape: BoxShape.circle),
-                    selectedDecoration: const BoxDecoration(color: Colors.deepOrange, shape: BoxShape.circle),
-                    markerDecoration: const BoxDecoration(color: Colors.deepOrange, shape: BoxShape.circle),
-                  ),
-                  calendarBuilders: CalendarBuilders(
-                    markerBuilder: (context, date, events) {
-                      if (events.isEmpty) return const SizedBox.shrink();
-                      return Align(
-                        alignment: Alignment.bottomCenter,
-                        child: Container(
-                          margin: const EdgeInsets.only(bottom: 4),
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: Colors.deepOrange,
-                            borderRadius: BorderRadius.circular(8),
+              onRefresh: () async => setState(() {}),
+              child: FutureBuilder<List<StaffEvent>>(
+                future: _future,
+                builder: (_, snap) {
+                  if (!snap.hasData) {
+                    if (snap.hasError) {
+                      return ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Text(
+                              formatUiError(snap.error ?? 'Erro desconhecido'),
+                            ),
                           ),
-                          child: Text(
-                            '${events.length}',
-                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                        ],
+                      );
+                    }
+                    return ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        SizedBox(
+                          height: 300,
+                          child: Center(child: CircularProgressIndicator()),
+                        ),
+                      ],
+                    );
+                  }
+                  final events = _filterEventsForUser(snap.data!, user);
+                  if (events.isEmpty) {
+                    return ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Text('Sem eventos'),
+                        ),
+                      ],
+                    );
+                  }
+                  final eventsByDay = _eventsByDay(events);
+                  final selected = _selectedDay ?? _focusedDay;
+                  final selectedKey = _startOfDay(selected);
+                  final dayEvents =
+                      eventsByDay[selectedKey] ?? const <StaffEvent>[];
+
+                  return ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      TableCalendar<StaffEvent>(
+                        firstDay: _calendarFirstDay(events),
+                        lastDay: _calendarLastDay(events),
+                        focusedDay: _focusedDay,
+                        selectedDayPredicate: (day) =>
+                            isSameDay(_selectedDay, day),
+                        eventLoader: (day) =>
+                            eventsByDay[_startOfDay(day)] ??
+                            const <StaffEvent>[],
+                        availableGestures: AvailableGestures.all,
+                        pageJumpingEnabled: true,
+                        headerStyle: const HeaderStyle(
+                          formatButtonVisible: false,
+                          titleCentered: true,
+                        ),
+                        calendarStyle: CalendarStyle(
+                          outsideDaysVisible: false,
+                          todayDecoration: BoxDecoration(
+                            color: Colors.orange.shade200,
+                            shape: BoxShape.circle,
+                          ),
+                          selectedDecoration: const BoxDecoration(
+                            color: Colors.deepOrange,
+                            shape: BoxShape.circle,
+                          ),
+                          markerDecoration: const BoxDecoration(
+                            color: Colors.deepOrange,
+                            shape: BoxShape.circle,
                           ),
                         ),
-                      );
-                    },
-                  ),
-                  onPageChanged: (focusedDay) {
-                    setState(() {
-                      _focusedDay = focusedDay;
-                    });
-                  },
-                  onDaySelected: (selectedDay, focusedDay) {
-                    setState(() {
-                      _selectedDay = selectedDay;
-                      _focusedDay = focusedDay;
-                    });
-                  },
-                ),
-                const SizedBox(height: 12),
-                Text('Eventos do dia', style: const TextStyle(fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
-                if (dayEvents.isEmpty)
-                  const Text('Sem eventos neste dia')
-                else
-                  ...dayEvents.map((e) => ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(e.name),
-                        subtitle: Text(_formatEventDateTime(e.eventDate, e.eventTime)),
-                        onTap: user.hasPermission('events.view')
-                            ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => StaffEventDetailPage(event: e)))
-                            : null,
-                      )),
-              ],
-            );
-          },
-        ),
-      ),
+                        calendarBuilders: CalendarBuilders(
+                          markerBuilder: (context, date, events) {
+                            if (events.isEmpty) return const SizedBox.shrink();
+                            return Align(
+                              alignment: Alignment.bottomCenter,
+                              child: Container(
+                                margin: const EdgeInsets.only(bottom: 4),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                  vertical: 1,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.deepOrange,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  '${events.length}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                        onPageChanged: (focusedDay) {
+                          setState(() {
+                            _focusedDay = focusedDay;
+                          });
+                        },
+                        onDaySelected: (selectedDay, focusedDay) {
+                          setState(() {
+                            _selectedDay = selectedDay;
+                            _focusedDay = focusedDay;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Eventos do dia',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 8),
+                      if (dayEvents.isEmpty)
+                        const Text('Sem eventos neste dia')
+                      else
+                        ...dayEvents.map(
+                          (e) => ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(e.name),
+                            subtitle: Text(
+                              _formatEventDateTime(e.eventDate, e.eventTime),
+                            ),
+                            onTap: user.hasPermission('events.view')
+                                ? () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          StaffEventDetailPage(event: e),
+                                    ),
+                                  )
+                                : null,
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
     );
   }
 }
@@ -3333,7 +4353,11 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
     _initPushNotifications();
   }
 
-  void _ensureEventsFuture(String token, {required bool assignedOnly, String? fromDate}) {
+  void _ensureEventsFuture(
+    String token, {
+    required bool assignedOnly,
+    String? fromDate,
+  }) {
     if (_eventsFuture == null ||
         _eventsToken != token ||
         _eventsAssignedOnly != assignedOnly ||
@@ -3341,14 +4365,18 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
       _eventsToken = token;
       _eventsAssignedOnly = assignedOnly;
       _eventsFromDate = fromDate;
-      _eventsFuture = ref.read(apiProvider).staffEvents(token, assignedOnly: assignedOnly, fromDate: fromDate);
+      _eventsFuture = ref
+          .read(apiProvider)
+          .staffEvents(token, assignedOnly: assignedOnly, fromDate: fromDate);
     }
   }
 
   void _ensurePendingOrdersFuture(String token) {
     if (_pendingOrdersFuture == null || _pendingOrdersToken != token) {
       _pendingOrdersToken = token;
-      _pendingOrdersFuture = ref.read(apiProvider).staffOrdersTotal(token, status: 'pending');
+      _pendingOrdersFuture = ref
+          .read(apiProvider)
+          .staffOrdersTotal(token, status: 'pending');
     }
   }
 
@@ -3363,29 +4391,39 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
     if (apiToken == null) return;
     try {
       if (Platform.isIOS) {
-        await FirebaseMessaging.instance.requestPermission(alert: true, badge: true, sound: true);
+        await FirebaseMessaging.instance.requestPermission(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
       }
       if (Platform.isAndroid) {
         await Permission.notification.request();
       }
       final fcmToken = await FirebaseMessaging.instance.getToken();
       if (fcmToken != null && fcmToken.isNotEmpty) {
-        await ref.read(apiProvider).registerDeviceToken(
-          apiToken,
-          fcmToken,
-          Platform.isIOS ? 'ios' : 'android',
-          deviceId: await getDeviceId(),
-        );
+        await ref
+            .read(apiProvider)
+            .registerDeviceToken(
+              apiToken,
+              fcmToken,
+              Platform.isIOS ? 'ios' : 'android',
+              deviceId: await getDeviceId(),
+            );
       }
-      _tokenRefreshSub = FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+      _tokenRefreshSub = FirebaseMessaging.instance.onTokenRefresh.listen((
+        newToken,
+      ) async {
         final apiToken = ref.read(staffTokenProvider);
         if (apiToken == null) return;
-        await ref.read(apiProvider).registerDeviceToken(
-          apiToken,
-          newToken,
-          Platform.isIOS ? 'ios' : 'android',
-          deviceId: await getDeviceId(),
-        );
+        await ref
+            .read(apiProvider)
+            .registerDeviceToken(
+              apiToken,
+              newToken,
+              Platform.isIOS ? 'ios' : 'android',
+              deviceId: await getDeviceId(),
+            );
       });
     } catch (_) {
       // Ignore push setup errors
@@ -3396,7 +4434,8 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
     final user = ref.watch(staffUserProvider);
-    if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null || user == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     if (useDesktopLayout(context)) {
       return StaffDesktopShell(user: user, token: token);
     }
@@ -3405,12 +4444,17 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
     final isStaffRole = false;
     final isAdmin = _isAdminRole(user.role);
     final canSeeAllEvents = _canSeeAllEvents(user);
-    final canCalendar = user.hasPermission('events.list') || user.hasPermission('events.view');
+    final canCalendar =
+        user.hasPermission('events.list') || user.hasPermission('events.view');
     final now = DateTime.now();
     final fromDate =
         '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     if (canCalendar) {
-      _ensureEventsFuture(token, assignedOnly: !canSeeAllEvents, fromDate: fromDate);
+      _ensureEventsFuture(
+        token,
+        assignedOnly: !canSeeAllEvents,
+        fromDate: fromDate,
+      );
     }
     if (!isAdmin && user.hasPermission('orders.list')) {
       _ensurePendingOrdersFuture(token);
@@ -3440,7 +4484,10 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text('Olá, ${user.name}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          Text(
+            'Olá, ${user.name}',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
           const SizedBox(height: 12),
           if (canCalendar)
             FutureBuilder<List<StaffEvent>>(
@@ -3476,7 +4523,9 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
                                 width: isWide ? 280 : null,
                                 onTap: () => Navigator.push(
                                   context,
-                                  MaterialPageRoute(builder: (_) => const StaffOrdersPage()),
+                                  MaterialPageRoute(
+                                    builder: (_) => const StaffOrdersPage(),
+                                  ),
                                 ),
                               );
                             },
@@ -3484,12 +4533,17 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    Text('Próximos 5 serviços', style: const TextStyle(fontWeight: FontWeight.w600)),
+                    Text(
+                      'Próximos 5 serviços',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
                     const SizedBox(height: 8),
                     if (upcoming.isEmpty)
                       const Text('Sem serviços agendados')
                     else
-                      ...upcoming.take(5).map((e) => _UpcomingEventCard(event: e)),
+                      ...upcoming
+                          .take(5)
+                          .map((e) => _UpcomingEventCard(event: e)),
                   ],
                 );
               },
@@ -3501,69 +4555,113 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
               title: 'Agenda',
               subtitle: 'Calendário de serviços',
               icon: Icons.calendar_month,
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffAgendaPage())),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StaffAgendaPage()),
+              ),
             ),
           if (user.hasPermission('events.view') && !isStaffRole)
             _StaffMenuTile(
               title: 'Eventos',
-              subtitle: isPhotographer ? 'Eventos associados' : 'Criar/editar eventos',
+              subtitle: isPhotographer
+                  ? 'Eventos associados'
+                  : 'Criar/editar eventos',
               icon: Icons.event,
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffEventsPage())),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StaffEventsPage()),
+              ),
             ),
           if (user.hasPermission('uploads.list'))
             _StaffMenuTile(
               title: 'Uploads',
               subtitle: 'Enviar fotos para eventos',
               icon: Icons.cloud_upload,
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffUploadsPage())),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StaffUploadsPage()),
+              ),
             ),
           if (user.hasPermission('photos.list'))
             _StaffMenuTile(
               title: 'Fotos',
               subtitle: 'Gerir fotos e previews',
               icon: Icons.photo_library_outlined,
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffPhotosPage())),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StaffPhotosPage()),
+              ),
             ),
           if (user.hasPermission('orders.list'))
             _StaffMenuTile(
               title: 'Pedidos',
-              subtitle: isPhotographer ? 'Aprovar pagamentos' : 'Filtrar e atualizar status',
+              subtitle: isPhotographer
+                  ? 'Aprovar pagamentos'
+                  : 'Filtrar e atualizar status',
               icon: Icons.receipt_long,
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffOrdersPage())),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StaffOrdersPage()),
+              ),
             ),
           _StaffMenuTile(
             title: 'Definições',
             subtitle: 'Perfil e password',
             icon: Icons.settings,
-            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffSettingsPage())),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const StaffSettingsPage()),
+            ),
           ),
           if (_isAdminRole(user.role))
             _StaffMenuTile(
               title: 'Ligações',
               subtitle: 'API e configurações runtime',
               icon: Icons.router_outlined,
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffAppConfigPage())),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StaffAppConfigPage()),
+              ),
+            ),
+          if (isDesktopPlatform())
+            _StaffMenuTile(
+              title: 'Sessão Offline',
+              subtitle: 'Servidor local para PC/iPad/staff',
+              icon: Icons.wifi_tethering,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StaffOfflineHostPage()),
+              ),
             ),
           if (user.hasPermission('users.list'))
             _StaffMenuTile(
               title: 'Utilizadores',
               subtitle: 'CRUD utilizadores e permissões',
               icon: Icons.manage_accounts,
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffUsersPage())),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StaffUsersPage()),
+              ),
             ),
           if (user.hasPermission('clients.list'))
             _StaffMenuTile(
               title: 'Clientes',
               subtitle: 'Gerir clientes',
               icon: Icons.people_outline,
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffClientsPage())),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StaffClientsPage()),
+              ),
             ),
           if (user.hasPermission('offline.export') && !isPhotographer)
             _StaffMenuTile(
               title: 'Sincronizar',
               subtitle: 'Exportar/Importar dados offline',
               icon: Icons.sync,
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffSyncPage())),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StaffSyncPage()),
+              ),
             ),
         ],
       ),
@@ -3572,7 +4670,12 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
 }
 
 class _StaffMenuTile extends StatelessWidget {
-  const _StaffMenuTile({required this.title, required this.subtitle, required this.icon, required this.onTap});
+  const _StaffMenuTile({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.onTap,
+  });
   final String title;
   final String subtitle;
   final IconData icon;
@@ -3608,9 +4711,15 @@ class DesktopNavItem {
   final String label;
   final String? subtitle;
   final IconData icon;
-  final Widget Function(BuildContext context, StaffUser user, String token) builder;
+  final Widget Function(BuildContext context, StaffUser user, String token)
+  builder;
   final bool showSearch;
-  final List<Widget> Function(BuildContext context, StaffUser user, String token)? actionsBuilder;
+  final List<Widget> Function(
+    BuildContext context,
+    StaffUser user,
+    String token,
+  )?
+  actionsBuilder;
   final bool Function(StaffUser user)? visibleWhen;
 }
 
@@ -3629,11 +4738,17 @@ class StaffDesktopShell extends ConsumerStatefulWidget {
   final StaffUser user;
   final String token;
   final String? initialId;
-  final Widget Function(BuildContext context, StaffUser user, String token)? overrideContent;
+  final Widget Function(BuildContext context, StaffUser user, String token)?
+  overrideContent;
   final String? overrideTitle;
   final String? overrideSubtitle;
   final bool? overrideShowSearch;
-  final List<Widget> Function(BuildContext context, StaffUser user, String token)? overrideActionsBuilder;
+  final List<Widget> Function(
+    BuildContext context,
+    StaffUser user,
+    String token,
+  )?
+  overrideActionsBuilder;
 
   @override
   ConsumerState<StaffDesktopShell> createState() => _StaffDesktopShellState();
@@ -3671,7 +4786,11 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         label: 'Dashboard',
         icon: Icons.grid_view_rounded,
         subtitle: 'Resumo operacional',
-        builder: (context, user, token) => DesktopDashboardView(user: user, token: token, search: _searchValue),
+        builder: (context, user, token) => DesktopDashboardView(
+          user: user,
+          token: token,
+          search: _searchValue,
+        ),
       ),
       DesktopNavItem(
         id: 'events',
@@ -3679,25 +4798,35 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         icon: Icons.event_available,
         subtitle: 'Gestao de eventos',
         showSearch: true,
-        builder: (context, user, token) => DesktopEventsView(user: user, token: token, search: _searchValue),
+        builder: (context, user, token) =>
+            DesktopEventsView(user: user, token: token, search: _searchValue),
         actionsBuilder: (context, user, token) => [
           FilledButton.icon(
             onPressed: user.hasPermission('events.create')
-                ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => StaffEventFormPage(initialEventType: 'casamento')))
+                ? () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          StaffEventFormPage(initialEventType: 'casamento'),
+                    ),
+                  )
                 : null,
             icon: const Icon(Icons.add),
             label: const Text('Novo evento'),
           ),
         ],
-        visibleWhen: (u) => u.hasPermission('events.list') || u.hasPermission('events.view'),
+        visibleWhen: (u) =>
+            u.hasPermission('events.list') || u.hasPermission('events.view'),
       ),
       DesktopNavItem(
         id: 'services',
         label: 'Agenda',
         icon: Icons.calendar_month,
         subtitle: 'Agenda e atribuicoes',
-        builder: (context, user, token) => DesktopServicesView(user: user, token: token),
-        visibleWhen: (u) => u.hasPermission('events.list') || u.hasPermission('events.view'),
+        builder: (context, user, token) =>
+            DesktopServicesView(user: user, token: token),
+        visibleWhen: (u) =>
+            u.hasPermission('events.list') || u.hasPermission('events.view'),
       ),
       DesktopNavItem(
         id: 'orders',
@@ -3705,7 +4834,8 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         icon: Icons.receipt_long,
         subtitle: 'Pagamentos e entregas',
         showSearch: true,
-        builder: (context, user, token) => DesktopOrdersView(user: user, token: token, search: _searchValue),
+        builder: (context, user, token) =>
+            DesktopOrdersView(user: user, token: token, search: _searchValue),
         visibleWhen: (u) => u.hasPermission('orders.list'),
       ),
       DesktopNavItem(
@@ -3714,7 +4844,8 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         icon: Icons.photo_library_outlined,
         subtitle: 'Conteudos e previews',
         showSearch: true,
-        builder: (context, user, token) => DesktopPhotosView(user: user, token: token, search: _searchValue),
+        builder: (context, user, token) =>
+            DesktopPhotosView(user: user, token: token, search: _searchValue),
         visibleWhen: (u) => u.hasPermission('photos.list'),
       ),
       DesktopNavItem(
@@ -3723,7 +4854,8 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         icon: Icons.people_outline,
         subtitle: 'Base de clientes',
         showSearch: true,
-        builder: (context, user, token) => DesktopClientsView(user: user, token: token, search: _searchValue),
+        builder: (context, user, token) =>
+            DesktopClientsView(user: user, token: token, search: _searchValue),
         visibleWhen: (u) => u.hasPermission('clients.list'),
       ),
       DesktopNavItem(
@@ -3731,14 +4863,16 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         label: 'Pagamentos',
         icon: Icons.payments_outlined,
         subtitle: 'Transacoes e reconciliacao',
-        builder: (context, user, token) => DesktopPaymentsView(user: user, token: token),
+        builder: (context, user, token) =>
+            DesktopPaymentsView(user: user, token: token),
       ),
       DesktopNavItem(
         id: 'sync',
         label: 'Sincronizacao',
         icon: Icons.sync,
         subtitle: 'Offline e importacao',
-        builder: (context, user, token) => DesktopSyncView(user: user, token: token),
+        builder: (context, user, token) =>
+            DesktopSyncView(user: user, token: token),
         visibleWhen: (u) => u.hasPermission('offline.export'),
       ),
       DesktopNavItem(
@@ -3746,22 +4880,34 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         label: 'Relatorios',
         icon: Icons.bar_chart,
         subtitle: 'Analise e metricas',
-        builder: (context, user, token) => DesktopReportsView(user: user, token: token),
+        builder: (context, user, token) =>
+            DesktopReportsView(user: user, token: token),
       ),
       DesktopNavItem(
         id: 'app-config',
         label: 'Ligacoes',
         icon: Icons.router_outlined,
         subtitle: 'API e runtime config',
-        builder: (context, user, token) => DesktopAppConfigView(user: user, token: token),
+        builder: (context, user, token) =>
+            DesktopAppConfigView(user: user, token: token),
         visibleWhen: (u) => _isAdminRole(u.role),
       ),
+      if (isDesktopPlatform())
+        DesktopNavItem(
+          id: 'offline-host',
+          label: 'Offline',
+          icon: Icons.wifi_tethering,
+          subtitle: 'Sessao local no PC',
+          builder: (context, user, token) =>
+              DesktopOfflineHostView(user: user, token: token),
+        ),
       DesktopNavItem(
         id: 'settings',
         label: 'Definicoes',
         icon: Icons.settings,
         subtitle: 'Perfil e configuracoes',
-        builder: (context, user, token) => DesktopSettingsView(user: user, token: token),
+        builder: (context, user, token) =>
+            DesktopSettingsView(user: user, token: token),
       ),
     ].where((item) => item.visibleWhen?.call(user) ?? true).toList();
   }
@@ -3769,19 +4915,35 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
   @override
   Widget build(BuildContext context) {
     final items = _navItems();
-    final current = items.firstWhere((i) => i.id == _selectedId, orElse: () => items.first);
+    final current = items.firstWhere(
+      (i) => i.id == _selectedId,
+      orElse: () => items.first,
+    );
     if (current.id != _selectedId) {
       _selectedId = current.id;
     }
     final isCompact = MediaQuery.of(context).size.width < 900;
     final overrideKey = widget.initialId ?? 'dashboard';
-    final useOverride = widget.overrideContent != null && _selectedId == overrideKey;
-    final topTitle = useOverride ? (widget.overrideTitle ?? current.label) : current.label;
-    final topSubtitle = useOverride ? (widget.overrideSubtitle ?? current.subtitle) : current.subtitle;
-    final topSearch = useOverride ? (widget.overrideShowSearch ?? false) : current.showSearch;
+    final useOverride =
+        widget.overrideContent != null && _selectedId == overrideKey;
+    final topTitle = useOverride
+        ? (widget.overrideTitle ?? current.label)
+        : current.label;
+    final topSubtitle = useOverride
+        ? (widget.overrideSubtitle ?? current.subtitle)
+        : current.subtitle;
+    final topSearch = useOverride
+        ? (widget.overrideShowSearch ?? false)
+        : current.showSearch;
     final topActions = useOverride
-        ? (widget.overrideActionsBuilder?.call(context, widget.user, widget.token) ?? const <Widget>[])
-        : (current.actionsBuilder?.call(context, widget.user, widget.token) ?? const <Widget>[]);
+        ? (widget.overrideActionsBuilder?.call(
+                context,
+                widget.user,
+                widget.token,
+              ) ??
+              const <Widget>[])
+        : (current.actionsBuilder?.call(context, widget.user, widget.token) ??
+              const <Widget>[]);
 
     Widget content = Column(
       children: [
@@ -3902,9 +5064,7 @@ class _DesktopSidebar extends StatelessWidget {
       width: width ?? kDeskSidebarWidth,
       decoration: BoxDecoration(
         color: kDeskSurface,
-        border: Border(
-          right: BorderSide(color: kBrandRose.withOpacity(0.2)),
-        ),
+        border: Border(right: BorderSide(color: kBrandRose.withOpacity(0.2))),
       ),
       child: Column(
         children: [
@@ -3946,24 +5106,38 @@ class _DesktopSidebar extends StatelessWidget {
                       borderRadius: BorderRadius.circular(14),
                       hoverColor: kBrandRose.withOpacity(0.08),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
                         decoration: BoxDecoration(
-                          color: selected ? kBrandRose.withOpacity(0.16) : Colors.transparent,
+                          color: selected
+                              ? kBrandRose.withOpacity(0.16)
+                              : Colors.transparent,
                           borderRadius: BorderRadius.circular(14),
                           border: Border.all(
-                            color: selected ? kBrandRose.withOpacity(0.6) : Colors.transparent,
+                            color: selected
+                                ? kBrandRose.withOpacity(0.6)
+                                : Colors.transparent,
                           ),
                         ),
                         child: Row(
                           children: [
-                            Icon(item.icon, color: selected ? kBrandRose : kDeskMuted),
+                            Icon(
+                              item.icon,
+                              color: selected ? kBrandRose : kDeskMuted,
+                            ),
                             const SizedBox(width: 10),
                             Expanded(
                               child: Text(
                                 item.label,
                                 style: TextStyle(
-                                  color: selected ? kBrandRose : Colors.white.withOpacity(0.8),
-                                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                                  color: selected
+                                      ? kBrandRose
+                                      : Colors.white.withOpacity(0.8),
+                                  fontWeight: selected
+                                      ? FontWeight.w600
+                                      : FontWeight.w500,
                                 ),
                               ),
                             ),
@@ -3979,7 +5153,9 @@ class _DesktopSidebar extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              border: Border(top: BorderSide(color: kBrandRose.withOpacity(0.2))),
+              border: Border(
+                top: BorderSide(color: kBrandRose.withOpacity(0.2)),
+              ),
             ),
             child: Row(
               children: [
@@ -3996,8 +5172,20 @@ class _DesktopSidebar extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(user.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-                      Text(user.role.toUpperCase(), style: TextStyle(fontSize: 10, color: Colors.white.withOpacity(0.5))),
+                      Text(
+                        user.name,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                        ),
+                      ),
+                      Text(
+                        user.role.toUpperCase(),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.white.withOpacity(0.5),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -4039,9 +5227,7 @@ class _DesktopTopbar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(kDeskGutter, 16, kDeskGutter, 12),
       decoration: BoxDecoration(
         color: kDeskSurface,
-        border: Border(
-          bottom: BorderSide(color: kBrandRose.withOpacity(0.2)),
-        ),
+        border: Border(bottom: BorderSide(color: kBrandRose.withOpacity(0.2))),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -4049,17 +5235,26 @@ class _DesktopTopbar extends StatelessWidget {
           if (!isNarrow) {
             return Row(
               children: [
-                if (leading != null) ...[
-                  leading!,
-                  const SizedBox(width: 8),
-                ],
+                if (leading != null) ...[leading!, const SizedBox(width: 8)],
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                       if (subtitle != null)
-                        Text(subtitle!, style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
+                        Text(
+                          subtitle!,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 12,
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -4075,14 +5270,21 @@ class _DesktopTopbar extends StatelessWidget {
                         prefixIcon: const Icon(Icons.search),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: kBrandRose.withOpacity(0.4)),
+                          borderSide: BorderSide(
+                            color: kBrandRose.withOpacity(0.4),
+                          ),
                         ),
                       ),
                     ),
                   ),
                 if (actions.isNotEmpty) ...[
                   const SizedBox(width: 16),
-                  ...actions.map((w) => Padding(padding: const EdgeInsets.only(right: 8), child: w)),
+                  ...actions.map(
+                    (w) => Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: w,
+                    ),
+                  ),
                 ],
                 const SizedBox(width: 12),
                 IconButton(
@@ -4098,17 +5300,26 @@ class _DesktopTopbar extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  if (leading != null) ...[
-                    leading!,
-                    const SizedBox(width: 6),
-                  ],
+                  if (leading != null) ...[leading!, const SizedBox(width: 6)],
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                         if (subtitle != null)
-                          Text(subtitle!, style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
+                          Text(
+                            subtitle!,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.6),
+                              fontSize: 12,
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -4121,11 +5332,7 @@ class _DesktopTopbar extends StatelessWidget {
               ),
               if (actions.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: actions,
-                ),
+                Wrap(spacing: 8, runSpacing: 8, children: actions),
               ],
               if (showSearch) ...[
                 const SizedBox(height: 10),
@@ -4138,7 +5345,9 @@ class _DesktopTopbar extends StatelessWidget {
                     prefixIcon: const Icon(Icons.search),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: kBrandRose.withOpacity(0.4)),
+                      borderSide: BorderSide(
+                        color: kBrandRose.withOpacity(0.4),
+                      ),
                     ),
                   ),
                 ),
@@ -4160,7 +5369,12 @@ class _DeskSectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14))),
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+          ),
+        ),
         if (action != null) action!,
       ],
     );
@@ -4227,11 +5441,29 @@ class _DeskKpiCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12)),
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.7),
+                    fontSize: 12,
+                  ),
+                ),
                 const SizedBox(height: 6),
-                Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 const SizedBox(height: 4),
-                Text(subtitle, style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11)),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.5),
+                    fontSize: 11,
+                  ),
+                ),
               ],
             ),
           ),
@@ -4257,13 +5489,20 @@ class _DeskStatusBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: fg.withOpacity(0.4)),
       ),
-      child: Text(label, style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600)),
+      child: Text(
+        label,
+        style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600),
+      ),
     );
   }
 }
 
 class _MobileActionChip extends StatelessWidget {
-  const _MobileActionChip({required this.label, required this.color, required this.onTap});
+  const _MobileActionChip({
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
   final String label;
   final Color color;
   final VoidCallback onTap;
@@ -4279,14 +5518,25 @@ class _MobileActionChip extends StatelessWidget {
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: color.withOpacity(0.4)),
         ),
-        child: Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: color,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ),
     );
   }
 }
 
 class _DeskTableColumn {
-  const _DeskTableColumn(this.label, {this.flex = 1, this.align = CrossAxisAlignment.start});
+  const _DeskTableColumn(
+    this.label, {
+    this.flex = 1,
+    this.align = CrossAxisAlignment.start,
+  });
   final String label;
   final int flex;
   final CrossAxisAlignment align;
@@ -4302,7 +5552,10 @@ class _DeskTable extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         const minCellWidth = 120.0;
-        final minTableWidth = columns.fold<double>(0, (sum, c) => sum + (c.flex * minCellWidth));
+        final minTableWidth = columns.fold<double>(
+          0,
+          (sum, c) => sum + (c.flex * minCellWidth),
+        );
         final tableWidth = max(constraints.maxWidth, minTableWidth);
         return SingleChildScrollView(
           scrollDirection: Axis.horizontal,
@@ -4311,7 +5564,10 @@ class _DeskTable extends StatelessWidget {
             child: Column(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
                   decoration: BoxDecoration(
                     color: kDeskCardAlt,
                     borderRadius: BorderRadius.circular(12),
@@ -4327,7 +5583,11 @@ class _DeskTable extends StatelessWidget {
                             children: [
                               Text(
                                 c.label.toUpperCase(),
-                                style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.6), letterSpacing: 0.6),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white.withOpacity(0.6),
+                                  letterSpacing: 0.6,
+                                ),
                               ),
                             ],
                           ),
@@ -4339,7 +5599,10 @@ class _DeskTable extends StatelessWidget {
                 ...rows.map((cells) {
                   return Container(
                     margin: const EdgeInsets.only(bottom: 6),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
                     decoration: BoxDecoration(
                       color: kDeskCard,
                       borderRadius: BorderRadius.circular(12),
@@ -4352,9 +5615,7 @@ class _DeskTable extends StatelessWidget {
                             flex: columns[i].flex,
                             child: Column(
                               crossAxisAlignment: columns[i].align,
-                              children: [
-                                cells[i],
-                              ],
+                              children: [cells[i]],
                             ),
                           ),
                       ],
@@ -4371,7 +5632,12 @@ class _DeskTable extends StatelessWidget {
 }
 
 class DesktopDashboardView extends ConsumerWidget {
-  const DesktopDashboardView({super.key, required this.user, required this.token, required this.search});
+  const DesktopDashboardView({
+    super.key,
+    required this.user,
+    required this.token,
+    required this.search,
+  });
   final StaffUser user;
   final String token;
   final ValueListenable<String> search;
@@ -4382,8 +5648,16 @@ class DesktopDashboardView extends ConsumerWidget {
     final fromDate = DateTime.now();
     final fromDateParam =
         '${fromDate.year.toString().padLeft(4, '0')}-${fromDate.month.toString().padLeft(2, '0')}-${fromDate.day.toString().padLeft(2, '0')}';
-    final eventsFuture = ref.read(apiProvider).staffEvents(token, assignedOnly: !canSeeAllEvents, fromDate: fromDateParam);
-    final ordersFuture = ref.read(apiProvider).staffOrdersList(token, status: 'pending');
+    final eventsFuture = ref
+        .read(apiProvider)
+        .staffEvents(
+          token,
+          assignedOnly: !canSeeAllEvents,
+          fromDate: fromDateParam,
+        );
+    final ordersFuture = ref
+        .read(apiProvider)
+        .staffOrdersList(token, status: 'pending');
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(kDeskGutter),
@@ -4394,47 +5668,55 @@ class DesktopDashboardView extends ConsumerWidget {
             future: eventsFuture,
             builder: (context, snap) {
               final events = snap.data ?? const <StaffEvent>[];
-              final upcoming = _upcomingEvents(_filterEventsForUser(events, user));
-              return LayoutBuilder(builder: (context, constraints) {
-                final width = constraints.maxWidth;
-                final columns = width > 1200 ? 4 : width > 900 ? 3 : 2;
-                final cardWidth = (width - (columns - 1) * 16) / columns;
-                return Wrap(
-                  spacing: 16,
-                  runSpacing: 16,
-                  children: [
-                    SizedBox(
-                      width: cardWidth,
-                      child: _DeskKpiCard(
-                        title: 'Servicos marcados',
-                        value: upcoming.length.toString(),
-                        subtitle: 'A partir de hoje',
-                        icon: Icons.event_available,
+              final upcoming = _upcomingEvents(
+                _filterEventsForUser(events, user),
+              );
+              return LayoutBuilder(
+                builder: (context, constraints) {
+                  final width = constraints.maxWidth;
+                  final columns = width > 1200
+                      ? 4
+                      : width > 900
+                      ? 3
+                      : 2;
+                  final cardWidth = (width - (columns - 1) * 16) / columns;
+                  return Wrap(
+                    spacing: 16,
+                    runSpacing: 16,
+                    children: [
+                      SizedBox(
+                        width: cardWidth,
+                        child: _DeskKpiCard(
+                          title: 'Servicos marcados',
+                          value: upcoming.length.toString(),
+                          subtitle: 'A partir de hoje',
+                          icon: Icons.event_available,
+                        ),
                       ),
-                    ),
-                    SizedBox(
-                      width: cardWidth,
-                      child: _DeskKpiCard(
-                        title: 'Pedidos pendentes',
-                        value: '—',
-                        subtitle: 'A confirmar',
-                        icon: Icons.receipt_long,
-                        color: Colors.orangeAccent,
+                      SizedBox(
+                        width: cardWidth,
+                        child: _DeskKpiCard(
+                          title: 'Pedidos pendentes',
+                          value: '—',
+                          subtitle: 'A confirmar',
+                          icon: Icons.receipt_long,
+                          color: Colors.orangeAccent,
+                        ),
                       ),
-                    ),
-                    SizedBox(
-                      width: cardWidth,
-                      child: _DeskKpiCard(
-                        title: 'Eventos do mes',
-                        value: _eventsByDay(events).length.toString(),
-                        subtitle: 'Total de dias ativos',
-                        icon: Icons.calendar_today,
-                        color: Colors.lightBlueAccent,
+                      SizedBox(
+                        width: cardWidth,
+                        child: _DeskKpiCard(
+                          title: 'Eventos do mes',
+                          value: _eventsByDay(events).length.toString(),
+                          subtitle: 'Total de dias ativos',
+                          icon: Icons.calendar_today,
+                          color: Colors.lightBlueAccent,
+                        ),
                       ),
-                    ),
-                  ],
-                );
-              });
+                    ],
+                  );
+                },
+              );
             },
           ),
           const SizedBox(height: 22),
@@ -4449,10 +5731,26 @@ class DesktopDashboardView extends ConsumerWidget {
                   _DeskCard(
                     child: Column(
                       children: [
-                        _DesktopActivityRow(title: 'Pagamento confirmado', subtitle: 'Pedido S59-43MZX', time: 'agora'),
-                        _DesktopActivityRow(title: 'Upload concluido', subtitle: 'Evento Casamento Silva', time: 'há 1h'),
-                        _DesktopActivityRow(title: 'Servico agendado', subtitle: 'Batizado 14/04', time: 'há 3h'),
-                        _DesktopActivityRow(title: 'Cliente criou pedido', subtitle: 'Pedido S59-43MZW', time: 'ontem'),
+                        _DesktopActivityRow(
+                          title: 'Pagamento confirmado',
+                          subtitle: 'Pedido S59-43MZX',
+                          time: 'agora',
+                        ),
+                        _DesktopActivityRow(
+                          title: 'Upload concluido',
+                          subtitle: 'Evento Casamento Silva',
+                          time: 'há 1h',
+                        ),
+                        _DesktopActivityRow(
+                          title: 'Servico agendado',
+                          subtitle: 'Batizado 14/04',
+                          time: 'há 3h',
+                        ),
+                        _DesktopActivityRow(
+                          title: 'Cliente criou pedido',
+                          subtitle: 'Pedido S59-43MZW',
+                          time: 'ontem',
+                        ),
                       ],
                     ),
                   ),
@@ -4466,24 +5764,42 @@ class DesktopDashboardView extends ConsumerWidget {
                       final visible = orders.take(5).toList();
                       final rows = visible.isNotEmpty
                           ? visible
-                              .map((o) => List<Widget>.of([
-                                    Text(o.orderCode, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                .map(
+                                  (o) => List<Widget>.of([
+                                    Text(
+                                      o.orderCode,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
                                     Text(o.customerName),
-                                    _DeskStatusBadge(o.status.toUpperCase(), color: Colors.orangeAccent),
-                                    Text('€${(o.totalAmount ?? 0).toStringAsFixed(2)}'),
-                                  ]))
-                              .toList()
+                                    _DeskStatusBadge(
+                                      o.status.toUpperCase(),
+                                      color: Colors.orangeAccent,
+                                    ),
+                                    Text(
+                                      '€${(o.totalAmount ?? 0).toStringAsFixed(2)}',
+                                    ),
+                                  ]),
+                                )
+                                .toList()
                           : [
                               [
                                 const Text('S59-XX12'),
                                 const Text('Maria Costa'),
-                                const _DeskStatusBadge('PENDENTE', color: Colors.orangeAccent),
+                                const _DeskStatusBadge(
+                                  'PENDENTE',
+                                  color: Colors.orangeAccent,
+                                ),
                                 const Text('€85.00'),
                               ],
                               [
                                 const Text('S59-XX13'),
                                 const Text('Joao Silva'),
-                                const _DeskStatusBadge('PENDENTE', color: Colors.orangeAccent),
+                                const _DeskStatusBadge(
+                                  'PENDENTE',
+                                  color: Colors.orangeAccent,
+                                ),
                                 const Text('€50.00'),
                               ],
                             ];
@@ -4492,7 +5808,11 @@ class DesktopDashboardView extends ConsumerWidget {
                           _DeskTableColumn('Pedido', flex: 2),
                           _DeskTableColumn('Cliente', flex: 3),
                           _DeskTableColumn('Estado', flex: 2),
-                          _DeskTableColumn('Total', flex: 2, align: CrossAxisAlignment.end),
+                          _DeskTableColumn(
+                            'Total',
+                            flex: 2,
+                            align: CrossAxisAlignment.end,
+                          ),
                         ],
                         rows: rows,
                       );
@@ -4509,7 +5829,9 @@ class DesktopDashboardView extends ConsumerWidget {
                     future: eventsFuture,
                     builder: (context, snap) {
                       final events = snap.data ?? const <StaffEvent>[];
-                      final upcoming = _upcomingEvents(_filterEventsForUser(events, user)).take(5).toList();
+                      final upcoming = _upcomingEvents(
+                        _filterEventsForUser(events, user),
+                      ).take(5).toList();
                       return _DeskCard(
                         child: Column(
                           children: [
@@ -4525,11 +5847,18 @@ class DesktopDashboardView extends ConsumerWidget {
                                 badge: 'Confirmado',
                               ),
                             ] else ...[
-                              ...upcoming.map((e) => _DesktopEventRow(
-                                    title: e.name.isNotEmpty ? e.name : 'Evento ${e.id}',
-                                    subtitle: _formatEventDateTime(e.eventDate, e.eventTime),
-                                    badge: _eventTypeLabel(e),
-                                  )),
+                              ...upcoming.map(
+                                (e) => _DesktopEventRow(
+                                  title: e.name.isNotEmpty
+                                      ? e.name
+                                      : 'Evento ${e.id}',
+                                  subtitle: _formatEventDateTime(
+                                    e.eventDate,
+                                    e.eventTime,
+                                  ),
+                                  badge: _eventTypeLabel(e),
+                                ),
+                              ),
                             ],
                           ],
                         ),
@@ -4545,15 +5874,28 @@ class DesktopDashboardView extends ConsumerWidget {
                       children: [
                         Row(
                           children: const [
-                            _DeskStatusBadge('ONLINE', color: Colors.lightGreenAccent),
+                            _DeskStatusBadge(
+                              'ONLINE',
+                              color: Colors.lightGreenAccent,
+                            ),
                             SizedBox(width: 10),
                             Text('Sincronizacao ativa'),
                           ],
                         ),
                         const SizedBox(height: 12),
-                        Text('Ultima sync: há 2 minutos', style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                        Text(
+                          'Ultima sync: há 2 minutos',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                          ),
+                        ),
                         const SizedBox(height: 8),
-                        Text('Pendentes: 0 uploads • 1 pedido offline', style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                        Text(
+                          'Pendentes: 0 uploads • 1 pedido offline',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -4564,9 +5906,20 @@ class DesktopDashboardView extends ConsumerWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Vendas totais', style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                        Text(
+                          'Vendas totais',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                          ),
+                        ),
                         const SizedBox(height: 6),
-                        const Text('€4 280', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                        const Text(
+                          '€4 280',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                         const SizedBox(height: 12),
                         Row(
                           children: const [
@@ -4582,11 +5935,7 @@ class DesktopDashboardView extends ConsumerWidget {
               if (isNarrow) {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    left,
-                    const SizedBox(height: 22),
-                    right,
-                  ],
+                  children: [left, const SizedBox(height: 22), right],
                 );
               }
               return Row(
@@ -4606,7 +5955,11 @@ class DesktopDashboardView extends ConsumerWidget {
 }
 
 class _DesktopActivityRow extends StatelessWidget {
-  const _DesktopActivityRow({required this.title, required this.subtitle, required this.time});
+  const _DesktopActivityRow({
+    required this.title,
+    required this.subtitle,
+    required this.time,
+  });
   final String title;
   final String subtitle;
   final String time;
@@ -4620,19 +5973,37 @@ class _DesktopActivityRow extends StatelessWidget {
           Container(
             width: 8,
             height: 8,
-            decoration: BoxDecoration(color: kBrandRose, borderRadius: BorderRadius.circular(4)),
+            decoration: BoxDecoration(
+              color: kBrandRose,
+              borderRadius: BorderRadius.circular(4),
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-                Text(subtitle, style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 12,
+                  ),
+                ),
               ],
             ),
           ),
-          Text(time, style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 11)),
+          Text(
+            time,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.5),
+              fontSize: 11,
+            ),
+          ),
         ],
       ),
     );
@@ -4640,7 +6011,11 @@ class _DesktopActivityRow extends StatelessWidget {
 }
 
 class _DesktopEventRow extends StatelessWidget {
-  const _DesktopEventRow({required this.title, required this.subtitle, required this.badge});
+  const _DesktopEventRow({
+    required this.title,
+    required this.subtitle,
+    required this.badge,
+  });
   final String title;
   final String subtitle;
   final String badge;
@@ -4655,8 +6030,17 @@ class _DesktopEventRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-                Text(subtitle, style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 12,
+                  ),
+                ),
               ],
             ),
           ),
@@ -4668,7 +6052,12 @@ class _DesktopEventRow extends StatelessWidget {
 }
 
 class DesktopEventsView extends ConsumerStatefulWidget {
-  const DesktopEventsView({super.key, required this.user, required this.token, required this.search});
+  const DesktopEventsView({
+    super.key,
+    required this.user,
+    required this.token,
+    required this.search,
+  });
   final StaffUser user;
   final String token;
   final ValueListenable<String> search;
@@ -4688,7 +6077,9 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
   }
 
   void _reload() {
-    _future = ref.read(apiProvider).staffEvents(
+    _future = ref
+        .read(apiProvider)
+        .staffEvents(
           widget.token,
           eventType: _eventType.isEmpty ? null : _eventType,
           assignedOnly: !_canSeeAllEvents(widget.user),
@@ -4732,7 +6123,11 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
                   _reload();
                 }),
               ),
-              OutlinedButton.icon(onPressed: _reload, icon: const Icon(Icons.refresh), label: const Text('Atualizar')),
+              OutlinedButton.icon(
+                onPressed: _reload,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Atualizar'),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -4745,42 +6140,78 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
                   final events = snap.data ?? const <StaffEvent>[];
                   final filtered = _filterEventsForUser(events, widget.user);
                   final search = value.trim().toLowerCase();
-                  final visible = search.isEmpty ? filtered : filtered.where((e) => _eventSearchBlob(e).contains(search)).toList();
+                  final visible = search.isEmpty
+                      ? filtered
+                      : filtered
+                            .where((e) => _eventSearchBlob(e).contains(search))
+                            .toList();
                   final rows = visible.isNotEmpty
                       ? visible
-                          .map((e) => [
-                                Text(_formatEventDateTime(e.eventDate, e.eventTime), style: const TextStyle(fontWeight: FontWeight.w600)),
+                            .map(
+                              (e) => [
+                                Text(
+                                  _formatEventDateTime(
+                                    e.eventDate,
+                                    e.eventTime,
+                                  ),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
                                 Text(_eventTypeLabel(e)),
                                 Text(_displayReportNumber(e) ?? '—'),
-                                Text(_eventTeamLabel(e).isEmpty ? '—' : _eventTeamLabel(e)),
+                                Text(
+                                  _eventTeamLabel(e).isEmpty
+                                      ? '—'
+                                      : _eventTeamLabel(e),
+                                ),
                                 Text('${_eventPhotoCount(e)}'),
-                                Text('€${_eventSalesTotal(e).toStringAsFixed(0)}'),
-                                _DeskStatusBadge('Ativo', color: Colors.lightGreenAccent),
+                                Text(
+                                  '€${_eventSalesTotal(e).toStringAsFixed(0)}',
+                                ),
+                                _DeskStatusBadge(
+                                  'Ativo',
+                                  color: Colors.lightGreenAccent,
+                                ),
                                 Row(
                                   children: [
                                     TextButton(
-                                      onPressed: widget.user.hasPermission('events.view')
+                                      onPressed:
+                                          widget.user.hasPermission(
+                                            'events.view',
+                                          )
                                           ? () => Navigator.push(
-                                                context,
-                                                MaterialPageRoute(builder: (_) => StaffEventDetailPage(event: e)),
-                                              )
+                                              context,
+                                              MaterialPageRoute(
+                                                builder: (_) =>
+                                                    StaffEventDetailPage(
+                                                      event: e,
+                                                    ),
+                                              ),
+                                            )
                                           : null,
                                       child: const Text('Detalhe'),
                                     ),
-                                    if (widget.user.hasPermission('events.update')) ...[
+                                    if (widget.user.hasPermission(
+                                      'events.update',
+                                    )) ...[
                                       const SizedBox(width: 4),
                                       TextButton(
                                         onPressed: () => Navigator.push(
-                                              context,
-                                              MaterialPageRoute(builder: (_) => StaffEventStaffPage(event: e)),
-                                            ),
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) =>
+                                                StaffEventStaffPage(event: e),
+                                          ),
+                                        ),
                                         child: const Text('Equipe'),
                                       ),
                                     ],
                                   ],
                                 ),
-                              ])
-                          .toList()
+                              ],
+                            )
+                            .toList()
                       : [
                           [
                             const Text('Sem resultados'),
@@ -4817,7 +6248,11 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
 }
 
 class _DeskStatusFilterChip extends StatelessWidget {
-  const _DeskStatusFilterChip({required this.label, required this.selected, required this.onTap});
+  const _DeskStatusFilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
   final String label;
   final bool selected;
   final VoidCallback onTap;
@@ -4832,16 +6267,28 @@ class _DeskStatusFilterChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: selected ? kBrandRose.withOpacity(0.2) : kDeskCardAlt,
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: selected ? kBrandRose : kBrandRose.withOpacity(0.2)),
+          border: Border.all(
+            color: selected ? kBrandRose : kBrandRose.withOpacity(0.2),
+          ),
         ),
-        child: Text(label, style: TextStyle(color: selected ? kBrandRose : Colors.white.withOpacity(0.7))),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? kBrandRose : Colors.white.withOpacity(0.7),
+          ),
+        ),
       ),
     );
   }
 }
 
 class DesktopOrdersView extends ConsumerStatefulWidget {
-  const DesktopOrdersView({super.key, required this.user, required this.token, required this.search});
+  const DesktopOrdersView({
+    super.key,
+    required this.user,
+    required this.token,
+    required this.search,
+  });
   final StaffUser user;
   final String token;
   final ValueListenable<String> search;
@@ -4861,10 +6308,9 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
   }
 
   void _reload() {
-    _future = ref.read(apiProvider).staffOrdersList(
-          widget.token,
-          status: _status,
-        );
+    _future = ref
+        .read(apiProvider)
+        .staffOrdersList(widget.token, status: _status);
     setState(() {});
   }
 
@@ -4912,7 +6358,11 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                   _reload();
                 }),
               ),
-              OutlinedButton.icon(onPressed: _reload, icon: const Icon(Icons.refresh), label: const Text('Atualizar')),
+              OutlinedButton.icon(
+                onPressed: _reload,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Atualizar'),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -4927,29 +6377,47 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                   final visible = query.isEmpty
                       ? orders
                       : orders
-                          .where((o) => o.orderCode.toLowerCase().contains(query) || o.customerName.toLowerCase().contains(query))
-                          .toList();
+                            .where(
+                              (o) =>
+                                  o.orderCode.toLowerCase().contains(query) ||
+                                  o.customerName.toLowerCase().contains(query),
+                            )
+                            .toList();
                   final rows = visible.isNotEmpty
                       ? visible
-                          .map((o) => [
-                                Text(o.orderCode, style: const TextStyle(fontWeight: FontWeight.w600)),
+                            .map(
+                              (o) => [
+                                Text(
+                                  o.orderCode,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
                                 Text(o.customerName),
                                 Text(o.eventName ?? '—'),
-                                _DeskStatusBadge(o.status.toUpperCase(),
-                                    color: o.status == 'paid'
-                                        ? Colors.lightGreenAccent
-                                        : o.status == 'pending'
-                                            ? Colors.orangeAccent
-                                            : Colors.lightBlueAccent),
-                                Text('€${(o.totalAmount ?? 0).toStringAsFixed(2)}'),
-                              ])
-                          .toList()
+                                _DeskStatusBadge(
+                                  o.status.toUpperCase(),
+                                  color: o.status == 'paid'
+                                      ? Colors.lightGreenAccent
+                                      : o.status == 'pending'
+                                      ? Colors.orangeAccent
+                                      : Colors.lightBlueAccent,
+                                ),
+                                Text(
+                                  '€${(o.totalAmount ?? 0).toStringAsFixed(2)}',
+                                ),
+                              ],
+                            )
+                            .toList()
                       : [
                           [
                             const Text('S59-XY01'),
                             const Text('Joana Pinto'),
                             const Text('Casamento'),
-                            const _DeskStatusBadge('PENDENTE', color: Colors.orangeAccent),
+                            const _DeskStatusBadge(
+                              'PENDENTE',
+                              color: Colors.orangeAccent,
+                            ),
                             const Text('€65.00'),
                           ],
                         ];
@@ -4959,7 +6427,11 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                       _DeskTableColumn('Cliente', flex: 2),
                       _DeskTableColumn('Evento', flex: 2),
                       _DeskTableColumn('Estado', flex: 2),
-                      _DeskTableColumn('Total', flex: 1, align: CrossAxisAlignment.end),
+                      _DeskTableColumn(
+                        'Total',
+                        flex: 1,
+                        align: CrossAxisAlignment.end,
+                      ),
                     ],
                     rows: rows,
                   );
@@ -4974,7 +6446,12 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
 }
 
 class DesktopPhotosView extends StatelessWidget {
-  const DesktopPhotosView({super.key, required this.user, required this.token, required this.search});
+  const DesktopPhotosView({
+    super.key,
+    required this.user,
+    required this.token,
+    required this.search,
+  });
   final StaffUser user;
   final String token;
   final ValueListenable<String> search;
@@ -4991,7 +6468,11 @@ class DesktopPhotosView extends StatelessWidget {
           LayoutBuilder(
             builder: (context, constraints) {
               final width = constraints.maxWidth;
-              final columns = width > 1200 ? 4 : width > 900 ? 3 : 2;
+              final columns = width > 1200
+                  ? 4
+                  : width > 900
+                  ? 3
+                  : 2;
               return GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -5014,12 +6495,27 @@ class DesktopPhotosView extends StatelessWidget {
                             color: kDeskCardAlt,
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Center(child: Icon(Icons.photo, size: 32, color: kDeskMuted)),
+                          child: const Center(
+                            child: Icon(
+                              Icons.photo,
+                              size: 32,
+                              color: kDeskMuted,
+                            ),
+                          ),
                         ),
                         const SizedBox(height: 10),
-                        Text('Evento ${index + 1}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                        Text(
+                          'Evento ${index + 1}',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
                         const SizedBox(height: 4),
-                        Text('250 fotos • 14/04/2026', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
+                        Text(
+                          '250 fotos • 14/04/2026',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 12,
+                          ),
+                        ),
                       ],
                     ),
                   );
@@ -5034,7 +6530,12 @@ class DesktopPhotosView extends StatelessWidget {
 }
 
 class DesktopClientsView extends StatelessWidget {
-  const DesktopClientsView({super.key, required this.user, required this.token, required this.search});
+  const DesktopClientsView({
+    super.key,
+    required this.user,
+    required this.token,
+    required this.search,
+  });
   final StaffUser user;
   final String token;
   final ValueListenable<String> search;
@@ -5078,7 +6579,11 @@ class DesktopClientsView extends StatelessWidget {
 }
 
 class DesktopPaymentsView extends StatelessWidget {
-  const DesktopPaymentsView({super.key, required this.user, required this.token});
+  const DesktopPaymentsView({
+    super.key,
+    required this.user,
+    required this.token,
+  });
   final StaffUser user;
   final String token;
 
@@ -5143,23 +6648,40 @@ class DesktopSyncView extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Estado', style: TextStyle(fontWeight: FontWeight.w600)),
+                      const Text(
+                        'Estado',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
                       const SizedBox(height: 8),
                       Row(
                         children: const [
-                          _DeskStatusBadge('ONLINE', color: Colors.lightGreenAccent),
+                          _DeskStatusBadge(
+                            'ONLINE',
+                            color: Colors.lightGreenAccent,
+                          ),
                           SizedBox(width: 8),
                           Text('Sincronizacao ativa'),
                         ],
                       ),
                       const SizedBox(height: 12),
-                      Text('Ultimo sync: há 2 minutos', style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                      Text(
+                        'Ultimo sync: há 2 minutos',
+                        style: TextStyle(color: Colors.white.withOpacity(0.6)),
+                      ),
                       const SizedBox(height: 12),
                       Wrap(
                         spacing: 8,
                         children: [
-                          OutlinedButton.icon(onPressed: () {}, icon: const Icon(Icons.file_download), label: const Text('Exportar')),
-                          OutlinedButton.icon(onPressed: () {}, icon: const Icon(Icons.file_upload), label: const Text('Importar')),
+                          OutlinedButton.icon(
+                            onPressed: () {},
+                            icon: const Icon(Icons.file_download),
+                            label: const Text('Exportar'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () {},
+                            icon: const Icon(Icons.file_upload),
+                            label: const Text('Importar'),
+                          ),
                         ],
                       ),
                     ],
@@ -5172,13 +6694,25 @@ class DesktopSyncView extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Pendentes', style: TextStyle(fontWeight: FontWeight.w600)),
+                      const Text(
+                        'Pendentes',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
                       const SizedBox(height: 8),
-                      Text('Pedidos offline: 1', style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                      Text(
+                        'Pedidos offline: 1',
+                        style: TextStyle(color: Colors.white.withOpacity(0.6)),
+                      ),
                       const SizedBox(height: 6),
-                      Text('Uploads em fila: 0', style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                      Text(
+                        'Uploads em fila: 0',
+                        style: TextStyle(color: Colors.white.withOpacity(0.6)),
+                      ),
                       const SizedBox(height: 6),
-                      Text('Erro recente: nenhum', style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                      Text(
+                        'Erro recente: nenhum',
+                        style: TextStyle(color: Colors.white.withOpacity(0.6)),
+                      ),
                     ],
                   ),
                 ),
@@ -5192,7 +6726,11 @@ class DesktopSyncView extends StatelessWidget {
 }
 
 class DesktopReportsView extends StatelessWidget {
-  const DesktopReportsView({super.key, required this.user, required this.token});
+  const DesktopReportsView({
+    super.key,
+    required this.user,
+    required this.token,
+  });
   final StaffUser user;
   final String token;
 
@@ -5207,11 +6745,32 @@ class DesktopReportsView extends StatelessWidget {
           const SizedBox(height: 12),
           Row(
             children: [
-              Expanded(child: _DeskKpiCard(title: 'Vendas', value: '€12 400', subtitle: 'Ultimos 30 dias', icon: Icons.insights)),
+              Expanded(
+                child: _DeskKpiCard(
+                  title: 'Vendas',
+                  value: '€12 400',
+                  subtitle: 'Ultimos 30 dias',
+                  icon: Icons.insights,
+                ),
+              ),
               const SizedBox(width: 16),
-              Expanded(child: _DeskKpiCard(title: 'Pedidos', value: '214', subtitle: 'Ultimos 30 dias', icon: Icons.receipt_long)),
+              Expanded(
+                child: _DeskKpiCard(
+                  title: 'Pedidos',
+                  value: '214',
+                  subtitle: 'Ultimos 30 dias',
+                  icon: Icons.receipt_long,
+                ),
+              ),
               const SizedBox(width: 16),
-              Expanded(child: _DeskKpiCard(title: 'Fotos', value: '6 820', subtitle: 'Entregues', icon: Icons.photo_library)),
+              Expanded(
+                child: _DeskKpiCard(
+                  title: 'Fotos',
+                  value: '6 820',
+                  subtitle: 'Entregues',
+                  icon: Icons.photo_library,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -5222,7 +6781,9 @@ class DesktopReportsView extends StatelessWidget {
                 color: kDeskCardAlt,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Center(child: Text('Grafico de vendas (placeholder)')),
+              child: const Center(
+                child: Text('Grafico de vendas (placeholder)'),
+              ),
             ),
           ),
         ],
@@ -5232,7 +6793,11 @@ class DesktopReportsView extends StatelessWidget {
 }
 
 class DesktopSettingsView extends StatelessWidget {
-  const DesktopSettingsView({super.key, required this.user, required this.token});
+  const DesktopSettingsView({
+    super.key,
+    required this.user,
+    required this.token,
+  });
   final StaffUser user;
   final String token;
 
@@ -5250,23 +6815,44 @@ class DesktopSettingsView extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Expanded(child: TextField(decoration: const InputDecoration(labelText: 'Nome'))),
+                    Expanded(
+                      child: TextField(
+                        decoration: const InputDecoration(labelText: 'Nome'),
+                      ),
+                    ),
                     const SizedBox(width: 12),
-                    Expanded(child: TextField(decoration: const InputDecoration(labelText: 'Email'))),
+                    Expanded(
+                      child: TextField(
+                        decoration: const InputDecoration(labelText: 'Email'),
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
                 Row(
                   children: [
-                    Expanded(child: TextField(decoration: const InputDecoration(labelText: 'Telefone'))),
+                    Expanded(
+                      child: TextField(
+                        decoration: const InputDecoration(
+                          labelText: 'Telefone',
+                        ),
+                      ),
+                    ),
                     const SizedBox(width: 12),
-                    Expanded(child: TextField(decoration: const InputDecoration(labelText: 'Funcao'))),
+                    Expanded(
+                      child: TextField(
+                        decoration: const InputDecoration(labelText: 'Funcao'),
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 16),
                 Align(
                   alignment: Alignment.centerRight,
-                  child: FilledButton(onPressed: () {}, child: const Text('Guardar alteracoes')),
+                  child: FilledButton(
+                    onPressed: () {},
+                    child: const Text('Guardar alteracoes'),
+                  ),
                 ),
               ],
             ),
@@ -5278,7 +6864,11 @@ class DesktopSettingsView extends StatelessWidget {
 }
 
 class DesktopAppConfigView extends StatelessWidget {
-  const DesktopAppConfigView({super.key, required this.user, required this.token});
+  const DesktopAppConfigView({
+    super.key,
+    required this.user,
+    required this.token,
+  });
   final StaffUser user;
   final String token;
 
@@ -5292,12 +6882,17 @@ class DesktopAppConfigView extends StatelessWidget {
 }
 
 class DesktopServicesView extends ConsumerStatefulWidget {
-  const DesktopServicesView({super.key, required this.user, required this.token});
+  const DesktopServicesView({
+    super.key,
+    required this.user,
+    required this.token,
+  });
   final StaffUser user;
   final String token;
 
   @override
-  ConsumerState<DesktopServicesView> createState() => _DesktopServicesViewState();
+  ConsumerState<DesktopServicesView> createState() =>
+      _DesktopServicesViewState();
 }
 
 class _DesktopServicesViewState extends ConsumerState<DesktopServicesView> {
@@ -5308,24 +6903,39 @@ class _DesktopServicesViewState extends ConsumerState<DesktopServicesView> {
   DateTime _focusedDay = _startOfDay(DateTime.now());
   DateTime? _selectedDay;
 
-  void _ensureFuture(String token, {required bool assignedOnly, String? fromDate}) {
-    if (_future == null || _token != token || _assignedOnly != assignedOnly || _fromDate != fromDate) {
+  void _ensureFuture(
+    String token, {
+    required bool assignedOnly,
+    String? fromDate,
+  }) {
+    if (_future == null ||
+        _token != token ||
+        _assignedOnly != assignedOnly ||
+        _fromDate != fromDate) {
       _token = token;
       _assignedOnly = assignedOnly;
       _fromDate = fromDate;
-      _future = ref.read(apiProvider).staffEvents(token, assignedOnly: assignedOnly, fromDate: fromDate);
+      _future = ref
+          .read(apiProvider)
+          .staffEvents(token, assignedOnly: assignedOnly, fromDate: fromDate);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final canCalendar = widget.user.hasPermission('events.list') || widget.user.hasPermission('events.view');
+    final canCalendar =
+        widget.user.hasPermission('events.list') ||
+        widget.user.hasPermission('events.view');
     final canSeeAllEvents = _canSeeAllEvents(widget.user);
     final now = DateTime.now();
     final fromDate =
         '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     if (canCalendar) {
-      _ensureFuture(widget.token, assignedOnly: !canSeeAllEvents, fromDate: fromDate);
+      _ensureFuture(
+        widget.token,
+        assignedOnly: !canSeeAllEvents,
+        fromDate: fromDate,
+      );
     }
 
     return SingleChildScrollView(
@@ -5343,19 +6953,30 @@ class _DesktopServicesViewState extends ConsumerState<DesktopServicesView> {
               builder: (context, snap) {
                 if (!snap.hasData) {
                   return const _DeskCard(
-                    child: SizedBox(height: 180, child: Center(child: CircularProgressIndicator())),
+                    child: SizedBox(
+                      height: 180,
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
                   );
                 }
-                final events = _filterEventsForUser(snap.data ?? const <StaffEvent>[], widget.user);
+                final events = _filterEventsForUser(
+                  snap.data ?? const <StaffEvent>[],
+                  widget.user,
+                );
                 if (events.isEmpty) {
-                  return const _DeskCard(child: Text('Sem eventos disponíveis.'));
+                  return const _DeskCard(
+                    child: Text('Sem eventos disponíveis.'),
+                  );
                 }
                 final eventsByDay = _eventsByDay(events);
                 final selected = _selectedDay ?? _focusedDay;
                 final selectedKey = _startOfDay(selected);
-                final dayEvents = eventsByDay[selectedKey] ?? const <StaffEvent>[];
+                final dayEvents =
+                    eventsByDay[selectedKey] ?? const <StaffEvent>[];
 
-                final weekStart = selectedKey.subtract(Duration(days: selectedKey.weekday - 1));
+                final weekStart = selectedKey.subtract(
+                  Duration(days: selectedKey.weekday - 1),
+                );
                 final weekEnd = weekStart.add(const Duration(days: 6));
                 final weekCount = events.where((e) {
                   final date = _parseEventDate(e.eventDate);
@@ -5375,32 +6996,55 @@ class _DesktopServicesViewState extends ConsumerState<DesktopServicesView> {
                               firstDay: _calendarFirstDay(events),
                               lastDay: _calendarLastDay(events),
                               focusedDay: _focusedDay,
-                              selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-                              eventLoader: (day) => eventsByDay[_startOfDay(day)] ?? const <StaffEvent>[],
+                              selectedDayPredicate: (day) =>
+                                  isSameDay(_selectedDay, day),
+                              eventLoader: (day) =>
+                                  eventsByDay[_startOfDay(day)] ??
+                                  const <StaffEvent>[],
                               availableGestures: AvailableGestures.all,
                               pageJumpingEnabled: true,
-                              headerStyle: const HeaderStyle(formatButtonVisible: false, titleCentered: true),
+                              headerStyle: const HeaderStyle(
+                                formatButtonVisible: false,
+                                titleCentered: true,
+                              ),
                               calendarStyle: CalendarStyle(
                                 outsideDaysVisible: false,
-                                todayDecoration: BoxDecoration(color: kBrandRose.withOpacity(0.4), shape: BoxShape.circle),
-                                selectedDecoration: const BoxDecoration(color: kBrandRose, shape: BoxShape.circle),
-                                markerDecoration: const BoxDecoration(color: kBrandRose, shape: BoxShape.circle),
+                                todayDecoration: BoxDecoration(
+                                  color: kBrandRose.withOpacity(0.4),
+                                  shape: BoxShape.circle,
+                                ),
+                                selectedDecoration: const BoxDecoration(
+                                  color: kBrandRose,
+                                  shape: BoxShape.circle,
+                                ),
+                                markerDecoration: const BoxDecoration(
+                                  color: kBrandRose,
+                                  shape: BoxShape.circle,
+                                ),
                               ),
                               calendarBuilders: CalendarBuilders(
                                 markerBuilder: (context, date, events) {
-                                  if (events.isEmpty) return const SizedBox.shrink();
+                                  if (events.isEmpty)
+                                    return const SizedBox.shrink();
                                   return Align(
                                     alignment: Alignment.bottomCenter,
                                     child: Container(
                                       margin: const EdgeInsets.only(bottom: 4),
-                                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 4,
+                                        vertical: 1,
+                                      ),
                                       decoration: BoxDecoration(
                                         color: kBrandRose,
                                         borderRadius: BorderRadius.circular(8),
                                       ),
                                       child: Text(
                                         '${events.length}',
-                                        style: const TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold),
+                                        style: const TextStyle(
+                                          color: Colors.black,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                       ),
                                     ),
                                   );
@@ -5421,39 +7065,63 @@ class _DesktopServicesViewState extends ConsumerState<DesktopServicesView> {
                             const SizedBox(height: 12),
                             Align(
                               alignment: Alignment.centerLeft,
-                              child: Text('Eventos do dia', style: TextStyle(color: Colors.white.withOpacity(0.8))),
+                              child: Text(
+                                'Eventos do dia',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.8),
+                                ),
+                              ),
                             ),
                             const SizedBox(height: 8),
                             if (dayEvents.isEmpty)
                               const Text('Sem eventos neste dia')
                             else
-                              ...dayEvents.map((e) => ListTile(
-                                    dense: true,
-                                    contentPadding: EdgeInsets.zero,
-                                    title: Text(e.name),
-                                    subtitle: Text(_formatEventDateTime(e.eventDate, e.eventTime)),
-                                    trailing: Wrap(
-                                      spacing: 8,
-                                      children: [
-                                        if (widget.user.hasPermission('events.view'))
-                                          TextButton(
-                                            onPressed: () => Navigator.push(
-                                              context,
-                                              MaterialPageRoute(builder: (_) => StaffEventDetailPage(event: e)),
-                                            ),
-                                            child: const Text('Detalhe'),
-                                          ),
-                                        if (widget.user.hasPermission('events.update'))
-                                          TextButton(
-                                            onPressed: () => Navigator.push(
-                                              context,
-                                              MaterialPageRoute(builder: (_) => StaffEventStaffPage(event: e)),
-                                            ),
-                                            child: const Text('Equipe'),
-                                          ),
-                                      ],
+                              ...dayEvents.map(
+                                (e) => ListTile(
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  title: Text(e.name),
+                                  subtitle: Text(
+                                    _formatEventDateTime(
+                                      e.eventDate,
+                                      e.eventTime,
                                     ),
-                                  )),
+                                  ),
+                                  trailing: Wrap(
+                                    spacing: 8,
+                                    children: [
+                                      if (widget.user.hasPermission(
+                                        'events.view',
+                                      ))
+                                        TextButton(
+                                          onPressed: () => Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  StaffEventDetailPage(
+                                                    event: e,
+                                                  ),
+                                            ),
+                                          ),
+                                          child: const Text('Detalhe'),
+                                        ),
+                                      if (widget.user.hasPermission(
+                                        'events.update',
+                                      ))
+                                        TextButton(
+                                          onPressed: () => Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  StaffEventStaffPage(event: e),
+                                            ),
+                                          ),
+                                          child: const Text('Equipe'),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
                           ],
                         ),
                       ),
@@ -5465,14 +7133,33 @@ class _DesktopServicesViewState extends ConsumerState<DesktopServicesView> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('Resumo da agenda', style: TextStyle(fontWeight: FontWeight.w600)),
+                            const Text(
+                              'Resumo da agenda',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
                             const SizedBox(height: 10),
-                            Text('Servicos esta semana: $weekCount', style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                            Text(
+                              'Servicos esta semana: $weekCount',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.6),
+                              ),
+                            ),
                             const SizedBox(height: 6),
-                            Text('Eventos totais: ${events.length}', style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                            Text(
+                              'Eventos totais: ${events.length}',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.6),
+                              ),
+                            ),
                             const SizedBox(height: 6),
-                            Text('Selecionado: ${_formatEventDateTime(selectedKey.toIso8601String(), '')}'.split(' ').first,
-                                style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                            Text(
+                              'Selecionado: ${_formatEventDateTime(selectedKey.toIso8601String(), '')}'
+                                  .split(' ')
+                                  .first,
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.6),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -5551,9 +7238,9 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
       await OpenFilex.open(file.path);
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro a gerar PDF: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro a gerar PDF: $e')));
     } finally {
       if (context.mounted) Navigator.pop(context);
     }
@@ -5566,11 +7253,9 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
     final assignedOnly = user?.role != 'admin';
     _lastToken = token;
     _lastEventType = _eventType;
-    _future = ref.read(apiProvider).staffEvents(
-      token,
-      eventType: _eventType,
-      assignedOnly: assignedOnly,
-    );
+    _future = ref
+        .read(apiProvider)
+        .staffEvents(token, eventType: _eventType, assignedOnly: assignedOnly);
     setState(() {});
   }
 
@@ -5578,25 +7263,26 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
     final user = ref.watch(staffUserProvider);
-    if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null || user == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     if (useDesktopLayout(context)) {
-      return StaffDesktopShell(
-        user: user,
-        token: token,
-        initialId: 'events',
-      );
+      return StaffDesktopShell(user: user, token: token, initialId: 'events');
     }
     final isWide = MediaQuery.of(context).size.width >= 900;
 
-    if (_future == null || _lastToken != token || _lastEventType != _eventType) {
+    if (_future == null ||
+        _lastToken != token ||
+        _lastEventType != _eventType) {
       _lastToken = token;
       _lastEventType = _eventType;
       final assignedOnly = user.role != 'admin';
-      _future = ref.read(apiProvider).staffEvents(
-        token,
-        eventType: _eventType,
-        assignedOnly: assignedOnly,
-      );
+      _future = ref
+          .read(apiProvider)
+          .staffEvents(
+            token,
+            eventType: _eventType,
+            assignedOnly: assignedOnly,
+          );
     }
 
     return Scaffold(
@@ -5610,7 +7296,10 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
               onPressed: () async {
                 await Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => StaffEventFormPage(initialEventType: _eventType)),
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        StaffEventFormPage(initialEventType: _eventType),
+                  ),
                 );
                 _reload();
               },
@@ -5626,19 +7315,34 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
               if (snap.hasError) {
                 return ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
-                  children: [Padding(padding: const EdgeInsets.all(16), child: Text('Erro: ${snap.error}'))],
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text('Erro: ${snap.error}'),
+                    ),
+                  ],
                 );
               }
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                children: const [SizedBox(height: 300, child: Center(child: CircularProgressIndicator()))],
+                children: const [
+                  SizedBox(
+                    height: 300,
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                ],
               );
             }
             final events = _orderEvents(_filterEventsForUser(snap.data!, user));
             if (events.isEmpty) {
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                children: const [Padding(padding: EdgeInsets.all(16), child: Text('Sem eventos'))],
+                children: const [
+                  Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text('Sem eventos'),
+                  ),
+                ],
               );
             }
             return ListView.builder(
@@ -5664,8 +7368,14 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
                                 _reload();
                               },
                               selectedColor: kBrandRose,
-                              labelStyle: TextStyle(color: _eventType == 'casamento' ? kBrandBlack : kBrandRose),
-                              side: BorderSide(color: kBrandRose.withOpacity(0.8)),
+                              labelStyle: TextStyle(
+                                color: _eventType == 'casamento'
+                                    ? kBrandBlack
+                                    : kBrandRose,
+                              ),
+                              side: BorderSide(
+                                color: kBrandRose.withOpacity(0.8),
+                              ),
                             ),
                             ChoiceChip(
                               label: const Text('BATIZADO'),
@@ -5676,8 +7386,14 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
                                 _reload();
                               },
                               selectedColor: kBrandRose,
-                              labelStyle: TextStyle(color: _eventType == 'batizado' ? kBrandBlack : kBrandRose),
-                              side: BorderSide(color: kBrandRose.withOpacity(0.8)),
+                              labelStyle: TextStyle(
+                                color: _eventType == 'batizado'
+                                    ? kBrandBlack
+                                    : kBrandRose,
+                              ),
+                              side: BorderSide(
+                                color: kBrandRose.withOpacity(0.8),
+                              ),
                             ),
                           ],
                         ),
@@ -5697,7 +7413,9 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
                                   await Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (_) => StaffEventFormPage(initialEventType: _eventType),
+                                      builder: (_) => StaffEventFormPage(
+                                        initialEventType: _eventType,
+                                      ),
                                     ),
                                   );
                                   _reload();
@@ -5715,19 +7433,30 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
                 final report = _displayReportNumber(e);
                 final subtitleParts = <String>[
                   if (report != null && report.isNotEmpty) 'Nº $report',
-                  if (e.eventDate.isNotEmpty) _formatEventDateTime(e.eventDate, e.eventTime),
+                  if (e.eventDate.isNotEmpty)
+                    _formatEventDateTime(e.eventDate, e.eventTime),
                   if (e.location != null && e.location!.isNotEmpty) e.location!,
                 ];
-                final subtitle = subtitleParts.isEmpty ? '' : subtitleParts.join(' • ');
+                final subtitle = subtitleParts.isEmpty
+                    ? ''
+                    : subtitleParts.join(' • ');
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
                   child: InkWell(
                     onTap: user.hasPermission('events.view')
-                        ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => StaffEventDetailPage(event: e)))
+                        ? () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => StaffEventDetailPage(event: e),
+                            ),
+                          )
                         : null,
                     borderRadius: BorderRadius.circular(12),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                       decoration: BoxDecoration(
                         color: kBrandBlack,
                         borderRadius: BorderRadius.circular(12),
@@ -5747,9 +7476,19 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(e.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                Text(
+                                  e.name,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
                                 const SizedBox(height: 4),
-                                Text(subtitle, style: TextStyle(color: kBrandRose.withOpacity(0.8))),
+                                Text(
+                                  subtitle,
+                                  style: TextStyle(
+                                    color: kBrandRose.withOpacity(0.8),
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -5760,8 +7499,14 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
                                 IconButton(
                                   icon: const Icon(Icons.qr_code_2),
                                   onPressed: () {
-                                    final url = ref.read(apiProvider).publicQrUrl(e.qrToken!);
-                                    showQrDialog(context, title: 'QR Code do Evento', url: url);
+                                    final url = ref
+                                        .read(apiProvider)
+                                        .publicQrUrl(e.qrToken!);
+                                    showQrDialog(
+                                      context,
+                                      title: 'QR Code do Evento',
+                                      url: url,
+                                    );
                                   },
                                 ),
                               if (user.hasPermission('events.update'))
@@ -5770,7 +7515,10 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
                                   onPressed: () async {
                                     await Navigator.push(
                                       context,
-                                      MaterialPageRoute(builder: (_) => StaffEventFormPage(event: e)),
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            StaffEventFormPage(event: e),
+                                      ),
                                     );
                                     _reload();
                                   },
@@ -5779,9 +7527,15 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
                                 IconButton(
                                   icon: const Icon(Icons.delete_outline),
                                   onPressed: () async {
-                                    final ok = await _confirm(context, 'Apagar evento?', 'Isto remove fotos e uploads.');
+                                    final ok = await _confirm(
+                                      context,
+                                      'Apagar evento?',
+                                      'Isto remove fotos e uploads.',
+                                    );
                                     if (!ok) return;
-                                    await ref.read(apiProvider).deleteEvent(token, e.id);
+                                    await ref
+                                        .read(apiProvider)
+                                        .deleteEvent(token, e.id);
                                     if (!mounted) return;
                                     _reload();
                                   },
@@ -5850,7 +7604,10 @@ class StaffEventDetailPage extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Notas', style: TextStyle(fontWeight: FontWeight.w700)),
+                  const Text(
+                    'Notas',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
                   const SizedBox(height: 8),
                   Text(event.notes!.trim()),
                 ],
@@ -5861,9 +7618,7 @@ class StaffEventDetailPage extends ConsumerWidget {
           _EventActionCard(event: event, user: user, token: token),
           const SizedBox(height: 16),
           if (_eventMetaEntries(meta).isNotEmpty) ...[
-            _DeskCard(
-              child: _EventMetaSection(meta: meta),
-            ),
+            _DeskCard(child: _EventMetaSection(meta: meta)),
           ],
         ],
       ),
@@ -5951,7 +7706,11 @@ class _EventHeroCard extends StatelessWidget {
         children: [
           Text(
             event.name,
-            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, height: 1.1),
+            style: const TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.w800,
+              height: 1.1,
+            ),
           ),
           const SizedBox(height: 10),
           if ((event.location ?? '').trim().isNotEmpty)
@@ -5996,7 +7755,9 @@ class _EventStatsGrid extends StatelessWidget {
       _EventInfoCardData(
         icon: Icons.category_outlined,
         title: 'Tipo',
-        value: (event.eventType ?? '').trim().isEmpty ? '-' : event.eventType!.trim(),
+        value: (event.eventType ?? '').trim().isEmpty
+            ? '-'
+            : event.eventType!.trim(),
       ),
     ];
 
@@ -6050,17 +7811,38 @@ class _EventActionCard extends ConsumerWidget {
                     onPressed: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => StaffEventStaffPage(event: event)),
+                        MaterialPageRoute(
+                          builder: (_) => StaffEventStaffPage(event: event),
+                        ),
                       );
                     },
                     icon: const Icon(Icons.groups_2_outlined),
                     label: const Text('Gerir staff do evento'),
                   ),
                 ),
+              if (isDesktopPlatform())
+                SizedBox(
+                  width: fullWidth ? constraints.maxWidth : null,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              StaffOfflineHostPage(seedEvent: event),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.wifi_tethering),
+                    label: const Text('Abrir sessão offline'),
+                  ),
+                ),
               SizedBox(
                 width: fullWidth ? constraints.maxWidth : null,
                 child: FilledButton.tonalIcon(
-                  onPressed: token == null ? null : () => _openEventPdf(context, ref, token!, event),
+                  onPressed: token == null
+                      ? null
+                      : () => _openEventPdf(context, ref, token!, event),
                   icon: const Icon(Icons.picture_as_pdf_outlined),
                   label: const Text('Abrir PDF'),
                 ),
@@ -6087,11 +7869,16 @@ class _EventMetaSection extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final narrow = constraints.maxWidth < 760;
-        final width = narrow ? constraints.maxWidth : (constraints.maxWidth - 16) / 2;
+        final width = narrow
+            ? constraints.maxWidth
+            : (constraints.maxWidth - 16) / 2;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Detalhes', style: TextStyle(fontWeight: FontWeight.w700)),
+            const Text(
+              'Detalhes',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
             const SizedBox(height: 12),
             Wrap(
               spacing: 16,
@@ -6225,7 +8012,10 @@ class _EventInfoCard extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   data.value,
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ],
             ),
@@ -6288,9 +8078,9 @@ Future<void> _openEventPdf(
     await OpenFilex.open(file.path);
   } catch (e) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Erro a gerar PDF: $e')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Erro a gerar PDF: $e')));
   } finally {
     if (context.mounted) Navigator.pop(context);
   }
@@ -6558,78 +8348,176 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   void initState() {
     super.initState();
     reportNumberCtrl = TextEditingController(
-      text: widget.event != null ? (_displayReportNumber(widget.event!) ?? '') : '',
+      text: widget.event != null
+          ? (_displayReportNumber(widget.event!) ?? '')
+          : '',
     );
     basePriceCtrl = TextEditingController(
-      text: widget.event?.basePrice != null ? widget.event!.basePrice!.toString() : '0',
+      text: widget.event?.basePrice != null
+          ? widget.event!.basePrice!.toString()
+          : '0',
     );
     dateCtrl = TextEditingController(text: widget.event?.eventDate ?? '');
     timeCtrl = TextEditingController(text: widget.event?.eventTime ?? '');
     pinCtrl = TextEditingController(
-      text: widget.event?.accessPin?.isNotEmpty == true ? widget.event!.accessPin! : '',
+      text: widget.event?.accessPin?.isNotEmpty == true
+          ? widget.event!.accessPin!
+          : '',
     );
-    priceCtrl = TextEditingController(text: widget.event?.pricePerPhoto.toString() ?? '5');
+    priceCtrl = TextEditingController(
+      text: widget.event?.pricePerPhoto.toString() ?? '5',
+    );
     notesCtrl = TextEditingController(text: widget.event?.notes ?? '');
     eventType = widget.event?.eventType ?? widget.initialEventType ?? '';
     isLocked = widget.event?.isLocked ?? false;
     final meta = widget.event?.eventMeta ?? {};
-    noivoNomeCtrl = TextEditingController(text: meta['noivo_nome']?.toString() ?? '');
-    noivaNomeCtrl = TextEditingController(text: meta['noiva_nome']?.toString() ?? '');
-    noivoContactoCtrl = TextEditingController(text: meta['noivo_contacto']?.toString() ?? '');
-    noivaContactoCtrl = TextEditingController(text: meta['noiva_contacto']?.toString() ?? '');
-    noivoProfissaoCtrl = TextEditingController(text: meta['noivo_profissao']?.toString() ?? '');
-    noivaProfissaoCtrl = TextEditingController(text: meta['noiva_profissao']?.toString() ?? '');
-    noivoMoradaCtrl = TextEditingController(text: meta['noivo_morada']?.toString() ?? '');
-    noivaMoradaCtrl = TextEditingController(text: meta['noiva_morada']?.toString() ?? '');
-    noivoInstagramCtrl = TextEditingController(
-      text: meta['noivo_instagram']?.toString() ?? meta['instagram_noivos']?.toString() ?? '',
+    noivoNomeCtrl = TextEditingController(
+      text: meta['noivo_nome']?.toString() ?? '',
     );
-    noivaInstagramCtrl = TextEditingController(text: meta['noiva_instagram']?.toString() ?? '');
-    noivoFilhoDe1Ctrl = TextEditingController(text: meta['noivo_filho_de_1']?.toString() ?? '');
-    noivoFilhoDe2Ctrl = TextEditingController(text: meta['noivo_filho_de_2']?.toString() ?? '');
-    noivaFilhoDe1Ctrl = TextEditingController(text: meta['noiva_filho_de_1']?.toString() ?? '');
-    noivaFilhoDe2Ctrl = TextEditingController(text: meta['noiva_filho_de_2']?.toString() ?? '');
-    noivoCoordenadasCtrl = TextEditingController(text: meta['noivo_coordenadas']?.toString() ?? '');
-    noivaCoordenadasCtrl = TextEditingController(text: meta['noiva_coordenadas']?.toString() ?? '');
-    missaHoraCtrl = TextEditingController(text: meta['missa_hora']?.toString() ?? '');
+    noivaNomeCtrl = TextEditingController(
+      text: meta['noiva_nome']?.toString() ?? '',
+    );
+    noivoContactoCtrl = TextEditingController(
+      text: meta['noivo_contacto']?.toString() ?? '',
+    );
+    noivaContactoCtrl = TextEditingController(
+      text: meta['noiva_contacto']?.toString() ?? '',
+    );
+    noivoProfissaoCtrl = TextEditingController(
+      text: meta['noivo_profissao']?.toString() ?? '',
+    );
+    noivaProfissaoCtrl = TextEditingController(
+      text: meta['noiva_profissao']?.toString() ?? '',
+    );
+    noivoMoradaCtrl = TextEditingController(
+      text: meta['noivo_morada']?.toString() ?? '',
+    );
+    noivaMoradaCtrl = TextEditingController(
+      text: meta['noiva_morada']?.toString() ?? '',
+    );
+    noivoInstagramCtrl = TextEditingController(
+      text:
+          meta['noivo_instagram']?.toString() ??
+          meta['instagram_noivos']?.toString() ??
+          '',
+    );
+    noivaInstagramCtrl = TextEditingController(
+      text: meta['noiva_instagram']?.toString() ?? '',
+    );
+    noivoFilhoDe1Ctrl = TextEditingController(
+      text: meta['noivo_filho_de_1']?.toString() ?? '',
+    );
+    noivoFilhoDe2Ctrl = TextEditingController(
+      text: meta['noivo_filho_de_2']?.toString() ?? '',
+    );
+    noivaFilhoDe1Ctrl = TextEditingController(
+      text: meta['noiva_filho_de_1']?.toString() ?? '',
+    );
+    noivaFilhoDe2Ctrl = TextEditingController(
+      text: meta['noiva_filho_de_2']?.toString() ?? '',
+    );
+    noivoCoordenadasCtrl = TextEditingController(
+      text: meta['noivo_coordenadas']?.toString() ?? '',
+    );
+    noivaCoordenadasCtrl = TextEditingController(
+      text: meta['noiva_coordenadas']?.toString() ?? '',
+    );
+    missaHoraCtrl = TextEditingController(
+      text: meta['missa_hora']?.toString() ?? '',
+    );
     igrejaTipo = _normalizeCerimoniaTipo(meta['igreja_local']?.toString());
-    igrejaLocalidadeCtrl = TextEditingController(text: _resolveCerimoniaLocal(meta));
+    igrejaLocalidadeCtrl = TextEditingController(
+      text: _resolveCerimoniaLocal(meta),
+    );
     refeicaoTipo = _normalizeRefeicaoTipo(meta['quinta_local']?.toString());
-    almocoLocalidadeCtrl = TextEditingController(text: _resolveRefeicaoLocal(meta));
-    numeroConvidadosCtrl = TextEditingController(text: meta['numero_convidados']?.toString() ?? '');
-    instagramPaisCtrl = TextEditingController(text: meta['instagram_pais']?.toString() ?? '');
-    casaNoivoChegadaCtrl = TextEditingController(text: meta['casa_noivo_chegada']?.toString() ?? '');
-    casaNoivoSaidaCtrl = TextEditingController(text: meta['casa_noivo_saida']?.toString() ?? '');
-    casaNoivaChegadaCtrl = TextEditingController(text: meta['casa_noiva_chegada']?.toString() ?? '');
-    casaNoivaSaidaCtrl = TextEditingController(text: meta['casa_noiva_saida']?.toString() ?? '');
-    dataEntregaCtrl = TextEditingController(text: meta['data_entrega']?.toString() ?? '');
-    equipaTrabalhoCtrl = TextEditingController(text: meta['equipa_de_trabalho']?.toString() ?? '');
-    teamCountCtrl = TextEditingController(text: meta['servico_num_profissionais']?.toString() ?? '');
-    bebeNomeCtrl = TextEditingController(text: meta['bebe_nome']?.toString() ?? '');
-    paiNomeCtrl = TextEditingController(text: meta['pai_nome']?.toString() ?? '');
-    maeNomeCtrl = TextEditingController(text: meta['mae_nome']?.toString() ?? '');
-    padrinhoNomeCtrl = TextEditingController(text: meta['padrinho_nome']?.toString() ?? '');
-    madrinhaNomeCtrl = TextEditingController(text: meta['madrinha_nome']?.toString() ?? '');
-    contactoPaisCtrl = TextEditingController(text: meta['contacto_pais']?.toString() ?? '');
-    batizadoMoradaCtrl = TextEditingController(text: meta['morada']?.toString() ?? '');
-    servicoTelaCtrl = TextEditingController(text: meta['servico_tela']?.toString() ?? '');
-    servicoUsbCtrl = TextEditingController(text: meta['servico_usb']?.toString() ?? '');
-    servicoCondicoesCtrl = TextEditingController(text: meta['servico_condicoes_minimas']?.toString() ?? '');
-    servicoMusicasCtrl = TextEditingController(text: meta['servico_musicas']?.toString() ?? '');
-    servicoExtrasCtrl = TextEditingController(text: meta['servico_extras']?.toString() ?? '');
+    almocoLocalidadeCtrl = TextEditingController(
+      text: _resolveRefeicaoLocal(meta),
+    );
+    numeroConvidadosCtrl = TextEditingController(
+      text: meta['numero_convidados']?.toString() ?? '',
+    );
+    instagramPaisCtrl = TextEditingController(
+      text: meta['instagram_pais']?.toString() ?? '',
+    );
+    casaNoivoChegadaCtrl = TextEditingController(
+      text: meta['casa_noivo_chegada']?.toString() ?? '',
+    );
+    casaNoivoSaidaCtrl = TextEditingController(
+      text: meta['casa_noivo_saida']?.toString() ?? '',
+    );
+    casaNoivaChegadaCtrl = TextEditingController(
+      text: meta['casa_noiva_chegada']?.toString() ?? '',
+    );
+    casaNoivaSaidaCtrl = TextEditingController(
+      text: meta['casa_noiva_saida']?.toString() ?? '',
+    );
+    dataEntregaCtrl = TextEditingController(
+      text: meta['data_entrega']?.toString() ?? '',
+    );
+    equipaTrabalhoCtrl = TextEditingController(
+      text: meta['equipa_de_trabalho']?.toString() ?? '',
+    );
+    teamCountCtrl = TextEditingController(
+      text: meta['servico_num_profissionais']?.toString() ?? '',
+    );
+    bebeNomeCtrl = TextEditingController(
+      text: meta['bebe_nome']?.toString() ?? '',
+    );
+    paiNomeCtrl = TextEditingController(
+      text: meta['pai_nome']?.toString() ?? '',
+    );
+    maeNomeCtrl = TextEditingController(
+      text: meta['mae_nome']?.toString() ?? '',
+    );
+    padrinhoNomeCtrl = TextEditingController(
+      text: meta['padrinho_nome']?.toString() ?? '',
+    );
+    madrinhaNomeCtrl = TextEditingController(
+      text: meta['madrinha_nome']?.toString() ?? '',
+    );
+    contactoPaisCtrl = TextEditingController(
+      text: meta['contacto_pais']?.toString() ?? '',
+    );
+    batizadoMoradaCtrl = TextEditingController(
+      text: meta['morada']?.toString() ?? '',
+    );
+    servicoTelaCtrl = TextEditingController(
+      text: meta['servico_tela']?.toString() ?? '',
+    );
+    servicoUsbCtrl = TextEditingController(
+      text: meta['servico_usb']?.toString() ?? '',
+    );
+    servicoCondicoesCtrl = TextEditingController(
+      text: meta['servico_condicoes_minimas']?.toString() ?? '',
+    );
+    servicoMusicasCtrl = TextEditingController(
+      text: meta['servico_musicas']?.toString() ?? '',
+    );
+    servicoExtrasCtrl = TextEditingController(
+      text: meta['servico_extras']?.toString() ?? '',
+    );
     servicoSaveTheDate = _metaFlag(meta, 'servico_save_the_date');
     servicoFotosLoveStory = _metaFlag(meta, 'servico_fotos_love_story');
     servicoVideoLoveStory = _metaFlag(meta, 'servico_video_love_story');
     servicoProjectarLoveStory = _metaFlag(meta, 'servico_projectar_love_story');
-    servicoComboBelezaLoveStory = _metaFlag(meta, 'servico_combo_beleza_love_story');
+    servicoComboBelezaLoveStory = _metaFlag(
+      meta,
+      'servico_combo_beleza_love_story',
+    );
     servicoAlbumDigital305 = _metaFlag(meta, 'servico_album_digital_30_5');
     servicoComboBelezaTtd = _metaFlag(meta, 'servico_combo_beleza_ttd');
     servicoAlbumDigital = _metaFlag(meta, 'servico_album_digital');
     servicoAlbumConvidados = _metaFlag(meta, 'servico_album_convidados');
     servicoAlbuns4020 = _metaFlag(meta, 'servico_albuns_40_20');
     servicoSameDayEdit = _metaFlag(meta, 'servico_same_day_edit');
-    servicoProjectarSameDayEdit = _metaFlag(meta, 'servico_projectar_same_day_edit');
-    servicoGaleriaDigitalConvidados = _metaFlag(meta, 'servico_galeria_digital_convidados');
+    servicoProjectarSameDayEdit = _metaFlag(
+      meta,
+      'servico_projectar_same_day_edit',
+    );
+    servicoGaleriaDigitalConvidados = _metaFlag(
+      meta,
+      'servico_galeria_digital_convidados',
+    );
     servicoFotoLembrancaQr = _metaFlag(meta, 'servico_foto_lembranca_qr');
     servicoImpressao100 = _metaFlag(meta, 'servico_impressao_100_11x22_7');
     servicoVideoDepoisDoSim = _metaFlag(meta, 'servico_video_depois_do_sim');
@@ -6637,7 +8525,9 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     equipaTrabalhoCtrl.addListener(_updateTeamPreview);
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadTeamUsers());
     if (widget.event == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _loadNextReportNumber());
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _loadNextReportNumber(),
+      );
     }
   }
 
@@ -6670,7 +8560,7 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
 
   String _resolveCerimoniaLocal(Map<String, dynamic> meta) {
     final legacy = meta['igreja_local']?.toString() ?? '';
-    if (legacy.isNotEmpty && ! _isCerimoniaTipo(legacy)) return legacy;
+    if (legacy.isNotEmpty && !_isCerimoniaTipo(legacy)) return legacy;
     final localidade = meta['igreja_localidade']?.toString() ?? '';
     if (localidade.isNotEmpty) return localidade;
     return '';
@@ -6678,7 +8568,7 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
 
   String _resolveRefeicaoLocal(Map<String, dynamic> meta) {
     final legacy = meta['quinta_local']?.toString() ?? '';
-    if (legacy.isNotEmpty && ! _isRefeicaoTipo(legacy)) return legacy;
+    if (legacy.isNotEmpty && !_isRefeicaoTipo(legacy)) return legacy;
     final localidade = meta['almoco_localidade']?.toString() ?? '';
     if (localidade.isNotEmpty) return localidade;
     return '';
@@ -6690,7 +8580,9 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     try {
       final users = await ref.read(apiProvider).staffUsers(token);
       if (!mounted) return;
-      _teamUsers = users.where((u) => (u.username ?? '').trim().isNotEmpty).toList();
+      _teamUsers = users
+          .where((u) => (u.username ?? '').trim().isNotEmpty)
+          .toList();
       _updateTeamPreview();
     } catch (_) {
       if (!mounted) return;
@@ -6711,7 +8603,9 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   }
 
   _TeamResolveResult _resolveTeamUsers(String raw) {
-    final tokens = _splitTeamTokens(raw).map(_normalizeToken).where((t) => t.isNotEmpty).toList();
+    final tokens = _splitTeamTokens(
+      raw,
+    ).map(_normalizeToken).where((t) => t.isNotEmpty).toList();
     final matched = <int, StaffUser>{};
     final unknown = <String>[];
     final userMap = <String, List<StaffUser>>{};
@@ -6729,7 +8623,10 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     final matchedByRaw = <String>{};
     for (final entry in userMap.entries) {
       final username = entry.key;
-      final pattern = RegExp('(^|[^a-z0-9])${RegExp.escape(username)}([^a-z0-9]|' r'$)');
+      final pattern = RegExp(
+        '(^|[^a-z0-9])${RegExp.escape(username)}([^a-z0-9]|'
+        r'$)',
+      );
       if (pattern.hasMatch(rawNormalized)) {
         for (final user in entry.value) {
           matched[user.id] = user;
@@ -6769,6 +8666,7 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
       unknown: unknown.toSet().toList(),
     );
   }
+
   Future<void> _loadNextReportNumber() async {
     if (widget.event != null) return;
     final token = ref.read(staffTokenProvider);
@@ -6928,427 +8826,414 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   @override
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
-    if (token == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     final user = ref.watch(staffUserProvider);
 
     final formBody = LayoutBuilder(
-        builder: (context, constraints) {
-          final maxContentWidth = constraints.maxWidth > 1200 ? 1200.0 : constraints.maxWidth;
-          final isWide = maxContentWidth >= 900;
-          const spacing = 16.0;
+      builder: (context, constraints) {
+        final maxContentWidth = constraints.maxWidth > 1200
+            ? 1200.0
+            : constraints.maxWidth;
+        final isWide = maxContentWidth >= 900;
+        const spacing = 16.0;
 
-          Widget wrapFields(List<Widget> fields, {int columns = 2}) {
-            final cols = isWide ? columns : 1;
-            final width = (maxContentWidth - spacing * (cols - 1)) / cols;
-            return Wrap(
-              spacing: spacing,
-              runSpacing: 12,
-              children: fields.map((f) => SizedBox(width: width, child: f)).toList(),
-            );
-          }
+        Widget wrapFields(List<Widget> fields, {int columns = 2}) {
+          final cols = isWide ? columns : 1;
+          final width = (maxContentWidth - spacing * (cols - 1)) / cols;
+          return Wrap(
+            spacing: spacing,
+            runSpacing: 12,
+            children: fields
+                .map((f) => SizedBox(width: width, child: f))
+                .toList(),
+          );
+        }
 
-          Widget sectionCard(String title, Widget child) {
-            return Container(
-              margin: const EdgeInsets.only(bottom: 16),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: kBrandBlack,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: kBrandRose),
-                boxShadow: [
-                  BoxShadow(
-                    color: kBrandRose.withOpacity(0.06),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 12),
-                  child,
-                ],
-              ),
-            );
-          }
-
-          Widget subCard(String title, Widget child) {
-            return Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: kBrandBlack.withOpacity(0.7),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: kBrandRose.withOpacity(0.6)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 12),
-                  child,
-                ],
-              ),
-            );
-          }
-
-          Widget stackFields(List<Widget> fields) {
-            return Column(
-              children: [
-                for (var i = 0; i < fields.length; i++) ...[
-                  fields[i],
-                  if (i < fields.length - 1) const SizedBox(height: 8),
-                ],
-              ],
-            );
-          }
-
-          Widget serviceCheck(String label, bool value, ValueChanged<bool> onChanged) {
-            return CheckboxListTile(
-              value: value,
-              onChanged: (v) => setState(() => onChanged(v ?? false)),
-              title: Text(label),
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              controlAffinity: ListTileControlAffinity.leading,
-            );
-          }
-
-          final teamPreview = _matchedTeamUsers.isEmpty && _unknownTeamTokens.isEmpty
-              ? const SizedBox.shrink()
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: _matchedTeamUsers
-                          .map((u) => Chip(label: Text((u.username ?? '').toUpperCase())))
-                          .toList(),
-                    ),
-                    if (_unknownTeamTokens.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          'Sem correspondência: ${_unknownTeamTokens.join(', ')}',
-                          style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-                        ),
-                      ),
-                  ],
-                );
-
-          return SingleChildScrollView(
+        Widget sectionCard(String title, Widget child) {
+          return Container(
+            margin: const EdgeInsets.only(bottom: 16),
             padding: const EdgeInsets.all(16),
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: maxContentWidth),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    sectionCard(
-                      'Dados base',
-                      wrapFields([
-                        DropdownButtonFormField<String>(
-                          value: eventType.isEmpty ? null : eventType,
-                          decoration: const InputDecoration(labelText: 'Tipo Evento', border: OutlineInputBorder()),
-                          items: const [
-                            DropdownMenuItem(value: 'casamento', child: Text('CASAMENTO')),
-                            DropdownMenuItem(value: 'batizado', child: Text('BATIZADO')),
-                          ],
-                          onChanged: (v) => setState(() => eventType = v ?? ''),
-                        ),
-                        TextField(
-                          controller: dateCtrl,
-                          readOnly: true,
-                          onTap: _pickDate,
-                          decoration: const InputDecoration(
-                            labelText: 'Data',
-                            border: OutlineInputBorder(),
-                            suffixIcon: Icon(Icons.calendar_today),
+            decoration: BoxDecoration(
+              color: kBrandBlack,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: kBrandRose),
+              boxShadow: [
+                BoxShadow(
+                  color: kBrandRose.withOpacity(0.06),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 12),
+                child,
+              ],
+            ),
+          );
+        }
+
+        Widget subCard(String title, Widget child) {
+          return Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: kBrandBlack.withOpacity(0.7),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: kBrandRose.withOpacity(0.6)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 12),
+                child,
+              ],
+            ),
+          );
+        }
+
+        Widget stackFields(List<Widget> fields) {
+          return Column(
+            children: [
+              for (var i = 0; i < fields.length; i++) ...[
+                fields[i],
+                if (i < fields.length - 1) const SizedBox(height: 8),
+              ],
+            ],
+          );
+        }
+
+        Widget serviceCheck(
+          String label,
+          bool value,
+          ValueChanged<bool> onChanged,
+        ) {
+          return CheckboxListTile(
+            value: value,
+            onChanged: (v) => setState(() => onChanged(v ?? false)),
+            title: Text(label),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+          );
+        }
+
+        final teamPreview =
+            _matchedTeamUsers.isEmpty && _unknownTeamTokens.isEmpty
+            ? const SizedBox.shrink()
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: _matchedTeamUsers
+                        .map(
+                          (u) => Chip(
+                            label: Text((u.username ?? '').toUpperCase()),
                           ),
+                        )
+                        .toList(),
+                  ),
+                  if (_unknownTeamTokens.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Sem correspondência: ${_unknownTeamTokens.join(', ')}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade400,
                         ),
-                        TextField(
-                          controller: reportNumberCtrl,
-                          readOnly: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Nº reportagem',
-                            hintText: 'Gerado automaticamente',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                        TextField(
-                          controller: timeCtrl,
-                          readOnly: true,
-                          onTap: _pickTime,
-                          decoration: const InputDecoration(
-                            labelText: 'Hora',
-                            border: OutlineInputBorder(),
-                            suffixIcon: Icon(Icons.access_time),
-                          ),
-                        ),
-                        TextField(
-                          controller: basePriceCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          decoration: const InputDecoration(labelText: 'Preço base', border: OutlineInputBorder()),
-                        ),
-                        TextField(
-                          controller: priceCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          decoration: const InputDecoration(labelText: 'Preço por foto', border: OutlineInputBorder()),
-                        ),
-                        TextField(
-                          controller: pinCtrl,
-                          readOnly: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Código do evento (PIN)',
-                            border: OutlineInputBorder(),
-                            hintText: 'Gerado automaticamente ao guardar',
-                          ),
-                        ),
-                      ], columns: 3),
-                    ),
-                    sectionCard(
-                      'Missa e locais',
-                      wrapFields([
-                        TextField(
-                          controller: missaHoraCtrl,
-                          readOnly: true,
-                          onTap: () => _pickTimeInto(missaHoraCtrl),
-                          decoration: const InputDecoration(labelText: 'Hora da missa', border: OutlineInputBorder()),
-                        ),
-                        DropdownButtonFormField<String>(
-                          value: igrejaTipo.isEmpty ? null : igrejaTipo,
-                          decoration: const InputDecoration(labelText: 'Cerimónia', border: OutlineInputBorder()),
-                          items: const [
-                            DropdownMenuItem(value: 'Igreja', child: Text('Igreja')),
-                            DropdownMenuItem(value: 'Civil', child: Text('Civil')),
-                          ],
-                          onChanged: (v) => setState(() => igrejaTipo = v ?? ''),
-                        ),
-                        TextField(
-                          controller: igrejaLocalidadeCtrl,
-                          decoration: const InputDecoration(labelText: 'Nome da igreja/local', border: OutlineInputBorder()),
-                        ),
-                        DropdownButtonFormField<String>(
-                          value: refeicaoTipo.isEmpty ? null : refeicaoTipo,
-                          decoration: const InputDecoration(labelText: 'Refeição', border: OutlineInputBorder()),
-                          items: const [
-                            DropdownMenuItem(value: 'Almoço', child: Text('Almoço')),
-                            DropdownMenuItem(value: 'Jantar', child: Text('Jantar')),
-                          ],
-                          onChanged: (v) => setState(() => refeicaoTipo = v ?? ''),
-                        ),
-                        TextField(
-                          controller: almocoLocalidadeCtrl,
-                          decoration: const InputDecoration(labelText: 'Nome da quinta/restaurante', border: OutlineInputBorder()),
-                        ),
-                      ], columns: 3),
-                    ),
-                    sectionCard(
-                      'Entrega e equipa',
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          wrapFields([
-                            TextField(
-                              controller: numeroConvidadosCtrl,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(labelText: 'Número de convidados', border: OutlineInputBorder()),
-                            ),
-                            TextField(
-                              controller: dataEntregaCtrl,
-                              readOnly: true,
-                              onTap: () => _pickDateInto(dataEntregaCtrl),
-                              decoration: const InputDecoration(
-                                labelText: 'Data de entrega',
-                                border: OutlineInputBorder(),
-                                suffixIcon: Icon(Icons.calendar_today),
-                              ),
-                            ),
-                            TextField(
-                              controller: equipaTrabalhoCtrl,
-                              decoration: const InputDecoration(labelText: 'Equipa de trabalho', border: OutlineInputBorder()),
-                            ),
-                            TextField(
-                              controller: teamCountCtrl,
-                              readOnly: true,
-                              decoration: const InputDecoration(labelText: 'Nº de profissionais', border: OutlineInputBorder()),
-                            ),
-                          ], columns: 2),
-                          if (_matchedTeamUsers.isNotEmpty || _unknownTeamTokens.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            teamPreview,
-                          ],
-                        ],
                       ),
                     ),
-                    if (eventType == 'casamento') ...[
-                      sectionCard(
-                        'Dados do casamento',
-                        isWide
-                            ? Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    child: subCard(
-                                      'Noivo',
-                                      stackFields([
-                                        TextField(
-                                          controller: noivoNomeCtrl,
-                                          decoration: const InputDecoration(labelText: 'Nome do noivo', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: noivoInstagramCtrl,
-                                          decoration: const InputDecoration(labelText: 'Instagram', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: noivoContactoCtrl,
-                                          decoration: const InputDecoration(labelText: 'Telemóvel', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: noivoProfissaoCtrl,
-                                          decoration: const InputDecoration(labelText: 'Profissão', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: noivoFilhoDe1Ctrl,
-                                          decoration: const InputDecoration(labelText: 'Filho de (pai)', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: noivoFilhoDe2Ctrl,
-                                          decoration: const InputDecoration(labelText: 'Filho de (mãe)', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: noivoMoradaCtrl,
-                                          decoration: const InputDecoration(labelText: 'Morada', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: noivoCoordenadasCtrl,
-                                          decoration: const InputDecoration(labelText: 'Coordenadas', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: casaNoivoChegadaCtrl,
-                                          readOnly: true,
-                                          onTap: () => _pickTimeInto(casaNoivoChegadaCtrl),
-                                          decoration: const InputDecoration(
-                                            labelText: 'Casa: chegada',
-                                            border: OutlineInputBorder(),
-                                          ),
-                                        ),
-                                        TextField(
-                                          controller: casaNoivoSaidaCtrl,
-                                          readOnly: true,
-                                          onTap: () => _pickTimeInto(casaNoivoSaidaCtrl),
-                                          decoration: const InputDecoration(
-                                            labelText: 'Casa: saída',
-                                            border: OutlineInputBorder(),
-                                          ),
-                                        ),
-                                      ]),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  Expanded(
-                                    child: subCard(
-                                      'Noiva',
-                                      stackFields([
-                                        TextField(
-                                          controller: noivaNomeCtrl,
-                                          decoration: const InputDecoration(labelText: 'Nome da noiva', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: noivaInstagramCtrl,
-                                          decoration: const InputDecoration(labelText: 'Instagram', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: noivaContactoCtrl,
-                                          decoration: const InputDecoration(labelText: 'Telemóvel', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: noivaProfissaoCtrl,
-                                          decoration: const InputDecoration(labelText: 'Profissão', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: noivaFilhoDe1Ctrl,
-                                          decoration: const InputDecoration(labelText: 'Filha de (pai)', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: noivaFilhoDe2Ctrl,
-                                          decoration: const InputDecoration(labelText: 'Filha de (mãe)', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: noivaMoradaCtrl,
-                                          decoration: const InputDecoration(labelText: 'Morada', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: noivaCoordenadasCtrl,
-                                          decoration: const InputDecoration(labelText: 'Coordenadas', border: OutlineInputBorder()),
-                                        ),
-                                        TextField(
-                                          controller: casaNoivaChegadaCtrl,
-                                          readOnly: true,
-                                          onTap: () => _pickTimeInto(casaNoivaChegadaCtrl),
-                                          decoration: const InputDecoration(
-                                            labelText: 'Casa: chegada',
-                                            border: OutlineInputBorder(),
-                                          ),
-                                        ),
-                                        TextField(
-                                          controller: casaNoivaSaidaCtrl,
-                                          readOnly: true,
-                                          onTap: () => _pickTimeInto(casaNoivaSaidaCtrl),
-                                          decoration: const InputDecoration(
-                                            labelText: 'Casa: saída',
-                                            border: OutlineInputBorder(),
-                                          ),
-                                        ),
-                                      ]),
-                                    ),
-                                  ),
-                                ],
-                              )
-                            : Column(
-                                children: [
-                                  subCard(
+                ],
+              );
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxContentWidth),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  sectionCard(
+                    'Dados base',
+                    wrapFields([
+                      DropdownButtonFormField<String>(
+                        value: eventType.isEmpty ? null : eventType,
+                        decoration: const InputDecoration(
+                          labelText: 'Tipo Evento',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'casamento',
+                            child: Text('CASAMENTO'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'batizado',
+                            child: Text('BATIZADO'),
+                          ),
+                        ],
+                        onChanged: (v) => setState(() => eventType = v ?? ''),
+                      ),
+                      TextField(
+                        controller: dateCtrl,
+                        readOnly: true,
+                        onTap: _pickDate,
+                        decoration: const InputDecoration(
+                          labelText: 'Data',
+                          border: OutlineInputBorder(),
+                          suffixIcon: Icon(Icons.calendar_today),
+                        ),
+                      ),
+                      TextField(
+                        controller: reportNumberCtrl,
+                        readOnly: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Nº reportagem',
+                          hintText: 'Gerado automaticamente',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      TextField(
+                        controller: timeCtrl,
+                        readOnly: true,
+                        onTap: _pickTime,
+                        decoration: const InputDecoration(
+                          labelText: 'Hora',
+                          border: OutlineInputBorder(),
+                          suffixIcon: Icon(Icons.access_time),
+                        ),
+                      ),
+                      TextField(
+                        controller: basePriceCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Preço base',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      TextField(
+                        controller: priceCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Preço por foto',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      TextField(
+                        controller: pinCtrl,
+                        readOnly: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Código do evento (PIN)',
+                          border: OutlineInputBorder(),
+                          hintText: 'Gerado automaticamente ao guardar',
+                        ),
+                      ),
+                    ], columns: 3),
+                  ),
+                  sectionCard(
+                    'Missa e locais',
+                    wrapFields([
+                      TextField(
+                        controller: missaHoraCtrl,
+                        readOnly: true,
+                        onTap: () => _pickTimeInto(missaHoraCtrl),
+                        decoration: const InputDecoration(
+                          labelText: 'Hora da missa',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      DropdownButtonFormField<String>(
+                        value: igrejaTipo.isEmpty ? null : igrejaTipo,
+                        decoration: const InputDecoration(
+                          labelText: 'Cerimónia',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'Igreja',
+                            child: Text('Igreja'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Civil',
+                            child: Text('Civil'),
+                          ),
+                        ],
+                        onChanged: (v) => setState(() => igrejaTipo = v ?? ''),
+                      ),
+                      TextField(
+                        controller: igrejaLocalidadeCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Nome da igreja/local',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      DropdownButtonFormField<String>(
+                        value: refeicaoTipo.isEmpty ? null : refeicaoTipo,
+                        decoration: const InputDecoration(
+                          labelText: 'Refeição',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'Almoço',
+                            child: Text('Almoço'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Jantar',
+                            child: Text('Jantar'),
+                          ),
+                        ],
+                        onChanged: (v) =>
+                            setState(() => refeicaoTipo = v ?? ''),
+                      ),
+                      TextField(
+                        controller: almocoLocalidadeCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Nome da quinta/restaurante',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ], columns: 3),
+                  ),
+                  sectionCard(
+                    'Entrega e equipa',
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        wrapFields([
+                          TextField(
+                            controller: numeroConvidadosCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Número de convidados',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                          TextField(
+                            controller: dataEntregaCtrl,
+                            readOnly: true,
+                            onTap: () => _pickDateInto(dataEntregaCtrl),
+                            decoration: const InputDecoration(
+                              labelText: 'Data de entrega',
+                              border: OutlineInputBorder(),
+                              suffixIcon: Icon(Icons.calendar_today),
+                            ),
+                          ),
+                          TextField(
+                            controller: equipaTrabalhoCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Equipa de trabalho',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                          TextField(
+                            controller: teamCountCtrl,
+                            readOnly: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Nº de profissionais',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ], columns: 2),
+                        if (_matchedTeamUsers.isNotEmpty ||
+                            _unknownTeamTokens.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          teamPreview,
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (eventType == 'casamento') ...[
+                    sectionCard(
+                      'Dados do casamento',
+                      isWide
+                          ? Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: subCard(
                                     'Noivo',
                                     stackFields([
                                       TextField(
                                         controller: noivoNomeCtrl,
-                                        decoration: const InputDecoration(labelText: 'Nome do noivo', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Nome do noivo',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: noivoInstagramCtrl,
-                                        decoration: const InputDecoration(labelText: 'Instagram', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Instagram',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: noivoContactoCtrl,
-                                        decoration: const InputDecoration(labelText: 'Telemóvel', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Telemóvel',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: noivoProfissaoCtrl,
-                                        decoration: const InputDecoration(labelText: 'Profissão', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Profissão',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: noivoFilhoDe1Ctrl,
-                                        decoration: const InputDecoration(labelText: 'Filho de (pai)', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Filho de (pai)',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: noivoFilhoDe2Ctrl,
-                                        decoration: const InputDecoration(labelText: 'Filho de (mãe)', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Filho de (mãe)',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: noivoMoradaCtrl,
-                                        decoration: const InputDecoration(labelText: 'Morada', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Morada',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: noivoCoordenadasCtrl,
-                                        decoration: const InputDecoration(labelText: 'Coordenadas', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Coordenadas',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: casaNoivoChegadaCtrl,
                                         readOnly: true,
-                                        onTap: () => _pickTimeInto(casaNoivoChegadaCtrl),
+                                        onTap: () =>
+                                            _pickTimeInto(casaNoivoChegadaCtrl),
                                         decoration: const InputDecoration(
                                           labelText: 'Casa: chegada',
                                           border: OutlineInputBorder(),
@@ -7357,7 +9242,8 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                                       TextField(
                                         controller: casaNoivoSaidaCtrl,
                                         readOnly: true,
-                                        onTap: () => _pickTimeInto(casaNoivoSaidaCtrl),
+                                        onTap: () =>
+                                            _pickTimeInto(casaNoivoSaidaCtrl),
                                         decoration: const InputDecoration(
                                           labelText: 'Casa: saída',
                                           border: OutlineInputBorder(),
@@ -7365,46 +9251,73 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                                       ),
                                     ]),
                                   ),
-                                  const SizedBox(height: 12),
-                                  subCard(
+                                ),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: subCard(
                                     'Noiva',
                                     stackFields([
                                       TextField(
                                         controller: noivaNomeCtrl,
-                                        decoration: const InputDecoration(labelText: 'Nome da noiva', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Nome da noiva',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: noivaInstagramCtrl,
-                                        decoration: const InputDecoration(labelText: 'Instagram', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Instagram',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: noivaContactoCtrl,
-                                        decoration: const InputDecoration(labelText: 'Telemóvel', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Telemóvel',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: noivaProfissaoCtrl,
-                                        decoration: const InputDecoration(labelText: 'Profissão', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Profissão',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: noivaFilhoDe1Ctrl,
-                                        decoration: const InputDecoration(labelText: 'Filha de (pai)', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Filha de (pai)',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: noivaFilhoDe2Ctrl,
-                                        decoration: const InputDecoration(labelText: 'Filha de (mãe)', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Filha de (mãe)',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: noivaMoradaCtrl,
-                                        decoration: const InputDecoration(labelText: 'Morada', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Morada',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: noivaCoordenadasCtrl,
-                                        decoration: const InputDecoration(labelText: 'Coordenadas', border: OutlineInputBorder()),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Coordenadas',
+                                          border: OutlineInputBorder(),
+                                        ),
                                       ),
                                       TextField(
                                         controller: casaNoivaChegadaCtrl,
                                         readOnly: true,
-                                        onTap: () => _pickTimeInto(casaNoivaChegadaCtrl),
+                                        onTap: () =>
+                                            _pickTimeInto(casaNoivaChegadaCtrl),
                                         decoration: const InputDecoration(
                                           labelText: 'Casa: chegada',
                                           border: OutlineInputBorder(),
@@ -7413,7 +9326,8 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                                       TextField(
                                         controller: casaNoivaSaidaCtrl,
                                         readOnly: true,
-                                        onTap: () => _pickTimeInto(casaNoivaSaidaCtrl),
+                                        onTap: () =>
+                                            _pickTimeInto(casaNoivaSaidaCtrl),
                                         decoration: const InputDecoration(
                                           labelText: 'Casa: saída',
                                           border: OutlineInputBorder(),
@@ -7421,282 +9335,713 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                                       ),
                                     ]),
                                   ),
-                                ],
-                              ),
-                      ),
-                    ],
-                    if (eventType == 'batizado') ...[
-                      sectionCard(
-                        'Dados do batizado',
-                        wrapFields([
-                          TextField(
-                            controller: bebeNomeCtrl,
-                            decoration: const InputDecoration(labelText: 'Nome do bebé', border: OutlineInputBorder()),
-                          ),
-                          TextField(
-                            controller: paiNomeCtrl,
-                            decoration: const InputDecoration(labelText: 'Nome do pai', border: OutlineInputBorder()),
-                          ),
-                          TextField(
-                            controller: maeNomeCtrl,
-                            decoration: const InputDecoration(labelText: 'Nome da mãe', border: OutlineInputBorder()),
-                          ),
-                          TextField(
-                            controller: padrinhoNomeCtrl,
-                            decoration: const InputDecoration(labelText: 'Nome do padrinho', border: OutlineInputBorder()),
-                          ),
-                          TextField(
-                            controller: madrinhaNomeCtrl,
-                            decoration: const InputDecoration(labelText: 'Nome da madrinha', border: OutlineInputBorder()),
-                          ),
-                          TextField(
-                            controller: contactoPaisCtrl,
-                            decoration: const InputDecoration(labelText: 'Contacto dos pais', border: OutlineInputBorder()),
-                          ),
-                          TextField(
-                            controller: batizadoMoradaCtrl,
-                            decoration: const InputDecoration(labelText: 'Morada', border: OutlineInputBorder()),
-                          ),
-                          TextField(
-                            controller: instagramPaisCtrl,
-                            decoration: const InputDecoration(labelText: 'Instagram dos pais', border: OutlineInputBorder()),
-                          ),
-                        ], columns: 2),
-                      ),
-                    ],
-                    sectionCard(
-                      'Serviços',
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          wrapFields([
-                            serviceCheck('Save the Date', servicoSaveTheDate, (v) => servicoSaveTheDate = v),
-                            serviceCheck('Fotos Love Story', servicoFotosLoveStory, (v) => servicoFotosLoveStory = v),
-                            serviceCheck('Vídeo Love Story', servicoVideoLoveStory, (v) => servicoVideoLoveStory = v),
-                            serviceCheck('Projectar Love Story', servicoProjectarLoveStory, (v) => servicoProjectarLoveStory = v),
-                            serviceCheck('Combo beleza Love Story', servicoComboBelezaLoveStory, (v) => servicoComboBelezaLoveStory = v),
-                            serviceCheck('Álbum digital 30x5', servicoAlbumDigital305, (v) => servicoAlbumDigital305 = v),
-                            serviceCheck('Combo beleza TTD', servicoComboBelezaTtd, (v) => servicoComboBelezaTtd = v),
-                            serviceCheck('Álbum digital', servicoAlbumDigital, (v) => servicoAlbumDigital = v),
-                            serviceCheck('Álbum convidados', servicoAlbumConvidados, (v) => servicoAlbumConvidados = v),
-                            serviceCheck('Álbuns 40x20', servicoAlbuns4020, (v) => servicoAlbuns4020 = v),
-                            serviceCheck('Same Day Edit', servicoSameDayEdit, (v) => servicoSameDayEdit = v),
-                            serviceCheck('Projectar Same Day Edit', servicoProjectarSameDayEdit, (v) => servicoProjectarSameDayEdit = v),
-                            serviceCheck('Galeria digital convidados', servicoGaleriaDigitalConvidados, (v) => servicoGaleriaDigitalConvidados = v),
-                            serviceCheck('Foto lembrança QR', servicoFotoLembrancaQr, (v) => servicoFotoLembrancaQr = v),
-                            serviceCheck('Impressão 100 11x22,7', servicoImpressao100, (v) => servicoImpressao100 = v),
-                            serviceCheck('Vídeo depois do sim', servicoVideoDepoisDoSim, (v) => servicoVideoDepoisDoSim = v),
-                            serviceCheck('Drone', servicoDrone, (v) => servicoDrone = v),
-                          ], columns: 3),
-                          const SizedBox(height: 8),
-                          wrapFields([
-                            TextField(
-                              controller: servicoTelaCtrl,
-                              decoration: const InputDecoration(labelText: 'Tela', border: OutlineInputBorder()),
+                                ),
+                              ],
+                            )
+                          : Column(
+                              children: [
+                                subCard(
+                                  'Noivo',
+                                  stackFields([
+                                    TextField(
+                                      controller: noivoNomeCtrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Nome do noivo',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: noivoInstagramCtrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Instagram',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: noivoContactoCtrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Telemóvel',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: noivoProfissaoCtrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Profissão',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: noivoFilhoDe1Ctrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Filho de (pai)',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: noivoFilhoDe2Ctrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Filho de (mãe)',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: noivoMoradaCtrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Morada',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: noivoCoordenadasCtrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Coordenadas',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: casaNoivoChegadaCtrl,
+                                      readOnly: true,
+                                      onTap: () =>
+                                          _pickTimeInto(casaNoivoChegadaCtrl),
+                                      decoration: const InputDecoration(
+                                        labelText: 'Casa: chegada',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: casaNoivoSaidaCtrl,
+                                      readOnly: true,
+                                      onTap: () =>
+                                          _pickTimeInto(casaNoivoSaidaCtrl),
+                                      decoration: const InputDecoration(
+                                        labelText: 'Casa: saída',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                  ]),
+                                ),
+                                const SizedBox(height: 12),
+                                subCard(
+                                  'Noiva',
+                                  stackFields([
+                                    TextField(
+                                      controller: noivaNomeCtrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Nome da noiva',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: noivaInstagramCtrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Instagram',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: noivaContactoCtrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Telemóvel',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: noivaProfissaoCtrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Profissão',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: noivaFilhoDe1Ctrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Filha de (pai)',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: noivaFilhoDe2Ctrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Filha de (mãe)',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: noivaMoradaCtrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Morada',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: noivaCoordenadasCtrl,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Coordenadas',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: casaNoivaChegadaCtrl,
+                                      readOnly: true,
+                                      onTap: () =>
+                                          _pickTimeInto(casaNoivaChegadaCtrl),
+                                      decoration: const InputDecoration(
+                                        labelText: 'Casa: chegada',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: casaNoivaSaidaCtrl,
+                                      readOnly: true,
+                                      onTap: () =>
+                                          _pickTimeInto(casaNoivaSaidaCtrl),
+                                      decoration: const InputDecoration(
+                                        labelText: 'Casa: saída',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                    ),
+                                  ]),
+                                ),
+                              ],
                             ),
-                            TextField(
-                              controller: servicoUsbCtrl,
-                              decoration: const InputDecoration(labelText: 'USB', border: OutlineInputBorder()),
-                            ),
-                          ]),
-                          const SizedBox(height: 8),
-                          wrapFields([
-                            TextField(
-                              controller: servicoCondicoesCtrl,
-                              maxLines: 2,
-                              decoration: const InputDecoration(labelText: 'Condições mínimas', border: OutlineInputBorder()),
-                            ),
-                            TextField(
-                              controller: servicoMusicasCtrl,
-                              maxLines: 2,
-                              decoration: const InputDecoration(labelText: 'Músicas', border: OutlineInputBorder()),
-                            ),
-                            TextField(
-                              controller: servicoExtrasCtrl,
-                              maxLines: 2,
-                              decoration: const InputDecoration(labelText: 'Extras', border: OutlineInputBorder()),
-                            ),
-                          ], columns: 1),
-                        ],
-                      ),
-                    ),
-                    if (widget.event != null && _isTodayOrPast(dateCtrl.text)) ...[
-                      const SizedBox(height: 12),
-                      SwitchListTile(
-                        value: isLocked,
-                        onChanged: (v) => setState(() => isLocked = v),
-                        title: const Text('Bloqueado'),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    FilledButton(
-                      onPressed: saving
-                          ? null
-                          : () async {
-                              final price = num.tryParse(priceCtrl.text.trim()) ?? 0;
-                              final basePrice = num.tryParse(basePriceCtrl.text.trim()) ?? 0;
-                              final meta = Map<String, dynamic>.from(widget.event?.eventMeta ?? {});
-                              void setMetaValue(String key, String value) {
-                                final trimmed = value.trim();
-                                if (trimmed.isEmpty) {
-                                  meta.remove(key);
-                                } else {
-                                  meta[key] = trimmed;
-                                }
-                              }
-
-                              void setMetaBool(String key, bool value) {
-                                if (value) {
-                                  meta[key] = 1;
-                                } else {
-                                  meta.remove(key);
-                                }
-                              }
-
-                              const weddingKeys = [
-                                'noivo_nome',
-                                'noiva_nome',
-                                'noivo_contacto',
-                                'noiva_contacto',
-                                'noivo_profissao',
-                                'noiva_profissao',
-                                'noivo_instagram',
-                                'noiva_instagram',
-                                'instagram_noivos',
-                                'noivo_filho_de_1',
-                                'noivo_filho_de_2',
-                                'noiva_filho_de_1',
-                                'noiva_filho_de_2',
-                                'noivo_morada',
-                                'noiva_morada',
-                                'noivo_coordenadas',
-                                'noiva_coordenadas',
-                                'casa_noivo_chegada',
-                                'casa_noivo_saida',
-                                'casa_noiva_chegada',
-                                'casa_noiva_saida',
-                              ];
-                              const baptKeys = [
-                                'bebe_nome',
-                                'pai_nome',
-                                'mae_nome',
-                                'padrinho_nome',
-                                'madrinha_nome',
-                                'contacto_pais',
-                                'morada',
-                                'instagram_pais',
-                              ];
-
-                              setMetaValue('missa_hora', missaHoraCtrl.text);
-                              setMetaValue('igreja_local', igrejaTipo);
-                              setMetaValue('igreja_localidade', igrejaLocalidadeCtrl.text);
-                              setMetaValue('quinta_local', refeicaoTipo);
-                              setMetaValue('almoco_localidade', almocoLocalidadeCtrl.text);
-                              setMetaValue('numero_convidados', numeroConvidadosCtrl.text);
-                              setMetaValue('data_entrega', dataEntregaCtrl.text);
-                              setMetaValue('equipa_de_trabalho', equipaTrabalhoCtrl.text);
-                              setMetaValue('servico_num_profissionais', _teamCount == 0 ? '' : _teamCount.toString());
-                              setMetaBool('servico_save_the_date', servicoSaveTheDate);
-                              setMetaBool('servico_fotos_love_story', servicoFotosLoveStory);
-                              setMetaBool('servico_video_love_story', servicoVideoLoveStory);
-                              setMetaBool('servico_projectar_love_story', servicoProjectarLoveStory);
-                              setMetaBool('servico_combo_beleza_love_story', servicoComboBelezaLoveStory);
-                              setMetaBool('servico_album_digital_30_5', servicoAlbumDigital305);
-                              setMetaBool('servico_combo_beleza_ttd', servicoComboBelezaTtd);
-                              setMetaBool('servico_album_digital', servicoAlbumDigital);
-                              setMetaBool('servico_album_convidados', servicoAlbumConvidados);
-                              setMetaBool('servico_albuns_40_20', servicoAlbuns4020);
-                              setMetaBool('servico_same_day_edit', servicoSameDayEdit);
-                              setMetaBool('servico_projectar_same_day_edit', servicoProjectarSameDayEdit);
-                              setMetaBool('servico_galeria_digital_convidados', servicoGaleriaDigitalConvidados);
-                              setMetaBool('servico_foto_lembranca_qr', servicoFotoLembrancaQr);
-                              setMetaBool('servico_impressao_100_11x22_7', servicoImpressao100);
-                              setMetaBool('servico_video_depois_do_sim', servicoVideoDepoisDoSim);
-                              setMetaBool('servico_drone', servicoDrone);
-                              setMetaValue('servico_tela', servicoTelaCtrl.text);
-                              setMetaValue('servico_usb', servicoUsbCtrl.text);
-                              setMetaValue('servico_condicoes_minimas', servicoCondicoesCtrl.text);
-                              setMetaValue('servico_musicas', servicoMusicasCtrl.text);
-                              setMetaValue('servico_extras', servicoExtrasCtrl.text);
-                              if (eventType == 'casamento') {
-                                for (final key in baptKeys) {
-                                  meta.remove(key);
-                                }
-                                setMetaValue('noivo_nome', noivoNomeCtrl.text);
-                                setMetaValue('noiva_nome', noivaNomeCtrl.text);
-                                setMetaValue('noivo_instagram', noivoInstagramCtrl.text);
-                                setMetaValue('noiva_instagram', noivaInstagramCtrl.text);
-                                setMetaValue('noivo_contacto', noivoContactoCtrl.text);
-                                setMetaValue('noiva_contacto', noivaContactoCtrl.text);
-                                setMetaValue('noivo_profissao', noivoProfissaoCtrl.text);
-                                setMetaValue('noiva_profissao', noivaProfissaoCtrl.text);
-                                setMetaValue('noivo_filho_de_1', noivoFilhoDe1Ctrl.text);
-                                setMetaValue('noivo_filho_de_2', noivoFilhoDe2Ctrl.text);
-                                setMetaValue('noiva_filho_de_1', noivaFilhoDe1Ctrl.text);
-                                setMetaValue('noiva_filho_de_2', noivaFilhoDe2Ctrl.text);
-                                setMetaValue('noivo_morada', noivoMoradaCtrl.text);
-                                setMetaValue('noiva_morada', noivaMoradaCtrl.text);
-                                setMetaValue('noivo_coordenadas', noivoCoordenadasCtrl.text);
-                                setMetaValue('noiva_coordenadas', noivaCoordenadasCtrl.text);
-                                setMetaValue('casa_noivo_chegada', casaNoivoChegadaCtrl.text);
-                                setMetaValue('casa_noivo_saida', casaNoivoSaidaCtrl.text);
-                                setMetaValue('casa_noiva_chegada', casaNoivaChegadaCtrl.text);
-                                setMetaValue('casa_noiva_saida', casaNoivaSaidaCtrl.text);
-                              }
-                              if (eventType == 'batizado') {
-                                for (final key in weddingKeys) {
-                                  meta.remove(key);
-                                }
-                                setMetaValue('bebe_nome', bebeNomeCtrl.text);
-                                setMetaValue('pai_nome', paiNomeCtrl.text);
-                                setMetaValue('mae_nome', maeNomeCtrl.text);
-                                setMetaValue('padrinho_nome', padrinhoNomeCtrl.text);
-                                setMetaValue('madrinha_nome', madrinhaNomeCtrl.text);
-                                setMetaValue('contacto_pais', contactoPaisCtrl.text);
-                                setMetaValue('morada', batizadoMoradaCtrl.text);
-                                setMetaValue('instagram_pais', instagramPaisCtrl.text);
-                              }
-                              final payload = StaffEventPayload(
-                                name: null,
-                                legacyReportNumber: reportNumberCtrl.text.trim(),
-                                eventDate: dateCtrl.text.trim(),
-                                eventTime: timeCtrl.text.trim(),
-                                pricePerPhoto: price,
-                                basePrice: basePrice,
-                                eventType: eventType,
-                                eventMeta: meta,
-                                notes: notesCtrl.text.trim(),
-                                isLocked: isLocked,
-                              );
-                              if (payload.eventDate.isEmpty) {
-                                ScaffoldMessenger.of(context)
-                                    .showSnackBar(const SnackBar(content: Text('Data é obrigatória.')));
-                                return;
-                              }
-                              try {
-                                setState(() => saving = true);
-                                if (widget.event == null) {
-                                  await ref.read(apiProvider).createEvent(token, payload);
-                                } else {
-                                  await ref.read(apiProvider).updateEvent(token, widget.event!.id, payload);
-                                }
-                                if (!context.mounted) return;
-                                Navigator.pop(context);
-                              } catch (e) {
-                                if (!context.mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
-                              } finally {
-                                if (mounted) setState(() => saving = false);
-                              }
-                            },
-                      child: Text(saving ? 'A guardar...' : 'Guardar'),
                     ),
                   ],
-                ),
+                  if (eventType == 'batizado') ...[
+                    sectionCard(
+                      'Dados do batizado',
+                      wrapFields([
+                        TextField(
+                          controller: bebeNomeCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Nome do bebé',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        TextField(
+                          controller: paiNomeCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Nome do pai',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        TextField(
+                          controller: maeNomeCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Nome da mãe',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        TextField(
+                          controller: padrinhoNomeCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Nome do padrinho',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        TextField(
+                          controller: madrinhaNomeCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Nome da madrinha',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        TextField(
+                          controller: contactoPaisCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Contacto dos pais',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        TextField(
+                          controller: batizadoMoradaCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Morada',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        TextField(
+                          controller: instagramPaisCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Instagram dos pais',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ], columns: 2),
+                    ),
+                  ],
+                  sectionCard(
+                    'Serviços',
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        wrapFields([
+                          serviceCheck(
+                            'Save the Date',
+                            servicoSaveTheDate,
+                            (v) => servicoSaveTheDate = v,
+                          ),
+                          serviceCheck(
+                            'Fotos Love Story',
+                            servicoFotosLoveStory,
+                            (v) => servicoFotosLoveStory = v,
+                          ),
+                          serviceCheck(
+                            'Vídeo Love Story',
+                            servicoVideoLoveStory,
+                            (v) => servicoVideoLoveStory = v,
+                          ),
+                          serviceCheck(
+                            'Projectar Love Story',
+                            servicoProjectarLoveStory,
+                            (v) => servicoProjectarLoveStory = v,
+                          ),
+                          serviceCheck(
+                            'Combo beleza Love Story',
+                            servicoComboBelezaLoveStory,
+                            (v) => servicoComboBelezaLoveStory = v,
+                          ),
+                          serviceCheck(
+                            'Álbum digital 30x5',
+                            servicoAlbumDigital305,
+                            (v) => servicoAlbumDigital305 = v,
+                          ),
+                          serviceCheck(
+                            'Combo beleza TTD',
+                            servicoComboBelezaTtd,
+                            (v) => servicoComboBelezaTtd = v,
+                          ),
+                          serviceCheck(
+                            'Álbum digital',
+                            servicoAlbumDigital,
+                            (v) => servicoAlbumDigital = v,
+                          ),
+                          serviceCheck(
+                            'Álbum convidados',
+                            servicoAlbumConvidados,
+                            (v) => servicoAlbumConvidados = v,
+                          ),
+                          serviceCheck(
+                            'Álbuns 40x20',
+                            servicoAlbuns4020,
+                            (v) => servicoAlbuns4020 = v,
+                          ),
+                          serviceCheck(
+                            'Same Day Edit',
+                            servicoSameDayEdit,
+                            (v) => servicoSameDayEdit = v,
+                          ),
+                          serviceCheck(
+                            'Projectar Same Day Edit',
+                            servicoProjectarSameDayEdit,
+                            (v) => servicoProjectarSameDayEdit = v,
+                          ),
+                          serviceCheck(
+                            'Galeria digital convidados',
+                            servicoGaleriaDigitalConvidados,
+                            (v) => servicoGaleriaDigitalConvidados = v,
+                          ),
+                          serviceCheck(
+                            'Foto lembrança QR',
+                            servicoFotoLembrancaQr,
+                            (v) => servicoFotoLembrancaQr = v,
+                          ),
+                          serviceCheck(
+                            'Impressão 100 11x22,7',
+                            servicoImpressao100,
+                            (v) => servicoImpressao100 = v,
+                          ),
+                          serviceCheck(
+                            'Vídeo depois do sim',
+                            servicoVideoDepoisDoSim,
+                            (v) => servicoVideoDepoisDoSim = v,
+                          ),
+                          serviceCheck(
+                            'Drone',
+                            servicoDrone,
+                            (v) => servicoDrone = v,
+                          ),
+                        ], columns: 3),
+                        const SizedBox(height: 8),
+                        wrapFields([
+                          TextField(
+                            controller: servicoTelaCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Tela',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                          TextField(
+                            controller: servicoUsbCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'USB',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ]),
+                        const SizedBox(height: 8),
+                        wrapFields([
+                          TextField(
+                            controller: servicoCondicoesCtrl,
+                            maxLines: 2,
+                            decoration: const InputDecoration(
+                              labelText: 'Condições mínimas',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                          TextField(
+                            controller: servicoMusicasCtrl,
+                            maxLines: 2,
+                            decoration: const InputDecoration(
+                              labelText: 'Músicas',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                          TextField(
+                            controller: servicoExtrasCtrl,
+                            maxLines: 2,
+                            decoration: const InputDecoration(
+                              labelText: 'Extras',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ], columns: 1),
+                      ],
+                    ),
+                  ),
+                  if (widget.event != null &&
+                      _isTodayOrPast(dateCtrl.text)) ...[
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      value: isLocked,
+                      onChanged: (v) => setState(() => isLocked = v),
+                      title: const Text('Bloqueado'),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: saving
+                        ? null
+                        : () async {
+                            final price =
+                                num.tryParse(priceCtrl.text.trim()) ?? 0;
+                            final basePrice =
+                                num.tryParse(basePriceCtrl.text.trim()) ?? 0;
+                            final meta = Map<String, dynamic>.from(
+                              widget.event?.eventMeta ?? {},
+                            );
+                            void setMetaValue(String key, String value) {
+                              final trimmed = value.trim();
+                              if (trimmed.isEmpty) {
+                                meta.remove(key);
+                              } else {
+                                meta[key] = trimmed;
+                              }
+                            }
+
+                            void setMetaBool(String key, bool value) {
+                              if (value) {
+                                meta[key] = 1;
+                              } else {
+                                meta.remove(key);
+                              }
+                            }
+
+                            const weddingKeys = [
+                              'noivo_nome',
+                              'noiva_nome',
+                              'noivo_contacto',
+                              'noiva_contacto',
+                              'noivo_profissao',
+                              'noiva_profissao',
+                              'noivo_instagram',
+                              'noiva_instagram',
+                              'instagram_noivos',
+                              'noivo_filho_de_1',
+                              'noivo_filho_de_2',
+                              'noiva_filho_de_1',
+                              'noiva_filho_de_2',
+                              'noivo_morada',
+                              'noiva_morada',
+                              'noivo_coordenadas',
+                              'noiva_coordenadas',
+                              'casa_noivo_chegada',
+                              'casa_noivo_saida',
+                              'casa_noiva_chegada',
+                              'casa_noiva_saida',
+                            ];
+                            const baptKeys = [
+                              'bebe_nome',
+                              'pai_nome',
+                              'mae_nome',
+                              'padrinho_nome',
+                              'madrinha_nome',
+                              'contacto_pais',
+                              'morada',
+                              'instagram_pais',
+                            ];
+
+                            setMetaValue('missa_hora', missaHoraCtrl.text);
+                            setMetaValue('igreja_local', igrejaTipo);
+                            setMetaValue(
+                              'igreja_localidade',
+                              igrejaLocalidadeCtrl.text,
+                            );
+                            setMetaValue('quinta_local', refeicaoTipo);
+                            setMetaValue(
+                              'almoco_localidade',
+                              almocoLocalidadeCtrl.text,
+                            );
+                            setMetaValue(
+                              'numero_convidados',
+                              numeroConvidadosCtrl.text,
+                            );
+                            setMetaValue('data_entrega', dataEntregaCtrl.text);
+                            setMetaValue(
+                              'equipa_de_trabalho',
+                              equipaTrabalhoCtrl.text,
+                            );
+                            setMetaValue(
+                              'servico_num_profissionais',
+                              _teamCount == 0 ? '' : _teamCount.toString(),
+                            );
+                            setMetaBool(
+                              'servico_save_the_date',
+                              servicoSaveTheDate,
+                            );
+                            setMetaBool(
+                              'servico_fotos_love_story',
+                              servicoFotosLoveStory,
+                            );
+                            setMetaBool(
+                              'servico_video_love_story',
+                              servicoVideoLoveStory,
+                            );
+                            setMetaBool(
+                              'servico_projectar_love_story',
+                              servicoProjectarLoveStory,
+                            );
+                            setMetaBool(
+                              'servico_combo_beleza_love_story',
+                              servicoComboBelezaLoveStory,
+                            );
+                            setMetaBool(
+                              'servico_album_digital_30_5',
+                              servicoAlbumDigital305,
+                            );
+                            setMetaBool(
+                              'servico_combo_beleza_ttd',
+                              servicoComboBelezaTtd,
+                            );
+                            setMetaBool(
+                              'servico_album_digital',
+                              servicoAlbumDigital,
+                            );
+                            setMetaBool(
+                              'servico_album_convidados',
+                              servicoAlbumConvidados,
+                            );
+                            setMetaBool(
+                              'servico_albuns_40_20',
+                              servicoAlbuns4020,
+                            );
+                            setMetaBool(
+                              'servico_same_day_edit',
+                              servicoSameDayEdit,
+                            );
+                            setMetaBool(
+                              'servico_projectar_same_day_edit',
+                              servicoProjectarSameDayEdit,
+                            );
+                            setMetaBool(
+                              'servico_galeria_digital_convidados',
+                              servicoGaleriaDigitalConvidados,
+                            );
+                            setMetaBool(
+                              'servico_foto_lembranca_qr',
+                              servicoFotoLembrancaQr,
+                            );
+                            setMetaBool(
+                              'servico_impressao_100_11x22_7',
+                              servicoImpressao100,
+                            );
+                            setMetaBool(
+                              'servico_video_depois_do_sim',
+                              servicoVideoDepoisDoSim,
+                            );
+                            setMetaBool('servico_drone', servicoDrone);
+                            setMetaValue('servico_tela', servicoTelaCtrl.text);
+                            setMetaValue('servico_usb', servicoUsbCtrl.text);
+                            setMetaValue(
+                              'servico_condicoes_minimas',
+                              servicoCondicoesCtrl.text,
+                            );
+                            setMetaValue(
+                              'servico_musicas',
+                              servicoMusicasCtrl.text,
+                            );
+                            setMetaValue(
+                              'servico_extras',
+                              servicoExtrasCtrl.text,
+                            );
+                            if (eventType == 'casamento') {
+                              for (final key in baptKeys) {
+                                meta.remove(key);
+                              }
+                              setMetaValue('noivo_nome', noivoNomeCtrl.text);
+                              setMetaValue('noiva_nome', noivaNomeCtrl.text);
+                              setMetaValue(
+                                'noivo_instagram',
+                                noivoInstagramCtrl.text,
+                              );
+                              setMetaValue(
+                                'noiva_instagram',
+                                noivaInstagramCtrl.text,
+                              );
+                              setMetaValue(
+                                'noivo_contacto',
+                                noivoContactoCtrl.text,
+                              );
+                              setMetaValue(
+                                'noiva_contacto',
+                                noivaContactoCtrl.text,
+                              );
+                              setMetaValue(
+                                'noivo_profissao',
+                                noivoProfissaoCtrl.text,
+                              );
+                              setMetaValue(
+                                'noiva_profissao',
+                                noivaProfissaoCtrl.text,
+                              );
+                              setMetaValue(
+                                'noivo_filho_de_1',
+                                noivoFilhoDe1Ctrl.text,
+                              );
+                              setMetaValue(
+                                'noivo_filho_de_2',
+                                noivoFilhoDe2Ctrl.text,
+                              );
+                              setMetaValue(
+                                'noiva_filho_de_1',
+                                noivaFilhoDe1Ctrl.text,
+                              );
+                              setMetaValue(
+                                'noiva_filho_de_2',
+                                noivaFilhoDe2Ctrl.text,
+                              );
+                              setMetaValue(
+                                'noivo_morada',
+                                noivoMoradaCtrl.text,
+                              );
+                              setMetaValue(
+                                'noiva_morada',
+                                noivaMoradaCtrl.text,
+                              );
+                              setMetaValue(
+                                'noivo_coordenadas',
+                                noivoCoordenadasCtrl.text,
+                              );
+                              setMetaValue(
+                                'noiva_coordenadas',
+                                noivaCoordenadasCtrl.text,
+                              );
+                              setMetaValue(
+                                'casa_noivo_chegada',
+                                casaNoivoChegadaCtrl.text,
+                              );
+                              setMetaValue(
+                                'casa_noivo_saida',
+                                casaNoivoSaidaCtrl.text,
+                              );
+                              setMetaValue(
+                                'casa_noiva_chegada',
+                                casaNoivaChegadaCtrl.text,
+                              );
+                              setMetaValue(
+                                'casa_noiva_saida',
+                                casaNoivaSaidaCtrl.text,
+                              );
+                            }
+                            if (eventType == 'batizado') {
+                              for (final key in weddingKeys) {
+                                meta.remove(key);
+                              }
+                              setMetaValue('bebe_nome', bebeNomeCtrl.text);
+                              setMetaValue('pai_nome', paiNomeCtrl.text);
+                              setMetaValue('mae_nome', maeNomeCtrl.text);
+                              setMetaValue(
+                                'padrinho_nome',
+                                padrinhoNomeCtrl.text,
+                              );
+                              setMetaValue(
+                                'madrinha_nome',
+                                madrinhaNomeCtrl.text,
+                              );
+                              setMetaValue(
+                                'contacto_pais',
+                                contactoPaisCtrl.text,
+                              );
+                              setMetaValue('morada', batizadoMoradaCtrl.text);
+                              setMetaValue(
+                                'instagram_pais',
+                                instagramPaisCtrl.text,
+                              );
+                            }
+                            final payload = StaffEventPayload(
+                              name: null,
+                              legacyReportNumber: reportNumberCtrl.text.trim(),
+                              eventDate: dateCtrl.text.trim(),
+                              eventTime: timeCtrl.text.trim(),
+                              pricePerPhoto: price,
+                              basePrice: basePrice,
+                              eventType: eventType,
+                              eventMeta: meta,
+                              notes: notesCtrl.text.trim(),
+                              isLocked: isLocked,
+                            );
+                            if (payload.eventDate.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Data é obrigatória.'),
+                                ),
+                              );
+                              return;
+                            }
+                            try {
+                              setState(() => saving = true);
+                              if (widget.event == null) {
+                                await ref
+                                    .read(apiProvider)
+                                    .createEvent(token, payload);
+                              } else {
+                                await ref
+                                    .read(apiProvider)
+                                    .updateEvent(
+                                      token,
+                                      widget.event!.id,
+                                      payload,
+                                    );
+                              }
+                              if (!context.mounted) return;
+                              Navigator.pop(context);
+                            } catch (e) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Erro: $e')),
+                              );
+                            } finally {
+                              if (mounted) setState(() => saving = false);
+                            }
+                          },
+                    child: Text(saving ? 'A guardar...' : 'Guardar'),
+                  ),
+                ],
               ),
             ),
-          );
-        },
+          ),
+        );
+      },
     );
     if (user != null && useDesktopLayout(context)) {
       return StaffDesktopShell(
@@ -7710,7 +10055,9 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
       );
     }
     final eventActions = <Widget>[
-      if (widget.event != null && user != null && user.hasPermission('events.view'))
+      if (widget.event != null &&
+          user != null &&
+          user.hasPermission('events.view'))
         IconButton(
           icon: const Icon(Icons.picture_as_pdf_outlined),
           tooltip: 'Gerar PDF',
@@ -7719,11 +10066,16 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               context: context,
               barrierDismissible: false,
               builder: (_) => const AlertDialog(
-                content: SizedBox(height: 48, child: Center(child: CircularProgressIndicator())),
+                content: SizedBox(
+                  height: 48,
+                  child: Center(child: CircularProgressIndicator()),
+                ),
               ),
             );
             try {
-              final bytes = await ref.read(apiProvider).staffEventPdf(token, widget.event!.id);
+              final bytes = await ref
+                  .read(apiProvider)
+                  .staffEventPdf(token, widget.event!.id);
               final dir = await getTemporaryDirectory();
               final file = File('${dir.path}/evento-${widget.event!.id}.pdf');
               await file.writeAsBytes(bytes, flush: true);
@@ -7731,18 +10083,26 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               await OpenFilex.open(file.path);
             } catch (e) {
               if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro PDF: $e')));
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text('Erro PDF: $e')));
             } finally {
               if (context.mounted) Navigator.pop(context);
             }
           },
         ),
-      if (widget.event != null && user != null && user.hasPermission('events.delete'))
+      if (widget.event != null &&
+          user != null &&
+          user.hasPermission('events.delete'))
         IconButton(
           icon: const Icon(Icons.delete_outline),
           tooltip: 'Apagar evento',
           onPressed: () async {
-            final ok = await _confirm(context, 'Apagar evento?', 'Isto remove fotos e uploads associados.');
+            final ok = await _confirm(
+              context,
+              'Apagar evento?',
+              'Isto remove fotos e uploads associados.',
+            );
             if (!ok || !context.mounted) return;
             try {
               await ref.read(apiProvider).deleteEvent(token, widget.event!.id);
@@ -7750,7 +10110,9 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
               Navigator.pop(context);
             } catch (e) {
               if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text('Erro: $e')));
             }
           },
         ),
@@ -7778,7 +10140,8 @@ class StaffEventStaffPage extends ConsumerStatefulWidget {
   final StaffEvent event;
 
   @override
-  ConsumerState<StaffEventStaffPage> createState() => _StaffEventStaffPageState();
+  ConsumerState<StaffEventStaffPage> createState() =>
+      _StaffEventStaffPageState();
 }
 
 class _StaffEventStaffPageState extends ConsumerState<StaffEventStaffPage> {
@@ -7805,7 +10168,8 @@ class _StaffEventStaffPageState extends ConsumerState<StaffEventStaffPage> {
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
     final user = ref.watch(staffUserProvider);
-    if (token == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     if (useDesktopLayout(context) && user != null) {
       return StaffDesktopShell(
         user: user,
@@ -7844,27 +10208,46 @@ class _StaffEventStaffPageState extends ConsumerState<StaffEventStaffPage> {
           selectedUserId = users.first.id;
         }
 
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-            const Text('Associar staff', style: TextStyle(fontWeight: FontWeight.w600)),
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            const Text(
+              'Associar staff',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
             const SizedBox(height: 8),
             DropdownButtonFormField<int>(
               value: selectedUserId,
-              items: users.map((u) => DropdownMenuItem(value: u.id, child: Text('${u.name} (${u.role})'))).toList(),
+              items: users
+                  .map(
+                    (u) => DropdownMenuItem(
+                      value: u.id,
+                      child: Text('${u.name} (${u.role})'),
+                    ),
+                  )
+                  .toList(),
               onChanged: (v) => setState(() => selectedUserId = v),
-              decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Utilizador'),
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'Utilizador',
+              ),
             ),
             const SizedBox(height: 8),
             DropdownButtonFormField<String>(
               value: role,
               items: const [
-                DropdownMenuItem(value: 'photographer', child: Text('Fotógrafo')),
+                DropdownMenuItem(
+                  value: 'photographer',
+                  child: Text('Fotógrafo'),
+                ),
                 DropdownMenuItem(value: 'assistant', child: Text('Assistente')),
                 DropdownMenuItem(value: 'sales', child: Text('Vendas')),
               ],
               onChanged: (v) => setState(() => role = v ?? 'photographer'),
-              decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Função'),
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'Função',
+              ),
             ),
             const SizedBox(height: 8),
             SwitchListTile(
@@ -7880,13 +10263,19 @@ class _StaffEventStaffPageState extends ConsumerState<StaffEventStaffPage> {
                   DropdownMenuItem(value: 'whatsapp', child: Text('WhatsApp')),
                 ],
                 onChanged: (v) => setState(() => channel = v ?? 'email'),
-                decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Canal'),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'Canal',
+                ),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: messageCtrl,
                 maxLines: 2,
-                decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Mensagem (opcional)'),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'Mensagem (opcional)',
+                ),
               ),
             ],
             const SizedBox(height: 8),
@@ -7894,7 +10283,9 @@ class _StaffEventStaffPageState extends ConsumerState<StaffEventStaffPage> {
               onPressed: selectedUserId == null
                   ? null
                   : () async {
-                      await ref.read(apiProvider).staffAssignEventStaff(
+                      await ref
+                          .read(apiProvider)
+                          .staffAssignEventStaff(
                             token,
                             widget.event.id,
                             [selectedUserId!],
@@ -7909,7 +10300,10 @@ class _StaffEventStaffPageState extends ConsumerState<StaffEventStaffPage> {
               child: const Text('Associar'),
             ),
             const Divider(height: 32),
-            const Text('Staff associado', style: TextStyle(fontWeight: FontWeight.w600)),
+            const Text(
+              'Staff associado',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
             const SizedBox(height: 8),
             if (staff.isEmpty) const Text('Sem staff associado.'),
             ...staff.map((s) {
@@ -7920,7 +10314,13 @@ class _StaffEventStaffPageState extends ConsumerState<StaffEventStaffPage> {
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline),
                     onPressed: () async {
-                      await ref.read(apiProvider).staffRemoveEventStaff(token, widget.event.id, s.user.id);
+                      await ref
+                          .read(apiProvider)
+                          .staffRemoveEventStaff(
+                            token,
+                            widget.event.id,
+                            s.user.id,
+                          );
                       if (!mounted) return;
                       setState(() {});
                     },
@@ -7968,8 +10368,10 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
   List<_UploadOutcome> uploadResults = [];
   List<StaffPhoto> latestPhotos = [];
 
-  Future<List<StaffEvent>> _loadEvents(String token, {required bool assignedOnly}) =>
-      ref.read(apiProvider).staffEvents(token, assignedOnly: assignedOnly);
+  Future<List<StaffEvent>> _loadEvents(
+    String token, {
+    required bool assignedOnly,
+  }) => ref.read(apiProvider).staffEvents(token, assignedOnly: assignedOnly);
 
   @override
   void initState() {
@@ -7990,7 +10392,9 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
 
   Future<void> _refreshLatestPhotos(String token, int eventId) async {
     try {
-      final photos = await ref.read(apiProvider).staffEventPhotos(token, eventId, '');
+      final photos = await ref
+          .read(apiProvider)
+          .staffEventPhotos(token, eventId, '');
       photos.sort((a, b) => b.id.compareTo(a.id));
       if (mounted) {
         setState(() => latestPhotos = photos.take(24).toList());
@@ -8008,19 +10412,34 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
             if (snap.hasError) {
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                children: [Padding(padding: const EdgeInsets.all(16), child: Text('Erro: ${snap.error}'))],
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text('Erro: ${snap.error}'),
+                  ),
+                ],
               );
             }
             return ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              children: const [SizedBox(height: 300, child: Center(child: CircularProgressIndicator()))],
+              children: const [
+                SizedBox(
+                  height: 300,
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              ],
             );
           }
           final events = _filterEventsForUser(snap.data!, user);
           if (events.isEmpty) {
             return ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              children: const [Padding(padding: EdgeInsets.all(16), child: Text('Sem eventos'))],
+              children: const [
+                Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text('Sem eventos'),
+                ),
+              ],
             );
           }
           if (eventId == null || !events.any((e) => e.id == eventId)) {
@@ -8032,7 +10451,11 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
             children: [
               DropdownButtonFormField<int>(
                 value: eventId,
-                items: events.map((e) => DropdownMenuItem(value: e.id, child: Text(e.name))).toList(),
+                items: events
+                    .map(
+                      (e) => DropdownMenuItem(value: e.id, child: Text(e.name)),
+                    )
+                    .toList(),
                 onChanged: uploading
                     ? null
                     : (v) async {
@@ -8040,7 +10463,10 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
                         setState(() => eventId = v);
                         await _refreshLatestPhotos(token, v);
                       },
-                decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Evento'),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'Evento',
+                ),
               ),
               const SizedBox(height: 12),
               FilledButton.icon(
@@ -8048,7 +10474,9 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
                     ? null
                     : () async {
                         final picker = ImagePicker();
-                        final files = await picker.pickMultiImage(imageQuality: 90);
+                        final files = await picker.pickMultiImage(
+                          imageQuality: 90,
+                        );
                         if (files.isEmpty) return;
                         setState(() {
                           uploading = true;
@@ -8058,12 +10486,21 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
                         try {
                           final results = <_UploadOutcome>[];
                           for (final file in files) {
-                            final outcome = await _uploadFile(token, eventId!, File(file.path));
+                            final outcome = await _uploadFile(
+                              token,
+                              eventId!,
+                              File(file.path),
+                            );
                             results.add(outcome);
-                            if (mounted) setState(() => uploadResults = List.from(results));
+                            if (mounted)
+                              setState(
+                                () => uploadResults = List.from(results),
+                              );
                           }
                           if (!context.mounted) return;
-                          final failed = results.where((r) => !r.success).toList();
+                          final failed = results
+                              .where((r) => !r.success)
+                              .toList();
                           if (mounted) {
                             setState(() {
                               status = failed.isEmpty
@@ -8072,16 +10509,26 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
                             });
                           }
                           if (failed.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Uploads concluídos.')));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Uploads concluídos.'),
+                              ),
+                            );
                           } else {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Uploads concluídos com falhas (${failed.length}).')),
+                              SnackBar(
+                                content: Text(
+                                  'Uploads concluídos com falhas (${failed.length}).',
+                                ),
+                              ),
                             );
                           }
                           await _refreshLatestPhotos(token, eventId!);
                         } catch (e) {
                           if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro upload: $e')));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Erro upload: $e')),
+                          );
                         } finally {
                           if (mounted) setState(() => uploading = false);
                         }
@@ -8093,10 +10540,15 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
               Text(status),
               if (uploadResults.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                const Text('Resultado dos uploads', style: TextStyle(fontWeight: FontWeight.w600)),
+                const Text(
+                  'Resultado dos uploads',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
                 const SizedBox(height: 8),
                 ...uploadResults.map((r) {
-                  final icon = r.success ? Icons.check_circle_outline : Icons.error_outline;
+                  final icon = r.success
+                      ? Icons.check_circle_outline
+                      : Icons.error_outline;
                   final color = r.success ? kBrandRose : Colors.redAccent;
                   final message = r.success
                       ? '${r.fileName} • ${_humanDuration(r.duration)}'
@@ -8115,7 +10567,10 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
               ],
               if (latestPhotos.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                const Text('Últimas fotos', style: TextStyle(fontWeight: FontWeight.w600)),
+                const Text(
+                  'Últimas fotos',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,
@@ -8130,7 +10585,10 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: kBrandRose),
                         image: preview != null && preview.isNotEmpty
-                            ? DecorationImage(image: NetworkImage(preview), fit: BoxFit.cover)
+                            ? DecorationImage(
+                                image: NetworkImage(preview),
+                                fit: BoxFit.cover,
+                              )
                             : null,
                       ),
                       alignment: Alignment.bottomCenter,
@@ -8159,7 +10617,8 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
     final user = ref.watch(staffUserProvider);
-    if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null || user == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     if (useDesktopLayout(context)) {
       return StaffDesktopShell(
         user: user,
@@ -8176,15 +10635,25 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
       appBar: AppBar(
         title: const Text('Uploads'),
         leading: navLeading(context),
-        actions: navActions(context, extra: [
-          IconButton(onPressed: () => setState(() {}), icon: const Icon(Icons.refresh)),
-        ]),
+        actions: navActions(
+          context,
+          extra: [
+            IconButton(
+              onPressed: () => setState(() {}),
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
       ),
       body: _buildUploadsBody(context, token, user),
     );
   }
 
-  Future<_UploadOutcome> _uploadFile(String token, int eventId, File file) async {
+  Future<_UploadOutcome> _uploadFile(
+    String token,
+    int eventId,
+    File file,
+  ) async {
     final fileName = file.path.split('/').last;
     final length = await file.length();
     const chunkSize = 1024 * 1024 * 2;
@@ -8198,15 +10667,17 @@ class _StaffUploadsPageState extends ConsumerState<StaffUploadsPage> {
         final size = min(chunkSize, length - start);
         await raf.setPosition(start);
         final bytes = await raf.read(size);
-        await ref.read(apiProvider).staffUploadChunk(
-          token: token,
-          eventId: eventId,
-          uploadId: uploadId,
-          chunkIndex: i,
-          totalChunks: totalChunks,
-          fileName: fileName,
-          chunkBytes: bytes,
-        );
+        await ref
+            .read(apiProvider)
+            .staffUploadChunk(
+              token: token,
+              eventId: eventId,
+              uploadId: uploadId,
+              chunkIndex: i,
+              totalChunks: totalChunks,
+              fileName: fileName,
+              chunkBytes: bytes,
+            );
         if (mounted) {
           setState(() => status = 'Upload ${i + 1}/$totalChunks: $fileName');
         }
@@ -8239,10 +10710,12 @@ class _StaffEventGalleryPage extends ConsumerStatefulWidget {
   final StaffEvent event;
 
   @override
-  ConsumerState<_StaffEventGalleryPage> createState() => _StaffEventGalleryPageState();
+  ConsumerState<_StaffEventGalleryPage> createState() =>
+      _StaffEventGalleryPageState();
 }
 
-class _StaffEventGalleryPageState extends ConsumerState<_StaffEventGalleryPage> {
+class _StaffEventGalleryPageState
+    extends ConsumerState<_StaffEventGalleryPage> {
   bool uploading = false;
   String uploadStatus = '';
   List<_UploadOutcome> uploadResults = [];
@@ -8266,20 +10739,34 @@ class _StaffEventGalleryPageState extends ConsumerState<_StaffEventGalleryPage> 
         final size = min(chunkSize, length - start);
         await raf.setPosition(start);
         final bytes = await raf.read(size);
-        await ref.read(apiProvider).staffUploadChunk(
-          token: token,
-          eventId: widget.event.id,
-          uploadId: uploadId,
-          chunkIndex: i,
-          totalChunks: totalChunks,
-          fileName: fileName,
-          chunkBytes: bytes,
-        );
-        if (mounted) setState(() => uploadStatus = 'Upload ${i + 1}/$totalChunks: $fileName');
+        await ref
+            .read(apiProvider)
+            .staffUploadChunk(
+              token: token,
+              eventId: widget.event.id,
+              uploadId: uploadId,
+              chunkIndex: i,
+              totalChunks: totalChunks,
+              fileName: fileName,
+              chunkBytes: bytes,
+            );
+        if (mounted)
+          setState(
+            () => uploadStatus = 'Upload ${i + 1}/$totalChunks: $fileName',
+          );
       }
-      return _UploadOutcome(fileName: fileName, duration: DateTime.now().difference(startedAt), success: true);
+      return _UploadOutcome(
+        fileName: fileName,
+        duration: DateTime.now().difference(startedAt),
+        success: true,
+      );
     } catch (e) {
-      return _UploadOutcome(fileName: fileName, duration: DateTime.now().difference(startedAt), success: false, error: e.toString());
+      return _UploadOutcome(
+        fileName: fileName,
+        duration: DateTime.now().difference(startedAt),
+        success: false,
+        error: e.toString(),
+      );
     } finally {
       await raf.close();
     }
@@ -8289,7 +10776,11 @@ class _StaffEventGalleryPageState extends ConsumerState<_StaffEventGalleryPage> 
     final picker = ImagePicker();
     final files = await picker.pickMultiImage(imageQuality: 90);
     if (files.isEmpty) return;
-    setState(() { uploading = true; uploadStatus = 'A enviar ${files.length} ficheiros...'; uploadResults = []; });
+    setState(() {
+      uploading = true;
+      uploadStatus = 'A enviar ${files.length} ficheiros...';
+      uploadResults = [];
+    });
     try {
       final results = <_UploadOutcome>[];
       for (final f in files) {
@@ -8299,7 +10790,11 @@ class _StaffEventGalleryPageState extends ConsumerState<_StaffEventGalleryPage> 
       }
       if (mounted) {
         final failed = results.where((r) => !r.success).length;
-        setState(() => uploadStatus = failed == 0 ? 'Uploads concluídos.' : 'Concluído com $failed falhas.');
+        setState(
+          () => uploadStatus = failed == 0
+              ? 'Uploads concluídos.'
+              : 'Concluído com $failed falhas.',
+        );
       }
     } catch (e) {
       if (mounted) setState(() => uploadStatus = 'Erro: $e');
@@ -8319,7 +10814,14 @@ class _StaffEventGalleryPageState extends ConsumerState<_StaffEventGalleryPage> 
           ? FloatingActionButton.extended(
               onPressed: uploading ? null : () => _pickAndUpload(token),
               icon: uploading
-                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.black,
+                      ),
+                    )
                   : const Icon(Icons.add_a_photo),
               label: Text(uploading ? 'A enviar...' : 'Adicionar fotos'),
               backgroundColor: kBrandRose,
@@ -8329,7 +10831,9 @@ class _StaffEventGalleryPageState extends ConsumerState<_StaffEventGalleryPage> 
       body: RefreshIndicator(
         onRefresh: () async => setState(() {}),
         child: FutureBuilder<List<StaffPhoto>>(
-          future: ref.read(apiProvider).staffEventPhotos(token, widget.event.id, ''),
+          future: ref
+              .read(apiProvider)
+              .staffEventPhotos(token, widget.event.id, ''),
           builder: (_, snap) {
             return ListView(
               physics: const AlwaysScrollableScrollPhysics(),
@@ -8338,55 +10842,101 @@ class _StaffEventGalleryPageState extends ConsumerState<_StaffEventGalleryPage> 
                 if (uploadStatus.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(uploadStatus, style: TextStyle(color: kBrandRose, fontWeight: FontWeight.w500)),
+                    child: Text(
+                      uploadStatus,
+                      style: TextStyle(
+                        color: kBrandRose,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                   ),
                 if (uploadResults.isNotEmpty) ...[
-                  ...uploadResults.map((r) => Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Row(children: [
-                      Icon(r.success ? Icons.check_circle_outline : Icons.error_outline,
-                           size: 16, color: r.success ? Colors.greenAccent : Colors.redAccent),
-                      const SizedBox(width: 6),
-                      Expanded(child: Text('${r.fileName}${r.success ? '' : ' • Falhou'}',
-                          style: const TextStyle(fontSize: 12))),
-                    ]),
-                  )),
+                  ...uploadResults.map(
+                    (r) => Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
+                        children: [
+                          Icon(
+                            r.success
+                                ? Icons.check_circle_outline
+                                : Icons.error_outline,
+                            size: 16,
+                            color: r.success
+                                ? Colors.greenAccent
+                                : Colors.redAccent,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '${r.fileName}${r.success ? '' : ' • Falhou'}',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 12),
                 ],
                 if (!snap.hasData) ...[
                   if (snap.hasError)
                     Center(child: Text('Erro: ${snap.error}'))
                   else
-                    const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator())),
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(32),
+                        child: CircularProgressIndicator(),
+                      ),
+                    ),
                 ] else if (snap.data!.isEmpty) ...[
                   const Center(
                     child: Padding(
                       padding: EdgeInsets.symmetric(vertical: 48),
-                      child: Column(children: [
-                        Icon(Icons.photo_library_outlined, size: 64, color: Colors.white24),
-                        SizedBox(height: 12),
-                        Text('Sem fotos neste evento', style: TextStyle(color: Colors.white38)),
-                      ]),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.photo_library_outlined,
+                            size: 64,
+                            color: Colors.white24,
+                          ),
+                          SizedBox(height: 12),
+                          Text(
+                            'Sem fotos neste evento',
+                            style: TextStyle(color: Colors.white38),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ] else ...[
                   GridView.builder(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      crossAxisSpacing: 4,
-                      mainAxisSpacing: 4,
-                    ),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          crossAxisSpacing: 4,
+                          mainAxisSpacing: 4,
+                        ),
                     itemCount: snap.data!.length,
                     itemBuilder: (_, i) {
                       final p = snap.data![i];
                       return GestureDetector(
                         onLongPress: user.hasPermission('photos.delete')
                             ? () async {
-                                final ok = await _confirm(context, 'Apagar foto?', 'Número ${p.number}');
+                                final ok = await _confirm(
+                                  context,
+                                  'Apagar foto?',
+                                  'Número ${p.number}',
+                                );
                                 if (!ok) return;
-                                await ref.read(apiProvider).staffDeletePhoto(token, widget.event.id, p.id);
+                                await ref
+                                    .read(apiProvider)
+                                    .staffDeletePhoto(
+                                      token,
+                                      widget.event.id,
+                                      p.id,
+                                    );
                                 if (mounted) setState(() {});
                               }
                             : null,
@@ -8394,24 +10944,49 @@ class _StaffEventGalleryPageState extends ConsumerState<_StaffEventGalleryPage> 
                           decoration: BoxDecoration(
                             color: kBrandBlack,
                             borderRadius: BorderRadius.circular(4),
-                            border: Border.all(color: kBrandRose.withOpacity(0.2)),
+                            border: Border.all(
+                              color: kBrandRose.withOpacity(0.2),
+                            ),
                           ),
                           child: Stack(
                             fit: StackFit.expand,
                             children: [
-                              if (p.previewUrl != null && p.previewUrl!.isNotEmpty)
+                              if (p.previewUrl != null &&
+                                  p.previewUrl!.isNotEmpty)
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(4),
-                                  child: Image.network(p.previewUrl!, fit: BoxFit.cover),
+                                  child: Image.network(
+                                    p.previewUrl!,
+                                    fit: BoxFit.cover,
+                                  ),
                                 )
                               else
-                                const Center(child: Icon(Icons.image_not_supported, color: Colors.white24, size: 28)),
+                                const Center(
+                                  child: Icon(
+                                    Icons.image_not_supported,
+                                    color: Colors.white24,
+                                    size: 28,
+                                  ),
+                                ),
                               Positioned(
-                                bottom: 2, left: 2,
+                                bottom: 2,
+                                left: 2,
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                                  decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(3)),
-                                  child: Text('#${p.number}', style: const TextStyle(fontSize: 9, color: Colors.white)),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 1,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black54,
+                                    borderRadius: BorderRadius.circular(3),
+                                  ),
+                                  child: Text(
+                                    '#${p.number}',
+                                    style: const TextStyle(
+                                      fontSize: 9,
+                                      color: Colors.white,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ],
@@ -8438,8 +11013,10 @@ class StaffPhotosPage extends ConsumerStatefulWidget {
 }
 
 class _StaffPhotosPageState extends ConsumerState<StaffPhotosPage> {
-  Future<List<StaffEvent>> _loadEvents(String token, {required bool assignedOnly}) =>
-      ref.read(apiProvider).staffEvents(token, assignedOnly: assignedOnly);
+  Future<List<StaffEvent>> _loadEvents(
+    String token, {
+    required bool assignedOnly,
+  }) => ref.read(apiProvider).staffEvents(token, assignedOnly: assignedOnly);
 
   @override
   void initState() {
@@ -8451,22 +11028,25 @@ class _StaffPhotosPageState extends ConsumerState<StaffPhotosPage> {
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
     final user = ref.watch(staffUserProvider);
-    if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null || user == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     if (useDesktopLayout(context)) {
-      return StaffDesktopShell(
-        user: user,
-        token: token,
-        initialId: 'photos',
-      );
+      return StaffDesktopShell(user: user, token: token, initialId: 'photos');
     }
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Galerias / Fotos'),
         leading: navLeading(context),
-        actions: navActions(context, extra: [
-          IconButton(onPressed: () => setState(() {}), icon: const Icon(Icons.refresh)),
-        ]),
+        actions: navActions(
+          context,
+          extra: [
+            IconButton(
+              onPressed: () => setState(() {}),
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
       ),
       body: RefreshIndicator(
         onRefresh: () async => setState(() {}),
@@ -8477,19 +11057,34 @@ class _StaffPhotosPageState extends ConsumerState<StaffPhotosPage> {
               if (snap.hasError) {
                 return ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
-                  children: [Padding(padding: const EdgeInsets.all(16), child: Text('Erro: ${snap.error}'))],
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text('Erro: ${snap.error}'),
+                    ),
+                  ],
                 );
               }
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                children: const [SizedBox(height: 300, child: Center(child: CircularProgressIndicator()))],
+                children: const [
+                  SizedBox(
+                    height: 300,
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                ],
               );
             }
             final events = _filterEventsForUser(snap.data!, user);
             if (events.isEmpty) {
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                children: const [Padding(padding: EdgeInsets.all(16), child: Text('Sem eventos'))],
+                children: const [
+                  Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text('Sem eventos'),
+                  ),
+                ],
               );
             }
             return GridView.builder(
@@ -8504,11 +11099,17 @@ class _StaffPhotosPageState extends ConsumerState<StaffPhotosPage> {
               itemCount: events.length,
               itemBuilder: (context, index) {
                 final e = events[index];
-                final typeLabel = e.eventType == 'casamento' ? 'Casamento' : e.eventType == 'batizado' ? 'Batizado' : e.eventType ?? '';
+                final typeLabel = e.eventType == 'casamento'
+                    ? 'Casamento'
+                    : e.eventType == 'batizado'
+                    ? 'Batizado'
+                    : e.eventType ?? '';
                 return GestureDetector(
                   onTap: () => Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => _StaffEventGalleryPage(event: e)),
+                    MaterialPageRoute(
+                      builder: (_) => _StaffEventGalleryPage(event: e),
+                    ),
                   ),
                   child: Container(
                     decoration: BoxDecoration(
@@ -8527,24 +11128,43 @@ class _StaffPhotosPageState extends ConsumerState<StaffPhotosPage> {
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: Center(
-                              child: Icon(Icons.photo_library_outlined, size: 36, color: kBrandRose.withOpacity(0.5)),
+                              child: Icon(
+                                Icons.photo_library_outlined,
+                                size: 36,
+                                color: kBrandRose.withOpacity(0.5),
+                              ),
                             ),
                           ),
                         ),
                         const SizedBox(height: 8),
                         Text(
                           e.name,
-                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
                         if (e.eventDate.isNotEmpty) ...[
                           const SizedBox(height: 2),
-                          Text(e.eventDate, style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.45))),
+                          Text(
+                            e.eventDate,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.white.withOpacity(0.45),
+                            ),
+                          ),
                         ],
                         if (typeLabel.isNotEmpty) ...[
                           const SizedBox(height: 2),
-                          Text(typeLabel, style: TextStyle(fontSize: 11, color: kBrandRose.withOpacity(0.7))),
+                          Text(
+                            typeLabel,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: kBrandRose.withOpacity(0.7),
+                            ),
+                          ),
                         ],
                       ],
                     ),
@@ -8588,10 +11208,15 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
     super.dispose();
   }
 
-  Future<List<StaffEvent>> _loadEvents(String token, {required bool assignedOnly}) {
+  Future<List<StaffEvent>> _loadEvents(
+    String token, {
+    required bool assignedOnly,
+  }) {
     if (_eventsFuture == null || _lastToken != token) {
       _lastToken = token;
-      _eventsFuture = ref.read(apiProvider).staffEvents(token, assignedOnly: assignedOnly);
+      _eventsFuture = ref
+          .read(apiProvider)
+          .staffEvents(token, assignedOnly: assignedOnly);
     }
     return _eventsFuture!;
   }
@@ -8628,360 +11253,581 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
     required String status,
     required String query,
   }) async {
-    return ref.read(apiProvider).staffOrdersList(
-          token,
-          eventDate: eventDate,
-          status: status,
-          q: query,
-        );
+    return ref
+        .read(apiProvider)
+        .staffOrdersList(token, eventDate: eventDate, status: status, q: query);
   }
 
   @override
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
     final user = ref.watch(staffUserProvider);
-    if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null || user == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     if (useDesktopLayout(context)) {
-      return StaffDesktopShell(
-        user: user,
-        token: token,
-        initialId: 'orders',
-      );
+      return StaffDesktopShell(user: user, token: token, initialId: 'orders');
     }
     final isPhotographer = _isPhotographerRole(user.role);
     final canUpdate = user.hasPermission('orders.update');
     final canBulk = user.hasPermission('orders.bulk');
-    final canDownload = user.hasPermission('orders.download') && !isPhotographer;
+    final canDownload =
+        user.hasPermission('orders.download') && !isPhotographer;
     final canExport = user.hasPermission('orders.export') && !isPhotographer;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Pedidos'),
         leading: navLeading(context),
-        actions: navActions(context, extra: [
-          IconButton(onPressed: _refreshEvents, icon: const Icon(Icons.refresh)),
-        ]),
+        actions: navActions(
+          context,
+          extra: [
+            IconButton(
+              onPressed: _refreshEvents,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
       ),
       body: RefreshIndicator(
         onRefresh: () async => _refreshEvents(),
         child: FutureBuilder<List<StaffEvent>>(
-        future: _loadEvents(token, assignedOnly: !_canSeeAllEvents(user)),
-        builder: (_, snap) {
-          if (!snap.hasData) {
-            if (snap.hasError) {
+          future: _loadEvents(token, assignedOnly: !_canSeeAllEvents(user)),
+          builder: (_, snap) {
+            if (!snap.hasData) {
+              if (snap.hasError) {
+                return ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text('Erro: ${snap.error}'),
+                    ),
+                  ],
+                );
+              }
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                children: [Padding(padding: const EdgeInsets.all(16), child: Text('Erro: ${snap.error}'))],
+                children: const [
+                  SizedBox(
+                    height: 300,
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                ],
               );
             }
-            return ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              children: const [SizedBox(height: 300, child: Center(child: CircularProgressIndicator()))],
-            );
-          }
-          final events = _filterEventsForUser(snap.data!, user);
-          selectedDate ??= _startOfDay(DateTime.now());
-          final resolvedDate = _startOfDay(selectedDate!);
-          final resolvedDateKey = _dateKey(resolvedDate);
-          final eventsForDate = events.where((e) => e.eventDate == resolvedDateKey).toList();
-          final eventIds = eventsForDate.map((e) => e.id).toList();
-          final eventInfoById = {for (final e in events) e.id: e};
-          return Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(8),
-                child: Column(
-                  children: [
-                    FilledButton.tonal(
-                      onPressed: () async {
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: resolvedDate,
-                          firstDate: DateTime(2020, 1, 1),
-                          lastDate: DateTime(2100, 12, 31),
-                        );
-                        if (picked == null) return;
-                        setState(() {
-                          selectedDate = picked;
-                          selected.clear();
+            final events = _filterEventsForUser(snap.data!, user);
+            selectedDate ??= _startOfDay(DateTime.now());
+            final resolvedDate = _startOfDay(selectedDate!);
+            final resolvedDateKey = _dateKey(resolvedDate);
+            final eventsForDate = events
+                .where((e) => e.eventDate == resolvedDateKey)
+                .toList();
+            final eventIds = eventsForDate.map((e) => e.id).toList();
+            final eventInfoById = {for (final e in events) e.id: e};
+            return Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Column(
+                    children: [
+                      FilledButton.tonal(
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: resolvedDate,
+                            firstDate: DateTime(2020, 1, 1),
+                            lastDate: DateTime(2100, 12, 31),
+                          );
+                          if (picked == null) return;
+                          setState(() {
+                            selectedDate = picked;
+                            selected.clear();
+                            _ordersFuture = null;
+                            _lastOrdersKey = null;
+                          });
+                        },
+                        child: Text('Data: ${_formatDateLabel(resolvedDate)}'),
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        value: status,
+                        items: const [
+                          DropdownMenuItem(
+                            value: '',
+                            child: Text('Todos status'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'pending',
+                            child: Text('pending'),
+                          ),
+                          DropdownMenuItem(value: 'paid', child: Text('paid')),
+                          DropdownMenuItem(
+                            value: 'delivered',
+                            child: Text('delivered'),
+                          ),
+                        ],
+                        onChanged: (v) => setState(() {
+                          status = v ?? '';
                           _ordersFuture = null;
                           _lastOrdersKey = null;
-                        });
-                      },
-                      child: Text('Data: ${_formatDateLabel(resolvedDate)}'),
-                    ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      value: status,
-                      items: const [
-                        DropdownMenuItem(value: '', child: Text('Todos status')),
-                        DropdownMenuItem(value: 'pending', child: Text('pending')),
-                        DropdownMenuItem(value: 'paid', child: Text('paid')),
-                        DropdownMenuItem(value: 'delivered', child: Text('delivered')),
-                      ],
-                      onChanged: (v) => setState(() {
-                        status = v ?? '';
-                        _ordersFuture = null;
-                        _lastOrdersKey = null;
-                      }),
-                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Status'),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: queryCtrl,
-                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Nome/codigo'),
-                      onSubmitted: (_) => setState(() => selected.clear()),
-                    ),
-                    if (canExport && eventIds.length == 1)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: FilledButton.tonal(
-                          onPressed: () async {
-                            final path = await ref.read(apiProvider).staffExportOrdersCsv(token, eventIds.first);
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('CSV guardado em: $path')));
-                          },
-                          child: const Text('Exportar CSV do evento'),
+                        }),
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          labelText: 'Status',
                         ),
                       ),
-                    if (selected.isNotEmpty && canBulk)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: isPhotographer
-                            ? FilledButton(
-                                onPressed: () async {
-                                  final updated = await ref.read(apiProvider).staffBulkOrderStatus(token, selected.toList(), 'paid');
-                                  if (!context.mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Atualizados $updated pedidos.')));
-                                  selected.clear();
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: queryCtrl,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          labelText: 'Nome/codigo',
+                        ),
+                        onSubmitted: (_) => setState(() => selected.clear()),
+                      ),
+                      if (canExport && eventIds.length == 1)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: FilledButton.tonal(
+                            onPressed: () async {
+                              final path = await ref
+                                  .read(apiProvider)
+                                  .staffExportOrdersCsv(token, eventIds.first);
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('CSV guardado em: $path'),
+                                ),
+                              );
+                            },
+                            child: const Text('Exportar CSV do evento'),
+                          ),
+                        ),
+                      if (selected.isNotEmpty && canBulk)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: isPhotographer
+                              ? FilledButton(
+                                  onPressed: () async {
+                                    final updated = await ref
+                                        .read(apiProvider)
+                                        .staffBulkOrderStatus(
+                                          token,
+                                          selected.toList(),
+                                          'paid',
+                                        );
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Atualizados $updated pedidos.',
+                                        ),
+                                      ),
+                                    );
+                                    selected.clear();
+                                    setState(() {});
+                                  },
+                                  child: const Text(
+                                    'Marcar pagos (selecionados)',
+                                  ),
+                                )
+                              : Row(
+                                  children: [
+                                    Expanded(
+                                      child: DropdownButtonFormField<String>(
+                                        value: 'paid',
+                                        items: const [
+                                          DropdownMenuItem(
+                                            value: 'pending',
+                                            child: Text('pending'),
+                                          ),
+                                          DropdownMenuItem(
+                                            value: 'paid',
+                                            child: Text('paid'),
+                                          ),
+                                          DropdownMenuItem(
+                                            value: 'delivered',
+                                            child: Text('delivered'),
+                                          ),
+                                        ],
+                                        onChanged: (v) async {
+                                          if (v == null) return;
+                                          final updated = await ref
+                                              .read(apiProvider)
+                                              .staffBulkOrderStatus(
+                                                token,
+                                                selected.toList(),
+                                                v,
+                                              );
+                                          if (!context.mounted) return;
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                'Atualizados $updated pedidos.',
+                                              ),
+                                            ),
+                                          );
+                                          selected.clear();
+                                          setState(() {});
+                                        },
+                                        decoration: const InputDecoration(
+                                          border: OutlineInputBorder(),
+                                          labelText: 'Bulk status',
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                        ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: FutureBuilder<List<OrderListItem>>(
+                    future: () {
+                      final key =
+                          '$resolvedDateKey|$status|${queryCtrl.text.trim()}';
+                      if (_ordersFuture == null || _lastOrdersKey != key) {
+                        _lastOrdersKey = key;
+                        _ordersFuture =
+                            _loadOrdersFiltered(
+                              token,
+                              eventDate: resolvedDateKey,
+                              status: status,
+                              query: queryCtrl.text.trim(),
+                            ).timeout(
+                              const Duration(seconds: 30),
+                              onTimeout: () => throw TimeoutException(
+                                'Tempo limite ao carregar pedidos',
+                              ),
+                            );
+                      }
+                      return _ordersFuture!;
+                    }(),
+                    builder: (_, orderSnap) {
+                      if (!orderSnap.hasData) {
+                        if (orderSnap.hasError) {
+                          return Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'Erro: ${orderSnap.error}',
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 12),
+                                FilledButton(
+                                  onPressed: () => setState(() {
+                                    _ordersFuture = null;
+                                    _lastOrdersKey = null;
+                                  }),
+                                  child: const Text('Tentar novamente'),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      final orders = orderSnap.data!;
+                      if (orders.isEmpty)
+                        return const Center(child: Text('Sem pedidos'));
+                      return ListView.builder(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        itemCount: orders.length,
+                        itemBuilder: (_, i) {
+                          final o = orders[i];
+                          final isSelected = selected.contains(o.id);
+                          final info = o.eventId != null
+                              ? eventInfoById[o.eventId]
+                              : null;
+                          final eventName = info?.name ?? o.eventName ?? '';
+                          final eventDate = info?.eventDate ?? '';
+                          final eventType = info?.eventType ?? '';
+                          final statusColor = o.status == 'paid'
+                              ? Colors.lightGreenAccent
+                              : o.status == 'delivered'
+                              ? Colors.lightBlueAccent
+                              : Colors.orangeAccent;
+                          return Container(
+                            margin: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: kDeskCard,
+                              borderRadius: BorderRadius.circular(kDeskRadius),
+                              border: Border.all(
+                                color: isSelected
+                                    ? kBrandRose.withOpacity(0.7)
+                                    : kBrandRose.withOpacity(0.2),
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: kBrandRose.withOpacity(0.06),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(
+                                  kDeskRadius,
+                                ),
+                                onTap: () async {
+                                  await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          StaffOrderDetailPage(orderId: o.id),
+                                    ),
+                                  );
+                                  if (!mounted) return;
                                   setState(() {});
                                 },
-                                child: const Text('Marcar pagos (selecionados)'),
-                              )
-                            : Row(
-                                children: [
-                                  Expanded(
-                                    child: DropdownButtonFormField<String>(
-                                      value: 'paid',
-                                      items: const [
-                                        DropdownMenuItem(value: 'pending', child: Text('pending')),
-                                        DropdownMenuItem(value: 'paid', child: Text('paid')),
-                                        DropdownMenuItem(value: 'delivered', child: Text('delivered')),
-                                      ],
-                                      onChanged: (v) async {
-                                        if (v == null) return;
-                                        final updated = await ref.read(apiProvider).staffBulkOrderStatus(token, selected.toList(), v);
-                                        if (!context.mounted) return;
-                                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Atualizados $updated pedidos.')));
-                                        selected.clear();
-                                        setState(() {});
-                                      },
-                                      decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Bulk status'),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                      ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: FutureBuilder<List<OrderListItem>>(
-                  future: () {
-                    final key = '$resolvedDateKey|$status|${queryCtrl.text.trim()}';
-                    if (_ordersFuture == null || _lastOrdersKey != key) {
-                      _lastOrdersKey = key;
-                      _ordersFuture = _loadOrdersFiltered(
-                        token,
-                        eventDate: resolvedDateKey,
-                        status: status,
-                        query: queryCtrl.text.trim(),
-                      ).timeout(
-                        const Duration(seconds: 30),
-                        onTimeout: () => throw TimeoutException('Tempo limite ao carregar pedidos'),
-                      );
-                    }
-                    return _ordersFuture!;
-                  }(),
-                  builder: (_, orderSnap) {
-                    if (!orderSnap.hasData) {
-                      if (orderSnap.hasError) {
-                        return Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text('Erro: ${orderSnap.error}', textAlign: TextAlign.center),
-                              const SizedBox(height: 12),
-                              FilledButton(
-                                onPressed: () => setState(() {
-                                  _ordersFuture = null;
-                                  _lastOrdersKey = null;
-                                }),
-                                child: const Text('Tentar novamente'),
-                              ),
-                            ],
-                          ),
-                        );
-                      }
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    final orders = orderSnap.data!;
-                    if (orders.isEmpty) return const Center(child: Text('Sem pedidos'));
-                    return ListView.builder(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      itemCount: orders.length,
-                      itemBuilder: (_, i) {
-                        final o = orders[i];
-                        final isSelected = selected.contains(o.id);
-                        final info = o.eventId != null ? eventInfoById[o.eventId] : null;
-                        final eventName = info?.name ?? o.eventName ?? '';
-                        final eventDate = info?.eventDate ?? '';
-                        final eventType = info?.eventType ?? '';
-                        final statusColor = o.status == 'paid'
-                            ? Colors.lightGreenAccent
-                            : o.status == 'delivered'
-                                ? Colors.lightBlueAccent
-                                : Colors.orangeAccent;
-                        return Container(
-                          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: kDeskCard,
-                            borderRadius: BorderRadius.circular(kDeskRadius),
-                            border: Border.all(color: isSelected ? kBrandRose.withOpacity(0.7) : kBrandRose.withOpacity(0.2)),
-                            boxShadow: [BoxShadow(color: kBrandRose.withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 3))],
-                          ),
-                          child: Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(kDeskRadius),
-                              onTap: () async {
-                                await Navigator.push(context, MaterialPageRoute(builder: (_) => StaffOrderDetailPage(orderId: o.id)));
-                                if (!mounted) return;
-                                setState(() {});
-                              },
-                              child: Padding(
-                                padding: const EdgeInsets.all(14),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            o.orderCode,
-                                            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700, letterSpacing: 0.5),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(14),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              o.orderCode,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w700,
+                                                letterSpacing: 0.5,
+                                              ),
+                                            ),
                                           ),
+                                          _DeskStatusBadge(
+                                            o.status.toUpperCase(),
+                                            color: statusColor,
+                                          ),
+                                          if (canBulk) ...[
+                                            const SizedBox(width: 8),
+                                            GestureDetector(
+                                              onTap: () => setState(
+                                                () => isSelected
+                                                    ? selected.remove(o.id)
+                                                    : selected.add(o.id),
+                                              ),
+                                              child: Icon(
+                                                isSelected
+                                                    ? Icons.check_circle
+                                                    : Icons
+                                                          .radio_button_unchecked,
+                                                color: kBrandRose,
+                                                size: 22,
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                      const SizedBox(height: 5),
+                                      Text(
+                                        o.customerName,
+                                        style: const TextStyle(
+                                          color: kBrandRose,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
                                         ),
-                                        _DeskStatusBadge(o.status.toUpperCase(), color: statusColor),
-                                        if (canBulk) ...[
-                                          const SizedBox(width: 8),
-                                          GestureDetector(
-                                            onTap: () => setState(() => isSelected ? selected.remove(o.id) : selected.add(o.id)),
-                                            child: Icon(
-                                              isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
-                                              color: kBrandRose,
-                                              size: 22,
-                                            ),
-                                          ),
-                                        ],
+                                      ),
+                                      if (eventName.isNotEmpty ||
+                                          eventDate.isNotEmpty ||
+                                          eventType.isNotEmpty) ...[
+                                        const SizedBox(height: 6),
+                                        Wrap(
+                                          spacing: 10,
+                                          runSpacing: 4,
+                                          children: [
+                                            if (eventName.isNotEmpty)
+                                              Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const Icon(
+                                                    Icons.event,
+                                                    size: 12,
+                                                    color: kDeskMuted,
+                                                  ),
+                                                  const SizedBox(width: 3),
+                                                  Text(
+                                                    eventName,
+                                                    style: const TextStyle(
+                                                      color: kDeskMuted,
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            if (eventDate.isNotEmpty)
+                                              Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const Icon(
+                                                    Icons.calendar_today,
+                                                    size: 12,
+                                                    color: kDeskMuted,
+                                                  ),
+                                                  const SizedBox(width: 3),
+                                                  Text(
+                                                    eventDate,
+                                                    style: const TextStyle(
+                                                      color: kDeskMuted,
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            if (eventType.isNotEmpty)
+                                              Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const Icon(
+                                                    Icons.label_outline,
+                                                    size: 12,
+                                                    color: kDeskMuted,
+                                                  ),
+                                                  const SizedBox(width: 3),
+                                                  Text(
+                                                    eventType,
+                                                    style: const TextStyle(
+                                                      color: kDeskMuted,
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                          ],
+                                        ),
                                       ],
-                                    ),
-                                    const SizedBox(height: 5),
-                                    Text(o.customerName, style: const TextStyle(color: kBrandRose, fontSize: 14, fontWeight: FontWeight.w500)),
-                                    if (eventName.isNotEmpty || eventDate.isNotEmpty || eventType.isNotEmpty) ...[
-                                      const SizedBox(height: 6),
-                                      Wrap(
-                                        spacing: 10,
-                                        runSpacing: 4,
-                                        children: [
-                                          if (eventName.isNotEmpty)
-                                            Row(mainAxisSize: MainAxisSize.min, children: [
-                                              const Icon(Icons.event, size: 12, color: kDeskMuted),
-                                              const SizedBox(width: 3),
-                                              Text(eventName, style: const TextStyle(color: kDeskMuted, fontSize: 12)),
-                                            ]),
-                                          if (eventDate.isNotEmpty)
-                                            Row(mainAxisSize: MainAxisSize.min, children: [
-                                              const Icon(Icons.calendar_today, size: 12, color: kDeskMuted),
-                                              const SizedBox(width: 3),
-                                              Text(eventDate, style: const TextStyle(color: kDeskMuted, fontSize: 12)),
-                                            ]),
-                                          if (eventType.isNotEmpty)
-                                            Row(mainAxisSize: MainAxisSize.min, children: [
-                                              const Icon(Icons.label_outline, size: 12, color: kDeskMuted),
-                                              const SizedBox(width: 3),
-                                              Text(eventType, style: const TextStyle(color: kDeskMuted, fontSize: 12)),
-                                            ]),
-                                        ],
-                                      ),
+                                      if (canUpdate || canDownload) ...[
+                                        const SizedBox(height: 10),
+                                        Wrap(
+                                          spacing: 6,
+                                          runSpacing: 6,
+                                          children: [
+                                            if (canUpdate &&
+                                                o.status != 'paid' &&
+                                                o.status != 'delivered')
+                                              _MobileActionChip(
+                                                label: 'Pago',
+                                                color: Colors.lightGreenAccent,
+                                                onTap: () async {
+                                                  final emailed = await ref
+                                                      .read(apiProvider)
+                                                      .markOrderPaid(
+                                                        token,
+                                                        o.id,
+                                                        eventId: o.eventId,
+                                                      );
+                                                  if (!context.mounted) return;
+                                                  ScaffoldMessenger.of(
+                                                    context,
+                                                  ).showSnackBar(
+                                                    SnackBar(
+                                                      content: Text(
+                                                        emailed
+                                                            ? 'Marcado pago e link enviado.'
+                                                            : 'Marcado pago. Sem email.',
+                                                      ),
+                                                    ),
+                                                  );
+                                                  setState(() {});
+                                                },
+                                              ),
+                                            if (canUpdate &&
+                                                o.status == 'paid' &&
+                                                !isPhotographer)
+                                              _MobileActionChip(
+                                                label: 'Entregue',
+                                                color: Colors.lightBlueAccent,
+                                                onTap: () async {
+                                                  await ref
+                                                      .read(apiProvider)
+                                                      .markOrderDelivered(
+                                                        token,
+                                                        o.id,
+                                                        eventId: o.eventId,
+                                                      );
+                                                  if (!context.mounted) return;
+                                                  setState(() {});
+                                                },
+                                              ),
+                                            if (canDownload)
+                                              _MobileActionChip(
+                                                label: 'Enviar link',
+                                                color: kBrandRose,
+                                                onTap: () async {
+                                                  final sent = await ref
+                                                      .read(apiProvider)
+                                                      .staffSendDownloadLink(
+                                                        token,
+                                                        o.id,
+                                                      );
+                                                  if (!context.mounted) return;
+                                                  ScaffoldMessenger.of(
+                                                    context,
+                                                  ).showSnackBar(
+                                                    SnackBar(
+                                                      content: Text(
+                                                        sent
+                                                            ? 'Link enviado.'
+                                                            : 'Falha no envio.',
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                              ),
+                                            if (canDownload)
+                                              _MobileActionChip(
+                                                label: 'ZIP',
+                                                color: kDeskMuted,
+                                                onTap: () async {
+                                                  final path = await ref
+                                                      .read(apiProvider)
+                                                      .staffDownloadAll(
+                                                        token,
+                                                        o.id,
+                                                      );
+                                                  if (!context.mounted) return;
+                                                  ScaffoldMessenger.of(
+                                                    context,
+                                                  ).showSnackBar(
+                                                    SnackBar(
+                                                      content: Text(
+                                                        'ZIP guardado: $path',
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                              ),
+                                          ],
+                                        ),
+                                      ],
                                     ],
-                                    if (canUpdate || canDownload) ...[
-                                      const SizedBox(height: 10),
-                                      Wrap(
-                                        spacing: 6,
-                                        runSpacing: 6,
-                                        children: [
-                                          if (canUpdate && o.status != 'paid' && o.status != 'delivered')
-                                            _MobileActionChip(
-                                              label: 'Pago',
-                                              color: Colors.lightGreenAccent,
-                                              onTap: () async {
-                                                final emailed = await ref.read(apiProvider).markOrderPaid(token, o.id, eventId: o.eventId);
-                                                if (!context.mounted) return;
-                                                ScaffoldMessenger.of(context).showSnackBar(
-                                                  SnackBar(content: Text(emailed ? 'Marcado pago e link enviado.' : 'Marcado pago. Sem email.')),
-                                                );
-                                                setState(() {});
-                                              },
-                                            ),
-                                          if (canUpdate && o.status == 'paid' && !isPhotographer)
-                                            _MobileActionChip(
-                                              label: 'Entregue',
-                                              color: Colors.lightBlueAccent,
-                                              onTap: () async {
-                                                await ref.read(apiProvider).markOrderDelivered(token, o.id, eventId: o.eventId);
-                                                if (!context.mounted) return;
-                                                setState(() {});
-                                              },
-                                            ),
-                                          if (canDownload)
-                                            _MobileActionChip(
-                                              label: 'Enviar link',
-                                              color: kBrandRose,
-                                              onTap: () async {
-                                                final sent = await ref.read(apiProvider).staffSendDownloadLink(token, o.id);
-                                                if (!context.mounted) return;
-                                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(sent ? 'Link enviado.' : 'Falha no envio.')));
-                                              },
-                                            ),
-                                          if (canDownload)
-                                            _MobileActionChip(
-                                              label: 'ZIP',
-                                              color: kDeskMuted,
-                                              onTap: () async {
-                                                final path = await ref.read(apiProvider).staffDownloadAll(token, o.id);
-                                                if (!context.mounted) return;
-                                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('ZIP guardado: $path')));
-                                              },
-                                            ),
-                                        ],
-                                      ),
-                                    ],
-                                  ],
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        );
-                      },
-                    );
-                  },
+                          );
+                        },
+                      );
+                    },
+                  ),
                 ),
-              ),
-            ],
-          );
-        },
-      ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -8992,7 +11838,8 @@ class StaffOrderDetailPage extends ConsumerStatefulWidget {
   final int orderId;
 
   @override
-  ConsumerState<StaffOrderDetailPage> createState() => _StaffOrderDetailPageState();
+  ConsumerState<StaffOrderDetailPage> createState() =>
+      _StaffOrderDetailPageState();
 }
 
 class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
@@ -9036,13 +11883,21 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
   Future<void> _save(String token) async {
     final payload = StaffOrderUpdatePayload(
       customerName: nameCtrl.text.trim(),
-      customerEmail: emailCtrl.text.trim().isEmpty ? null : emailCtrl.text.trim(),
-      customerPhone: phoneCtrl.text.trim().isEmpty ? null : phoneCtrl.text.trim(),
-      paymentMethod: paymentCtrl.text.trim().isEmpty ? null : paymentCtrl.text.trim(),
+      customerEmail: emailCtrl.text.trim().isEmpty
+          ? null
+          : emailCtrl.text.trim(),
+      customerPhone: phoneCtrl.text.trim().isEmpty
+          ? null
+          : phoneCtrl.text.trim(),
+      paymentMethod: paymentCtrl.text.trim().isEmpty
+          ? null
+          : paymentCtrl.text.trim(),
       status: status,
     );
     if (payload.customerName.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome do cliente é obrigatório.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nome do cliente é obrigatório.')),
+      );
       return;
     }
     setState(() => saving = true);
@@ -9057,18 +11912,27 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() => saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro: $e')));
     }
   }
 
-  Widget _buildOrderDetailBody(BuildContext context, String token, StaffUser user) {
+  Widget _buildOrderDetailBody(
+    BuildContext context,
+    String token,
+    StaffUser user,
+  ) {
     final canWrite = user.hasPermission('orders.update');
     final isPhotographer = _isPhotographerRole(user.role);
     final canEdit = canWrite && !isPhotographer;
-    final canDownload = user.hasPermission('orders.download') && !isPhotographer;
+    final canDownload =
+        user.hasPermission('orders.download') && !isPhotographer;
 
     return FutureBuilder<StaffOrderDetail>(
-      future: _future ?? ref.read(apiProvider).staffOrderDetail(token, widget.orderId),
+      future:
+          _future ??
+          ref.read(apiProvider).staffOrderDetail(token, widget.orderId),
       builder: (_, snap) {
         if (!snap.hasData) {
           if (snap.hasError) return Center(child: Text('Erro: ${snap.error}'));
@@ -9087,23 +11951,32 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text('Código: ${order.orderCode}', style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(
+              'Código: ${order.orderCode}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
             if (order.eventName != null) Text('Evento: ${order.eventName}'),
             const SizedBox(height: 8),
             if (!editing) ...[
               Text('Status: ${order.status}'),
-              Text('Pagamento: ${order.paymentMethod.isEmpty ? '-' : order.paymentMethod}'),
+              Text(
+                'Pagamento: ${order.paymentMethod.isEmpty ? '-' : order.paymentMethod}',
+              ),
               Text('Total: ${order.totalAmount}'),
               const SizedBox(height: 12),
               Text('Cliente: ${order.customerName}'),
-              if ((order.customerEmail ?? '').isNotEmpty) Text('Email: ${order.customerEmail}'),
-              if ((order.customerPhone ?? '').isNotEmpty) Text('Telefone: ${order.customerPhone}'),
+              if ((order.customerEmail ?? '').isNotEmpty)
+                Text('Email: ${order.customerEmail}'),
+              if ((order.customerPhone ?? '').isNotEmpty)
+                Text('Telefone: ${order.customerPhone}'),
               if (isPhotographer && order.status == 'pending')
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: FilledButton(
                     onPressed: () async {
-                      await ref.read(apiProvider).markOrderPaid(token, order.id);
+                      await ref
+                          .read(apiProvider)
+                          .markOrderPaid(token, order.id);
                       if (!context.mounted) return;
                       setState(() => _loadDetail(token));
                     },
@@ -9111,23 +11984,53 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                   ),
                 ),
             ] else ...[
-              TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
+              TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Nome',
+                  border: OutlineInputBorder(),
+                ),
+              ),
               const SizedBox(height: 8),
-              TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+              TextField(
+                controller: emailCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  border: OutlineInputBorder(),
+                ),
+              ),
               const SizedBox(height: 8),
-              TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Telefone', border: OutlineInputBorder())),
+              TextField(
+                controller: phoneCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Telefone',
+                  border: OutlineInputBorder(),
+                ),
+              ),
               const SizedBox(height: 8),
-              TextField(controller: paymentCtrl, decoration: const InputDecoration(labelText: 'Pagamento', border: OutlineInputBorder())),
+              TextField(
+                controller: paymentCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Pagamento',
+                  border: OutlineInputBorder(),
+                ),
+              ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 value: status,
                 items: const [
                   DropdownMenuItem(value: 'pending', child: Text('pending')),
                   DropdownMenuItem(value: 'paid', child: Text('paid')),
-                  DropdownMenuItem(value: 'delivered', child: Text('delivered')),
+                  DropdownMenuItem(
+                    value: 'delivered',
+                    child: Text('delivered'),
+                  ),
                 ],
                 onChanged: (v) => setState(() => status = v ?? status),
-                decoration: const InputDecoration(labelText: 'Status', border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: 'Status',
+                  border: OutlineInputBorder(),
+                ),
               ),
               const SizedBox(height: 12),
               FilledButton(
@@ -9143,7 +12046,9 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
             else
               Wrap(
                 spacing: 6,
-                children: order.photos.map((p) => Chip(label: Text(p.number))).toList(),
+                children: order.photos
+                    .map((p) => Chip(label: Text(p.number)))
+                    .toList(),
               ),
             const SizedBox(height: 16),
             if (canDownload)
@@ -9152,17 +12057,29 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                 children: [
                   OutlinedButton(
                     onPressed: () async {
-                      final sent = await ref.read(apiProvider).staffSendDownloadLink(token, order.id);
+                      final sent = await ref
+                          .read(apiProvider)
+                          .staffSendDownloadLink(token, order.id);
                       if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(sent ? 'Link enviado.' : 'Falha no envio.')));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            sent ? 'Link enviado.' : 'Falha no envio.',
+                          ),
+                        ),
+                      );
                     },
                     child: const Text('Enviar link'),
                   ),
                   OutlinedButton(
                     onPressed: () async {
-                      final path = await ref.read(apiProvider).staffDownloadAll(token, order.id);
+                      final path = await ref
+                          .read(apiProvider)
+                          .staffDownloadAll(token, order.id);
                       if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('ZIP guardado: $path')));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('ZIP guardado: $path')),
+                      );
                     },
                     child: const Text('Download ZIP'),
                   ),
@@ -9186,7 +12103,8 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
     final user = ref.watch(staffUserProvider);
-    if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null || user == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     if (useDesktopLayout(context)) {
       final canWrite = user.hasPermission('orders.update');
       final isPhotographer = _isPhotographerRole(user.role);
@@ -9215,23 +12133,27 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
     final canWrite = user.hasPermission('orders.update');
     final isPhotographer = _isPhotographerRole(user.role);
     final canEdit = canWrite && !isPhotographer;
-    final canDownload = user.hasPermission('orders.download') && !isPhotographer;
+    final canDownload =
+        user.hasPermission('orders.download') && !isPhotographer;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Pedido'),
         leading: navLeading(context),
-        actions: navActions(context, extra: [
-          IconButton(
-            onPressed: () => setState(() => _loadDetail(token)),
-            icon: const Icon(Icons.refresh),
-          ),
-          if (canEdit)
+        actions: navActions(
+          context,
+          extra: [
             IconButton(
-              onPressed: () => setState(() => editing = !editing),
-              icon: Icon(editing ? Icons.close : Icons.edit),
+              onPressed: () => setState(() => _loadDetail(token)),
+              icon: const Icon(Icons.refresh),
             ),
-        ]),
+            if (canEdit)
+              IconButton(
+                onPressed: () => setState(() => editing = !editing),
+                icon: Icon(editing ? Icons.close : Icons.edit),
+              ),
+          ],
+        ),
       ),
       body: _buildOrderDetailBody(context, token, user),
     );
@@ -9276,13 +12198,10 @@ class _StaffSettingsPageState extends ConsumerState<StaffSettingsPage> {
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
     final user = ref.watch(staffUserProvider);
-    if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null || user == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     if (useDesktopLayout(context)) {
-      return StaffDesktopShell(
-        user: user,
-        token: token,
-        initialId: 'settings',
-      );
+      return StaffDesktopShell(user: user, token: token, initialId: 'settings');
     }
 
     return Scaffold(
@@ -9291,16 +12210,37 @@ class _StaffSettingsPageState extends ConsumerState<StaffSettingsPage> {
         padding: const EdgeInsets.all(16),
         child: ListView(
           children: [
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Nome',
+                border: OutlineInputBorder(),
+              ),
+            ),
             const SizedBox(height: 8),
-            TextField(controller: usernameCtrl, decoration: const InputDecoration(labelText: 'Username (opcional)', border: OutlineInputBorder())),
+            TextField(
+              controller: usernameCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Username (opcional)',
+                border: OutlineInputBorder(),
+              ),
+            ),
             const SizedBox(height: 8),
-            TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+            TextField(
+              controller: emailCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                border: OutlineInputBorder(),
+              ),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: passwordCtrl,
               obscureText: true,
-              decoration: const InputDecoration(labelText: 'Nova password (opcional)', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                labelText: 'Nova password (opcional)',
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 12),
             FilledButton(
@@ -9310,12 +12250,18 @@ class _StaffSettingsPageState extends ConsumerState<StaffSettingsPage> {
                       final name = nameCtrl.text.trim();
                       final email = emailCtrl.text.trim();
                       if (name.isEmpty || email.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome e email são obrigatórios.')));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Nome e email são obrigatórios.'),
+                          ),
+                        );
                         return;
                       }
                       setState(() => saving = true);
                       try {
-                        final updated = await ref.read(apiProvider).updateProfile(
+                        final updated = await ref
+                            .read(apiProvider)
+                            .updateProfile(
                               token,
                               name: name,
                               email: email,
@@ -9324,11 +12270,17 @@ class _StaffSettingsPageState extends ConsumerState<StaffSettingsPage> {
                             );
                         ref.read(staffUserProvider.notifier).state = updated;
                         if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Definições atualizadas.')));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Definições atualizadas.'),
+                          ),
+                        );
                         passwordCtrl.clear();
                       } catch (e) {
                         if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text('Erro: $e')));
                       } finally {
                         if (mounted) setState(() => saving = false);
                       }
@@ -9338,7 +12290,10 @@ class _StaffSettingsPageState extends ConsumerState<StaffSettingsPage> {
             if (_isAdminRole(user.role)) ...[
               const SizedBox(height: 12),
               OutlinedButton.icon(
-                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffAppConfigPage())),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const StaffAppConfigPage()),
+                ),
                 icon: const Icon(Icons.router_outlined),
                 label: const Text('Ligações e runtime config'),
               ),
@@ -9383,7 +12338,8 @@ class _StaffAppConfigPageState extends ConsumerState<StaffAppConfigPage> {
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
     final user = ref.watch(staffUserProvider);
-    if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null || user == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     if (!_isAdminRole(user.role)) {
       return Scaffold(
         appBar: buildNavAppBar(context, 'Ligações'),
@@ -9407,12 +12363,493 @@ class _StaffAppConfigPageState extends ConsumerState<StaffAppConfigPage> {
   }
 }
 
+class StaffOfflineHostPage extends ConsumerStatefulWidget {
+  const StaffOfflineHostPage({super.key, this.seedEvent});
+
+  final StaffEvent? seedEvent;
+
+  @override
+  ConsumerState<StaffOfflineHostPage> createState() =>
+      _StaffOfflineHostPageState();
+}
+
+class _StaffOfflineHostPageState extends ConsumerState<StaffOfflineHostPage> {
+  @override
+  void initState() {
+    super.initState();
+    saveStaffLastRoute('offline-host', userId: ref.read(staffUserProvider)?.id);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final token = ref.watch(staffTokenProvider);
+    final user = ref.watch(staffUserProvider);
+    if (token == null || user == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (!isDesktopPlatform()) {
+      return Scaffold(
+        appBar: buildNavAppBar(context, 'Sessão Offline'),
+        body: const Center(child: Text('Disponível apenas no PC/Mac.')),
+      );
+    }
+    if (useDesktopLayout(context)) {
+      return StaffDesktopShell(
+        user: user,
+        token: token,
+        initialId: 'offline-host',
+        overrideTitle: 'Sessão Offline',
+        overrideSubtitle: 'Servidor local no PC',
+        overrideContent: (ctx, u, t) => DesktopOfflineHostView(
+          user: u,
+          token: t,
+          seedEvent: widget.seedEvent,
+        ),
+      );
+    }
+    return Scaffold(
+      appBar: buildNavAppBar(context, 'Sessão Offline'),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: OfflineHostForm(seedEvent: widget.seedEvent),
+      ),
+    );
+  }
+}
+
+class DesktopOfflineHostView extends StatelessWidget {
+  const DesktopOfflineHostView({
+    super.key,
+    required this.user,
+    required this.token,
+    this.seedEvent,
+  });
+
+  final StaffUser user;
+  final String token;
+  final StaffEvent? seedEvent;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(kDeskGutter),
+      child: OfflineHostForm(seedEvent: seedEvent, embedded: true),
+    );
+  }
+}
+
+class OfflineHostForm extends ConsumerStatefulWidget {
+  const OfflineHostForm({super.key, this.seedEvent, this.embedded = false});
+
+  final StaffEvent? seedEvent;
+  final bool embedded;
+
+  @override
+  ConsumerState<OfflineHostForm> createState() => _OfflineHostFormState();
+}
+
+class _OfflineHostFormState extends ConsumerState<OfflineHostForm> {
+  late final TextEditingController nameCtrl;
+  late final TextEditingController dateCtrl;
+  late final TextEditingController typeCtrl;
+  late final TextEditingController locationCtrl;
+  late final TextEditingController priceCtrl;
+  late final TextEditingController pinCtrl;
+  late final TextEditingController folderCtrl;
+  late final TextEditingController usernameCtrl;
+  late final TextEditingController passwordCtrl;
+  bool saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final current = ref.read(offlineHostSessionProvider);
+    final seed = widget.seedEvent;
+    nameCtrl = TextEditingController(
+      text: seed?.name ?? current?.eventName ?? '',
+    );
+    dateCtrl = TextEditingController(
+      text:
+          seed?.eventDate ??
+          current?.eventDate ??
+          DateTime.now().toIso8601String().substring(0, 10),
+    );
+    typeCtrl = TextEditingController(
+      text: seed?.eventType ?? current?.eventType ?? 'casamento',
+    );
+    locationCtrl = TextEditingController(
+      text: seed?.location ?? current?.location ?? '',
+    );
+    priceCtrl = TextEditingController(
+      text: (seed?.pricePerPhoto ?? current?.pricePerPhoto ?? 5).toString(),
+    );
+    pinCtrl = TextEditingController(
+      text: seed?.accessPin ?? current?.accessPin ?? '0000',
+    );
+    folderCtrl = TextEditingController(text: current?.photoDir ?? '');
+    usernameCtrl = TextEditingController(
+      text:
+          current?.staffUsername ??
+          generateOfflineUsername(seed?.name ?? 'offline'),
+    );
+    passwordCtrl = TextEditingController(
+      text: current?.staffPassword ?? generateOfflinePassword(),
+    );
+  }
+
+  @override
+  void dispose() {
+    nameCtrl.dispose();
+    dateCtrl.dispose();
+    typeCtrl.dispose();
+    locationCtrl.dispose();
+    priceCtrl.dispose();
+    pinCtrl.dispose();
+    folderCtrl.dispose();
+    usernameCtrl.dispose();
+    passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  StaffUser _localStaffUser(OfflineHostSession session) => StaffUser(
+    id: session.staffUserId,
+    name: session.staffName,
+    email: '',
+    role: 'staff',
+    permissions: const [
+      'dashboard.view',
+      'events.list',
+      'events.view',
+      'orders.list',
+      'orders.view',
+      'orders.update',
+      'offline.export',
+    ],
+    username: session.staffUsername,
+  );
+
+  Future<void> _pickFolder() async {
+    final path = await FilePicker.platform.getDirectoryPath();
+    if (path == null || path.trim().isEmpty) return;
+    setState(() => folderCtrl.text = path);
+  }
+
+  Future<void> _start() async {
+    if (saving) return;
+    final name = nameCtrl.text.trim();
+    final date = dateCtrl.text.trim();
+    final folder = folderCtrl.text.trim();
+    final username = usernameCtrl.text.trim();
+    final password = passwordCtrl.text.trim();
+    final pin = pinCtrl.text.trim();
+    final price = num.tryParse(priceCtrl.text.trim().replaceAll(',', '.'));
+    if (name.isEmpty ||
+        date.isEmpty ||
+        folder.isEmpty ||
+        username.isEmpty ||
+        password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Preenche os campos obrigatórios.')),
+      );
+      return;
+    }
+    if (!RegExp(r'^\d{4}$').hasMatch(pin)) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('PIN com 4 dígitos.')));
+      return;
+    }
+    if (price == null || price <= 0) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Preço por foto inválido.')));
+      return;
+    }
+    setState(() => saving = true);
+    try {
+      final photos = await scanOfflinePhotos(folder);
+      if (photos.isEmpty) {
+        throw Exception('Sem fotos na pasta selecionada.');
+      }
+      final now = DateTime.now().toIso8601String();
+      final currentConfig = ref.read(appRuntimeConfigProvider);
+      if (!looksLikeLocalApiBaseUrl(currentConfig.apiBaseUrl)) {
+        await backupRuntimeConfig(currentConfig);
+        await backupCurrentStaffSession();
+      }
+      final seed = widget.seedEvent;
+      final existing = ref.read(offlineHostSessionProvider);
+      final session = OfflineHostSession(
+        isActive: true,
+        sessionId: const Uuid().v4(),
+        eventId:
+            seed?.id ??
+            existing?.eventId ??
+            DateTime.now().millisecondsSinceEpoch,
+        eventName: name,
+        eventDate: date,
+        eventType: typeCtrl.text.trim(),
+        location: locationCtrl.text.trim(),
+        pricePerPhoto: price,
+        basePrice: seed?.basePrice ?? existing?.basePrice ?? 0,
+        accessPin: pin,
+        qrToken: existing?.qrToken ?? generateOfflineToken(),
+        guestToken: existing?.guestToken ?? generateOfflineToken(),
+        photoDir: folder,
+        photos: photos,
+        orders: existing != null && existing.photoDir == folder
+            ? existing.orders
+            : const [],
+        eventMeta:
+            seed?.eventMeta ?? existing?.eventMeta ?? const <String, dynamic>{},
+        staffUsername: username,
+        staffPassword: password,
+        staffToken: existing?.staffToken ?? generateOfflineToken(),
+        staffName: ref.read(staffUserProvider)?.name ?? 'Offline Staff',
+        staffUserId: existing?.staffUserId ?? 1,
+        port: existing?.port ?? 4000,
+        serverHost: existing?.serverHost ?? '127.0.0.1',
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      );
+      final started = await OfflineHostServer.instance.start(session);
+      final localConfig = currentConfig.copyWith(
+        apiBaseUrl: started.localApiBaseUrl,
+        apiFallbackIp: '',
+      );
+      await saveAppRuntimeConfig(localConfig);
+      ref.read(appRuntimeConfigProvider.notifier).state = localConfig;
+      ref.read(offlineHostSessionProvider.notifier).state = started.session;
+      final localUser = _localStaffUser(started.session);
+      ref.read(staffTokenProvider.notifier).state = started.session.staffToken;
+      ref.read(staffUserProvider.notifier).state = localUser;
+      await saveStaffSession(started.session.staffToken, localUser);
+      await saveStaffLastRoute('offline-host', userId: localUser.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Sessão offline ativa com ${photos.length} fotos.'),
+        ),
+      );
+      setState(() {});
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro: $e')));
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  Future<void> _stop() async {
+    if (saving) return;
+    setState(() => saving = true);
+    try {
+      await OfflineHostServer.instance.stop();
+      await clearOfflineHostSession();
+      ref.read(offlineHostSessionProvider.notifier).state = null;
+      final restoredConfig =
+          await restoreBackedUpRuntimeConfig() ?? AppRuntimeConfig.defaults;
+      await saveAppRuntimeConfig(restoredConfig);
+      ref.read(appRuntimeConfigProvider.notifier).state = restoredConfig;
+      final restoredStaff = await restoreBackedUpStaffSession();
+      await clearBackedUpRuntimeConfig();
+      await clearBackedUpStaffSession();
+      if (restoredStaff != null) {
+        ref.read(staffTokenProvider.notifier).state = restoredStaff.token;
+        ref.read(staffUserProvider.notifier).state = restoredStaff.user;
+        await saveStaffSession(restoredStaff.token, restoredStaff.user);
+        if (!mounted) return;
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const StaffDashboardPage()),
+          (_) => false,
+        );
+        return;
+      }
+      ref.read(staffTokenProvider.notifier).state = null;
+      ref.read(staffUserProvider.notifier).state = null;
+      await clearStaffSession();
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const HomePage(skipStaffAutoOpen: true),
+        ),
+        (_) => false,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro: $e')));
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final session = ref.watch(offlineHostSessionProvider);
+    final effectiveSession = OfflineHostServer.instance.session ?? session;
+    final header = widget.embedded
+        ? const _DeskSectionHeader('Sessão offline')
+        : const SizedBox.shrink();
+    final body = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (effectiveSession != null) ...[
+          Text(
+            effectiveSession.isActive
+                ? 'Ativa: ${effectiveSession.lanApiBaseUrl}'
+                : 'Sessão guardada',
+            style: TextStyle(color: Colors.white.withOpacity(0.7)),
+          ),
+          const SizedBox(height: 12),
+        ],
+        TextField(
+          controller: nameCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Evento',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: dateCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Data (YYYY-MM-DD)',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: typeCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Tipo',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: locationCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Local',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: priceCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Preço por foto',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: pinCtrl,
+          decoration: const InputDecoration(
+            labelText: 'PIN cliente',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: folderCtrl,
+          readOnly: true,
+          decoration: InputDecoration(
+            labelText: 'Pasta das fotos',
+            border: const OutlineInputBorder(),
+            suffixIcon: IconButton(
+              onPressed: saving ? null : _pickFolder,
+              icon: const Icon(Icons.folder_open),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: usernameCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Username temporário',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: passwordCtrl,
+          decoration: InputDecoration(
+            labelText: 'Password temporária',
+            border: const OutlineInputBorder(),
+            suffixIcon: IconButton(
+              onPressed: saving
+                  ? null
+                  : () => setState(
+                      () => passwordCtrl.text = generateOfflinePassword(),
+                    ),
+              icon: const Icon(Icons.refresh),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton.icon(
+              onPressed: saving ? null : _start,
+              icon: const Icon(Icons.play_arrow),
+              label: Text(saving ? 'A processar...' : 'Iniciar sessão'),
+            ),
+            if (effectiveSession != null && effectiveSession.isActive)
+              OutlinedButton.icon(
+                onPressed: saving ? null : _stop,
+                icon: const Icon(Icons.stop_circle_outlined),
+                label: const Text('Fechar sessão'),
+              ),
+          ],
+        ),
+        if (effectiveSession != null && effectiveSession.isActive) ...[
+          const SizedBox(height: 20),
+          Text('API local: ${effectiveSession.lanApiBaseUrl}'),
+          Text('Username: ${effectiveSession.staffUsername}'),
+          Text('Password: ${effectiveSession.staffPassword}'),
+          Text('PIN cliente: ${effectiveSession.accessPin}'),
+          Text('Fotos: ${effectiveSession.photos.length}'),
+          Text('JSON: ${effectiveSession.ordersFilePath}'),
+          const SizedBox(height: 12),
+          Container(
+            color: kBrandRose,
+            padding: const EdgeInsets.all(8),
+            child: QrImageView(
+              data: effectiveSession.publicQrUrl,
+              size: 220,
+              backgroundColor: kBrandRose,
+              foregroundColor: kBrandBlack,
+            ),
+          ),
+        ],
+      ],
+    );
+    if (!widget.embedded) return body;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        header,
+        const SizedBox(height: 12),
+        _DeskCard(child: body),
+      ],
+    );
+  }
+}
+
 class AppRuntimeConfigForm extends ConsumerStatefulWidget {
   const AppRuntimeConfigForm({super.key, this.embedded = false});
   final bool embedded;
 
   @override
-  ConsumerState<AppRuntimeConfigForm> createState() => _AppRuntimeConfigFormState();
+  ConsumerState<AppRuntimeConfigForm> createState() =>
+      _AppRuntimeConfigFormState();
 }
 
 class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
@@ -9431,8 +12868,12 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
     final config = ref.read(appRuntimeConfigProvider);
     apiBaseUrlCtrl = TextEditingController(text: config.apiBaseUrl);
     apiFallbackIpCtrl = TextEditingController(text: config.apiFallbackIp);
-    merchantCountryCodeCtrl = TextEditingController(text: config.merchantCountryCode);
-    applePayMerchantIdCtrl = TextEditingController(text: config.applePayMerchantId);
+    merchantCountryCodeCtrl = TextEditingController(
+      text: config.merchantCountryCode,
+    );
+    applePayMerchantIdCtrl = TextEditingController(
+      text: config.applePayMerchantId,
+    );
     stripeUrlSchemeCtrl = TextEditingController(text: config.stripeUrlScheme);
     enablePlatformPay = config.enablePlatformPay;
   }
@@ -9464,7 +12905,9 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(builder: (_) => const HomePage(skipStaffAutoOpen: true)),
+      MaterialPageRoute(
+        builder: (_) => const HomePage(skipStaffAutoOpen: true),
+      ),
       (_) => false,
     );
   }
@@ -9487,7 +12930,9 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
     final config = _candidateConfig();
     final error = _validate(config);
     if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
       return;
     }
     setState(() => testing = true);
@@ -9495,7 +12940,9 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
       final ok = await ApiService(config).pingPublic();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(ok ? 'Ligação válida.' : 'Sem resposta do servidor.')),
+        SnackBar(
+          content: Text(ok ? 'Ligação válida.' : 'Sem resposta do servidor.'),
+        ),
       );
     } finally {
       if (mounted) setState(() => testing = false);
@@ -9506,7 +12953,9 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
     final config = _candidateConfig();
     final error = _validate(config);
     if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
       return;
     }
     setState(() => saving = true);
@@ -9515,7 +12964,9 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
       ref.read(appRuntimeConfigProvider.notifier).state = config;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Configuração guardada. A sessão será reiniciada.')),
+        const SnackBar(
+          content: Text('Configuração guardada. A sessão será reiniciada.'),
+        ),
       );
       await _goHomeClearingSessions();
     } finally {
@@ -9542,21 +12993,56 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
   @override
   Widget build(BuildContext context) {
     final config = ref.watch(appRuntimeConfigProvider);
-    final header = widget.embedded ? const _DeskSectionHeader('Ligações e runtime config') : const SizedBox.shrink();
+    final header = widget.embedded
+        ? const _DeskSectionHeader('Ligações e runtime config')
+        : const SizedBox.shrink();
     final body = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Ativo: ${config.apiBaseUrl}', style: TextStyle(color: Colors.white.withOpacity(0.7))),
+        Text(
+          'Ativo: ${config.apiBaseUrl}',
+          style: TextStyle(color: Colors.white.withOpacity(0.7)),
+        ),
         const SizedBox(height: 12),
-        TextField(controller: apiBaseUrlCtrl, decoration: const InputDecoration(labelText: 'API Base URL', border: OutlineInputBorder())),
+        TextField(
+          controller: apiBaseUrlCtrl,
+          decoration: const InputDecoration(
+            labelText: 'API Base URL',
+            border: OutlineInputBorder(),
+          ),
+        ),
         const SizedBox(height: 8),
-        TextField(controller: apiFallbackIpCtrl, decoration: const InputDecoration(labelText: 'API Fallback IP', border: OutlineInputBorder())),
+        TextField(
+          controller: apiFallbackIpCtrl,
+          decoration: const InputDecoration(
+            labelText: 'API Fallback IP',
+            border: OutlineInputBorder(),
+          ),
+        ),
         const SizedBox(height: 8),
-        TextField(controller: merchantCountryCodeCtrl, decoration: const InputDecoration(labelText: 'Merchant Country Code', border: OutlineInputBorder())),
+        TextField(
+          controller: merchantCountryCodeCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Merchant Country Code',
+            border: OutlineInputBorder(),
+          ),
+        ),
         const SizedBox(height: 8),
-        TextField(controller: applePayMerchantIdCtrl, decoration: const InputDecoration(labelText: 'Apple Pay Merchant ID', border: OutlineInputBorder())),
+        TextField(
+          controller: applePayMerchantIdCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Apple Pay Merchant ID',
+            border: OutlineInputBorder(),
+          ),
+        ),
         const SizedBox(height: 8),
-        TextField(controller: stripeUrlSchemeCtrl, decoration: const InputDecoration(labelText: 'Stripe URL Scheme', border: OutlineInputBorder())),
+        TextField(
+          controller: stripeUrlSchemeCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Stripe URL Scheme',
+            border: OutlineInputBorder(),
+          ),
+        ),
         const SizedBox(height: 8),
         SwitchListTile(
           value: enablePlatformPay,
@@ -9570,7 +13056,9 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
           children: [
             FilledButton(
               onPressed: saving ? null : _save,
-              child: Text(saving ? 'A guardar...' : 'Guardar e reiniciar sessão'),
+              child: Text(
+                saving ? 'A guardar...' : 'Guardar e reiniciar sessão',
+              ),
             ),
             OutlinedButton(
               onPressed: testing ? null : _testConnection,
@@ -9633,19 +13121,34 @@ class _StaffUsersPageState extends ConsumerState<StaffUsersPage> {
             if (snap.hasError) {
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                children: [Padding(padding: const EdgeInsets.all(16), child: Text('Erro: ${snap.error}'))],
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text('Erro: ${snap.error}'),
+                  ),
+                ],
               );
             }
             return ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              children: const [SizedBox(height: 300, child: Center(child: CircularProgressIndicator()))],
+              children: const [
+                SizedBox(
+                  height: 300,
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              ],
             );
           }
           final users = snap.data!;
           if (users.isEmpty) {
             return ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              children: const [Padding(padding: EdgeInsets.all(16), child: Text('Sem utilizadores'))],
+              children: const [
+                Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text('Sem utilizadores'),
+                ),
+              ],
             );
           }
           return ListView.builder(
@@ -9656,21 +13159,32 @@ class _StaffUsersPageState extends ConsumerState<StaffUsersPage> {
               return Card(
                 child: ListTile(
                   title: Text(u.name),
-                  subtitle: Text('${u.username ?? '-'} • ${u.email} • ${u.role}'),
+                  subtitle: Text(
+                    '${u.username ?? '-'} • ${u.email} • ${u.role}',
+                  ),
                   trailing: Wrap(
                     spacing: 6,
                     children: [
                       IconButton(
                         icon: const Icon(Icons.edit),
                         onPressed: () async {
-                          await Navigator.push(context, MaterialPageRoute(builder: (_) => StaffUserFormPage(user: u)));
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => StaffUserFormPage(user: u),
+                            ),
+                          );
                           _reload();
                         },
                       ),
                       IconButton(
                         icon: const Icon(Icons.delete_outline),
                         onPressed: () async {
-                          final ok = await _confirm(context, 'Apagar utilizador?', u.email);
+                          final ok = await _confirm(
+                            context,
+                            'Apagar utilizador?',
+                            u.email,
+                          );
                           if (!ok) return;
                           try {
                             await ref.read(apiProvider).deleteUser(token, u.id);
@@ -9678,7 +13192,9 @@ class _StaffUsersPageState extends ConsumerState<StaffUsersPage> {
                             _reload();
                           } catch (e) {
                             if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text('Erro: $e')));
                           }
                         },
                       ),
@@ -9696,7 +13212,8 @@ class _StaffUsersPageState extends ConsumerState<StaffUsersPage> {
   @override
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
-    if (token == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     final user = ref.watch(staffUserProvider);
     if (user != null && useDesktopLayout(context)) {
       return StaffDesktopShell(
@@ -9710,7 +13227,10 @@ class _StaffUsersPageState extends ConsumerState<StaffUsersPage> {
           IconButton(onPressed: _reload, icon: const Icon(Icons.refresh)),
           IconButton(
             onPressed: () async {
-              await Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffUserFormPage()));
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StaffUserFormPage()),
+              );
               _reload();
             },
             icon: const Icon(Icons.add),
@@ -9729,13 +13249,19 @@ class _StaffUsersPageState extends ConsumerState<StaffUsersPage> {
       appBar: AppBar(
         title: const Text('Utilizadores'),
         leading: navLeading(context),
-        actions: navActions(context, extra: [
-          IconButton(onPressed: _reload, icon: const Icon(Icons.refresh)),
-        ]),
+        actions: navActions(
+          context,
+          extra: [
+            IconButton(onPressed: _reload, icon: const Icon(Icons.refresh)),
+          ],
+        ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
-          await Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffUserFormPage()));
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const StaffUserFormPage()),
+          );
           _reload();
         },
         child: const Icon(Icons.add),
@@ -9795,21 +13321,46 @@ class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
     }
   }
 
-  Widget _buildUserFormBody(BuildContext context, String token, {required bool permissionsLocked}) {
+  Widget _buildUserFormBody(
+    BuildContext context,
+    String token, {
+    required bool permissionsLocked,
+  }) {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: ListView(
         children: [
-          TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
+          TextField(
+            controller: nameCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Nome',
+              border: OutlineInputBorder(),
+            ),
+          ),
           const SizedBox(height: 8),
-          TextField(controller: usernameCtrl, decoration: const InputDecoration(labelText: 'Username (opcional)', border: OutlineInputBorder())),
+          TextField(
+            controller: usernameCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Username (opcional)',
+              border: OutlineInputBorder(),
+            ),
+          ),
           const SizedBox(height: 8),
-          TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+          TextField(
+            controller: emailCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Email',
+              border: OutlineInputBorder(),
+            ),
+          ),
           const SizedBox(height: 8),
           TextField(
             controller: passwordCtrl,
             obscureText: true,
-            decoration: const InputDecoration(labelText: 'Password (opcional)', border: OutlineInputBorder()),
+            decoration: const InputDecoration(
+              labelText: 'Password (opcional)',
+              border: OutlineInputBorder(),
+            ),
           ),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
@@ -9822,26 +13373,34 @@ class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
               role = _normalizeRole(v ?? 'photographer');
               _applyRoleDefaults(role);
             }),
-            decoration: const InputDecoration(labelText: 'Role', border: OutlineInputBorder()),
+            decoration: const InputDecoration(
+              labelText: 'Role',
+              border: OutlineInputBorder(),
+            ),
           ),
           const SizedBox(height: 12),
-          const Text('Permissões', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text(
+            'Permissões',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 8),
-          ...kStaffPermissions.entries.map((e) => CheckboxListTile(
-            value: selectedPermissions.contains(e.key),
-            onChanged: permissionsLocked
-                ? null
-                : (v) => setState(() {
+          ...kStaffPermissions.entries.map(
+            (e) => CheckboxListTile(
+              value: selectedPermissions.contains(e.key),
+              onChanged: permissionsLocked
+                  ? null
+                  : (v) => setState(() {
                       if (v == true) {
                         selectedPermissions.add(e.key);
                       } else {
                         selectedPermissions.remove(e.key);
                       }
                     }),
-            title: Text(e.value),
-            dense: true,
-            controlAffinity: ListTileControlAffinity.leading,
-          )),
+              title: Text(e.value),
+              dense: true,
+              controlAffinity: ListTileControlAffinity.leading,
+            ),
+          ),
           const SizedBox(height: 12),
           FilledButton(
             onPressed: saving
@@ -9853,10 +13412,16 @@ class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
                       email: emailCtrl.text.trim(),
                       role: role,
                       permissions: selectedPermissions.toList(),
-                      password: passwordCtrl.text.trim().isEmpty ? null : passwordCtrl.text.trim(),
+                      password: passwordCtrl.text.trim().isEmpty
+                          ? null
+                          : passwordCtrl.text.trim(),
                     );
                     if (payload.name.isEmpty || payload.email.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome e email são obrigatórios.')));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Nome e email são obrigatórios.'),
+                        ),
+                      );
                       return;
                     }
                     try {
@@ -9864,13 +13429,17 @@ class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
                       if (widget.user == null) {
                         await ref.read(apiProvider).createUser(token, payload);
                       } else {
-                        await ref.read(apiProvider).updateUser(token, widget.user!.id, payload);
+                        await ref
+                            .read(apiProvider)
+                            .updateUser(token, widget.user!.id, payload);
                       }
                       if (!context.mounted) return;
                       Navigator.pop(context);
                     } catch (e) {
                       if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(SnackBar(content: Text('Erro: $e')));
                     } finally {
                       if (mounted) setState(() => saving = false);
                     }
@@ -9885,7 +13454,8 @@ class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
   @override
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
-    if (token == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     final permissionsLocked = role == 'admin';
     final user = ref.watch(staffUserProvider);
     if (user != null && useDesktopLayout(context)) {
@@ -9893,16 +13463,26 @@ class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
         user: user,
         token: token,
         initialId: 'settings',
-        overrideTitle: widget.user == null ? 'Novo utilizador' : 'Editar utilizador',
+        overrideTitle: widget.user == null
+            ? 'Novo utilizador'
+            : 'Editar utilizador',
         overrideSubtitle: 'Gestao de equipa',
         overrideShowSearch: false,
-        overrideContent: (ctx, u, t) => _buildUserFormBody(ctx, t, permissionsLocked: permissionsLocked),
+        overrideContent: (ctx, u, t) =>
+            _buildUserFormBody(ctx, t, permissionsLocked: permissionsLocked),
       );
     }
 
     return Scaffold(
-      appBar: buildNavAppBar(context, widget.user == null ? 'Novo utilizador' : 'Editar utilizador'),
-      body: _buildUserFormBody(context, token, permissionsLocked: permissionsLocked),
+      appBar: buildNavAppBar(
+        context,
+        widget.user == null ? 'Novo utilizador' : 'Editar utilizador',
+      ),
+      body: _buildUserFormBody(
+        context,
+        token,
+        permissionsLocked: permissionsLocked,
+      ),
     );
   }
 }
@@ -9941,7 +13521,10 @@ class _StaffClientsPageState extends ConsumerState<StaffClientsPage> {
             padding: const EdgeInsets.all(8),
             child: TextField(
               controller: searchCtrl,
-              decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Pesquisar'),
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'Pesquisar',
+              ),
               onSubmitted: (_) => setState(() {}),
             ),
           ),
@@ -9950,23 +13533,39 @@ class _StaffClientsPageState extends ConsumerState<StaffClientsPage> {
               future: _loadClients(token),
               builder: (_, snap) {
                 if (!snap.hasData) {
-                  if (snap.hasError) return Center(child: Text('Erro: ${snap.error}'));
+                  if (snap.hasError)
+                    return Center(child: Text('Erro: ${snap.error}'));
                   return const Center(child: CircularProgressIndicator());
                 }
                 final clients = snap.data!;
-                if (clients.isEmpty) return const Center(child: Text('Sem clientes'));
+                if (clients.isEmpty)
+                  return const Center(child: Text('Sem clientes'));
                 return ListView.builder(
                   itemCount: clients.length,
                   itemBuilder: (_, i) {
                     final c = clients[i];
-                    final initials = c.name.trim().split(' ').take(2).map((p) => p.isNotEmpty ? p[0].toUpperCase() : '').join('');
+                    final initials = c.name
+                        .trim()
+                        .split(' ')
+                        .take(2)
+                        .map((p) => p.isNotEmpty ? p[0].toUpperCase() : '')
+                        .join('');
                     return Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 5,
+                      ),
                       decoration: BoxDecoration(
                         color: kDeskCard,
                         borderRadius: BorderRadius.circular(kDeskRadius),
                         border: Border.all(color: kBrandRose.withOpacity(0.2)),
-                        boxShadow: [BoxShadow(color: kBrandRose.withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 3))],
+                        boxShadow: [
+                          BoxShadow(
+                            color: kBrandRose.withOpacity(0.06),
+                            blurRadius: 10,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
                       ),
                       child: Material(
                         color: Colors.transparent,
@@ -9974,12 +13573,21 @@ class _StaffClientsPageState extends ConsumerState<StaffClientsPage> {
                           borderRadius: BorderRadius.circular(kDeskRadius),
                           onTap: user.hasPermission('clients.update')
                               ? () async {
-                                  await Navigator.push(context, MaterialPageRoute(builder: (_) => StaffClientFormPage(client: c)));
+                                  await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          StaffClientFormPage(client: c),
+                                    ),
+                                  );
                                   setState(() {});
                                 }
                               : null,
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 12,
+                            ),
                             child: Row(
                               children: [
                                 Container(
@@ -9988,45 +13596,100 @@ class _StaffClientsPageState extends ConsumerState<StaffClientsPage> {
                                   decoration: BoxDecoration(
                                     color: kBrandRose.withOpacity(0.15),
                                     shape: BoxShape.circle,
-                                    border: Border.all(color: kBrandRose.withOpacity(0.4)),
+                                    border: Border.all(
+                                      color: kBrandRose.withOpacity(0.4),
+                                    ),
                                   ),
                                   child: Center(
-                                    child: Text(initials, style: const TextStyle(color: kBrandRose, fontSize: 16, fontWeight: FontWeight.w700)),
+                                    child: Text(
+                                      initials,
+                                      style: const TextStyle(
+                                        color: kBrandRose,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      Text(c.name, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
-                                      if (c.phone != null && c.phone!.isNotEmpty) ...[
+                                      Text(
+                                        c.name,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      if (c.phone != null &&
+                                          c.phone!.isNotEmpty) ...[
                                         const SizedBox(height: 3),
-                                        Row(children: [
-                                          const Icon(Icons.phone_outlined, size: 12, color: kDeskMuted),
-                                          const SizedBox(width: 4),
-                                          Text(c.phone!, style: const TextStyle(color: kDeskMuted, fontSize: 12)),
-                                        ]),
+                                        Row(
+                                          children: [
+                                            const Icon(
+                                              Icons.phone_outlined,
+                                              size: 12,
+                                              color: kDeskMuted,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              c.phone!,
+                                              style: const TextStyle(
+                                                color: kDeskMuted,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ],
-                                      if (c.email != null && c.email!.isNotEmpty) ...[
+                                      if (c.email != null &&
+                                          c.email!.isNotEmpty) ...[
                                         const SizedBox(height: 3),
-                                        Row(children: [
-                                          const Icon(Icons.email_outlined, size: 12, color: kDeskMuted),
-                                          const SizedBox(width: 4),
-                                          Expanded(child: Text(c.email!, style: const TextStyle(color: kDeskMuted, fontSize: 12), overflow: TextOverflow.ellipsis)),
-                                        ]),
+                                        Row(
+                                          children: [
+                                            const Icon(
+                                              Icons.email_outlined,
+                                              size: 12,
+                                              color: kDeskMuted,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Expanded(
+                                              child: Text(
+                                                c.email!,
+                                                style: const TextStyle(
+                                                  color: kDeskMuted,
+                                                  fontSize: 12,
+                                                ),
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ],
                                     ],
                                   ),
                                 ),
                                 if (user.hasPermission('clients.delete'))
                                   IconButton(
-                                    icon: const Icon(Icons.delete_outline, size: 20),
+                                    icon: const Icon(
+                                      Icons.delete_outline,
+                                      size: 20,
+                                    ),
                                     color: kDeskMuted,
                                     onPressed: () async {
-                                      final ok = await _confirm(context, 'Remover cliente?', c.name);
+                                      final ok = await _confirm(
+                                        context,
+                                        'Remover cliente?',
+                                        c.name,
+                                      );
                                       if (!ok) return;
-                                      await ref.read(apiProvider).deleteClient(token, c.id);
+                                      await ref
+                                          .read(apiProvider)
+                                          .deleteClient(token, c.id);
                                       if (!context.mounted) return;
                                       setState(() {});
                                     },
@@ -10051,7 +13714,8 @@ class _StaffClientsPageState extends ConsumerState<StaffClientsPage> {
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
     final user = ref.watch(staffUserProvider);
-    if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null || user == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     if (useDesktopLayout(context)) {
       return StaffDesktopShell(
         user: user,
@@ -10061,11 +13725,19 @@ class _StaffClientsPageState extends ConsumerState<StaffClientsPage> {
         overrideSubtitle: 'Base de clientes',
         overrideShowSearch: false,
         overrideActionsBuilder: (ctx, u, t) => [
-          IconButton(onPressed: () => setState(() {}), icon: const Icon(Icons.refresh)),
+          IconButton(
+            onPressed: () => setState(() {}),
+            icon: const Icon(Icons.refresh),
+          ),
           if (user.hasPermission('clients.create'))
             IconButton(
               onPressed: () async {
-                await Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffClientFormPage()));
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const StaffClientFormPage(),
+                  ),
+                );
                 setState(() {});
               },
               icon: const Icon(Icons.add),
@@ -10079,14 +13751,25 @@ class _StaffClientsPageState extends ConsumerState<StaffClientsPage> {
       appBar: AppBar(
         title: const Text('Clientes'),
         leading: navLeading(context),
-        actions: navActions(context, extra: [
-          IconButton(onPressed: () => setState(() {}), icon: const Icon(Icons.refresh)),
-        ]),
+        actions: navActions(
+          context,
+          extra: [
+            IconButton(
+              onPressed: () => setState(() {}),
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
       ),
       floatingActionButton: user.hasPermission('clients.create')
           ? FloatingActionButton(
               onPressed: () async {
-                await Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffClientFormPage()));
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const StaffClientFormPage(),
+                  ),
+                );
                 setState(() {});
               },
               child: const Icon(Icons.add),
@@ -10102,7 +13785,8 @@ class StaffClientFormPage extends ConsumerStatefulWidget {
   final StaffClient? client;
 
   @override
-  ConsumerState<StaffClientFormPage> createState() => _StaffClientFormPageState();
+  ConsumerState<StaffClientFormPage> createState() =>
+      _StaffClientFormPageState();
 }
 
 class _StaffClientFormPageState extends ConsumerState<StaffClientFormPage> {
@@ -10136,16 +13820,37 @@ class _StaffClientFormPageState extends ConsumerState<StaffClientFormPage> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nome', border: OutlineInputBorder())),
+        TextField(
+          controller: nameCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Nome',
+            border: OutlineInputBorder(),
+          ),
+        ),
         const SizedBox(height: 8),
-        TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Telemóvel', border: OutlineInputBorder())),
+        TextField(
+          controller: phoneCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Telemóvel',
+            border: OutlineInputBorder(),
+          ),
+        ),
         const SizedBox(height: 8),
-        TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+        TextField(
+          controller: emailCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Email',
+            border: OutlineInputBorder(),
+          ),
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: notesCtrl,
           maxLines: 3,
-          decoration: const InputDecoration(labelText: 'Notas', border: OutlineInputBorder()),
+          decoration: const InputDecoration(
+            labelText: 'Notas',
+            border: OutlineInputBorder(),
+          ),
         ),
         const SizedBox(height: 8),
         SwitchListTile(
@@ -10166,7 +13871,9 @@ class _StaffClientFormPageState extends ConsumerState<StaffClientFormPage> {
                     marketingConsent: marketingConsent,
                   );
                   if (payload.name.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nome é obrigatório.')));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Nome é obrigatório.')),
+                    );
                     return;
                   }
                   try {
@@ -10174,13 +13881,17 @@ class _StaffClientFormPageState extends ConsumerState<StaffClientFormPage> {
                     if (widget.client == null) {
                       await ref.read(apiProvider).createClient(token, payload);
                     } else {
-                      await ref.read(apiProvider).updateClient(token, widget.client!.id, payload);
+                      await ref
+                          .read(apiProvider)
+                          .updateClient(token, widget.client!.id, payload);
                     }
                     if (!context.mounted) return;
                     Navigator.pop(context);
                   } catch (e) {
                     if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text('Erro: $e')));
                   } finally {
                     if (mounted) setState(() => saving = false);
                   }
@@ -10194,14 +13905,17 @@ class _StaffClientFormPageState extends ConsumerState<StaffClientFormPage> {
   @override
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
-    if (token == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (token == null)
+      return const Scaffold(body: Center(child: Text('Sem sessao staff')));
     final user = ref.watch(staffUserProvider);
     if (user != null && useDesktopLayout(context)) {
       return StaffDesktopShell(
         user: user,
         token: token,
         initialId: 'clients',
-        overrideTitle: widget.client == null ? 'Novo cliente' : 'Editar cliente',
+        overrideTitle: widget.client == null
+            ? 'Novo cliente'
+            : 'Editar cliente',
         overrideSubtitle: 'Base de clientes',
         overrideShowSearch: false,
         overrideContent: (ctx, u, t) => _buildClientFormBody(ctx, t),
@@ -10209,7 +13923,10 @@ class _StaffClientFormPageState extends ConsumerState<StaffClientFormPage> {
     }
 
     return Scaffold(
-      appBar: buildNavAppBar(context, widget.client == null ? 'Novo cliente' : 'Editar cliente'),
+      appBar: buildNavAppBar(
+        context,
+        widget.client == null ? 'Novo cliente' : 'Editar cliente',
+      ),
       body: _buildClientFormBody(context, token),
     );
   }
@@ -10222,8 +13939,14 @@ Future<bool> _confirm(BuildContext context, String title, String message) {
       title: Text(title),
       content: Text(message),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-        FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Confirmar')),
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Confirmar'),
+        ),
       ],
     ),
   ).then((value) => value ?? false);
@@ -10240,7 +13963,8 @@ class SecureScreen extends StatefulWidget {
 class _SecureScreenState extends State<SecureScreen> {
   static const channel = MethodChannel('studio59/screen_record');
   static int _secureScreenCount = 0;
-  final FlutterPreventScreenCapture _preventScreenCapture = FlutterPreventScreenCapture();
+  final FlutterPreventScreenCapture _preventScreenCapture =
+      FlutterPreventScreenCapture();
   Timer? timer;
   Timer? screenshotTimer;
   StreamSubscription<bool>? _screenRecordsSubscription;
@@ -10262,7 +13986,8 @@ class _SecureScreenState extends State<SecureScreen> {
     _applyAndroidSecureFlag();
     if (Platform.isIOS) {
       _checkScreenRecord();
-      _screenRecordsSubscription = _preventScreenCapture.screenRecordsIOS.listen(_updateRecordStatus);
+      _screenRecordsSubscription = _preventScreenCapture.screenRecordsIOS
+          .listen(_updateRecordStatus);
       channel.setMethodCallHandler((call) async {
         if (call.method == 'screenshotTaken') {
           if (!mounted) return;
@@ -10273,13 +13998,16 @@ class _SecureScreenState extends State<SecureScreen> {
           });
         } else if (call.method == 'captureChanged') {
           if (!mounted) return;
-          final captured = call.arguments is Map ? (call.arguments['captured'] == true) : false;
+          final captured = call.arguments is Map
+              ? (call.arguments['captured'] == true)
+              : false;
           setState(() => isRecording = captured);
         }
       });
       timer = Timer.periodic(const Duration(seconds: 1), (_) async {
         try {
-          final captured = await channel.invokeMethod<bool>('isCaptured') ?? false;
+          final captured =
+              await channel.invokeMethod<bool>('isCaptured') ?? false;
           if (mounted) setState(() => isRecording = captured);
         } catch (_) {}
       });
@@ -10322,7 +14050,11 @@ class _SecureScreenState extends State<SecureScreen> {
             child: const Text(
               'Conteúdo protegido\nCaptura de ecrã detetada',
               textAlign: TextAlign.center,
-              style: TextStyle(color: kBrandRose, fontSize: 22, fontWeight: FontWeight.w700),
+              style: TextStyle(
+                color: kBrandRose,
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ),
@@ -10332,7 +14064,12 @@ class _SecureScreenState extends State<SecureScreen> {
 }
 
 class CartItem {
-  CartItem({required this.photoId, required this.number, this.previewUrl, this.quantity = 1});
+  CartItem({
+    required this.photoId,
+    required this.number,
+    this.previewUrl,
+    this.quantity = 1,
+  });
   final int photoId;
   final String number;
   final String? previewUrl;
@@ -10353,16 +14090,21 @@ class CartItemPayload {
 }
 
 class StripeIntentPayload {
-  StripeIntentPayload({required this.orderCode, required this.clientSecret, required this.publishableKey});
+  StripeIntentPayload({
+    required this.orderCode,
+    required this.clientSecret,
+    required this.publishableKey,
+  });
   final String orderCode;
   final String clientSecret;
   final String publishableKey;
 
-  factory StripeIntentPayload.fromJson(Map<String, dynamic> j) => StripeIntentPayload(
-    orderCode: j['order_code'] as String? ?? '',
-    clientSecret: j['client_secret'] as String? ?? '',
-    publishableKey: j['publishable_key'] as String? ?? '',
-  );
+  factory StripeIntentPayload.fromJson(Map<String, dynamic> j) =>
+      StripeIntentPayload(
+        orderCode: j['order_code'] as String? ?? '',
+        clientSecret: j['client_secret'] as String? ?? '',
+        publishableKey: j['publishable_key'] as String? ?? '',
+      );
 }
 
 class StripeCheckoutPayload {
@@ -10370,10 +14112,11 @@ class StripeCheckoutPayload {
   final String orderCode;
   final String checkoutUrl;
 
-  factory StripeCheckoutPayload.fromJson(Map<String, dynamic> j) => StripeCheckoutPayload(
-    orderCode: j['order_code'] as String? ?? '',
-    checkoutUrl: j['checkout_url'] as String? ?? '',
-  );
+  factory StripeCheckoutPayload.fromJson(Map<String, dynamic> j) =>
+      StripeCheckoutPayload(
+        orderCode: j['order_code'] as String? ?? '',
+        checkoutUrl: j['checkout_url'] as String? ?? '',
+      );
 }
 
 class CartNotifier extends StateNotifier<Map<int, CartItem>> {
@@ -10384,7 +14127,12 @@ class CartNotifier extends StateNotifier<Map<int, CartItem>> {
     if (next.containsKey(photo.id)) {
       next.remove(photo.id);
     } else {
-      next[photo.id] = CartItem(photoId: photo.id, number: photo.number, previewUrl: photo.previewUrl, quantity: 1);
+      next[photo.id] = CartItem(
+        photoId: photo.id,
+        number: photo.number,
+        previewUrl: photo.previewUrl,
+        quantity: 1,
+      );
     }
     state = next;
   }
@@ -10433,8 +14181,10 @@ class SavedOrdersNotifier extends StateNotifier<List<String>> {
     await prefs.setStringList('order_codes', next);
   }
 }
+
 class ApiService {
-  ApiService(this.config) : dio = _buildDio(config.apiBaseUrl, config.apiFallbackIp);
+  ApiService(this.config)
+    : dio = _buildDio(config.apiBaseUrl, config.apiFallbackIp);
 
   final AppRuntimeConfig config;
   String get baseUrl => config.apiBaseUrl;
@@ -10474,15 +14224,17 @@ class ApiService {
           : (uri.hasPort ? uri.port : (uri.scheme == 'https' ? 443 : 80));
       final host =
           !isProxy &&
-                  resolvedFallbackIp.isNotEmpty &&
-                  apiHost != null &&
-                  uri.host == apiHost
-              ? resolvedFallbackIp
-              : (isProxy ? proxyTargetHost : uri.host);
+              resolvedFallbackIp.isNotEmpty &&
+              apiHost != null &&
+              uri.host == apiHost
+          ? resolvedFallbackIp
+          : (isProxy ? proxyTargetHost : uri.host);
       final task = await Socket.startConnect(host, port);
       if (isProxy || uri.scheme != 'https') return task;
       return ConnectionTask.fromSocket(
-        task.socket.then((socket) => SecureSocket.secure(socket, host: uri.host)),
+        task.socket.then(
+          (socket) => SecureSocket.secure(socket, host: uri.host),
+        ),
         task.cancel,
       );
     };
@@ -10505,7 +14257,9 @@ class ApiService {
   }
 
   Uri get _publicBaseUri {
-    final normalized = baseUrl.endsWith('/api') ? baseUrl.substring(0, baseUrl.length - 4) : baseUrl;
+    final normalized = baseUrl.endsWith('/api')
+        ? baseUrl.substring(0, baseUrl.length - 4)
+        : baseUrl;
     return Uri.parse(normalized);
   }
 
@@ -10519,10 +14273,13 @@ class ApiService {
   String _normalizeExternalUrl(String url) {
     final parsed = Uri.tryParse(url);
     if (parsed == null || !parsed.hasScheme) return url;
-    final isLocalHost = parsed.host == '127.0.0.1' || parsed.host == 'localhost';
+    final isLocalHost =
+        parsed.host == '127.0.0.1' || parsed.host == 'localhost';
     if (!isLocalHost) return url;
 
-    final scheme = _publicBaseUri.scheme.isNotEmpty ? _publicBaseUri.scheme : parsed.scheme;
+    final scheme = _publicBaseUri.scheme.isNotEmpty
+        ? _publicBaseUri.scheme
+        : parsed.scheme;
     final host = _publicBaseUri.host;
     final port = _publicBaseUri.hasPort ? _publicBaseUri.port : parsed.port;
     return parsed.replace(scheme: scheme, host: host, port: port).toString();
@@ -10554,7 +14311,13 @@ class ApiService {
     return GuestSession.fromJson(r.data);
   }
 
-  Future<PhotosPage> eventPhotosPage(int eventId, String token, {String search = '', int page = 1, int perPage = 50}) async {
+  Future<PhotosPage> eventPhotosPage(
+    int eventId,
+    String token, {
+    String search = '',
+    int page = 1,
+    int perPage = 50,
+  }) async {
     final r = await dio.get(
       '/public/events/$eventId/photos',
       queryParameters: {'search': search, 'page': page, 'per_page': perPage},
@@ -10579,9 +14342,16 @@ class ApiService {
     );
   }
 
-  Future<List<PhotoItem>> faceSearch(int eventId, String token, String selfiePath) async {
+  Future<List<PhotoItem>> faceSearch(
+    int eventId,
+    String token,
+    String selfiePath,
+  ) async {
     final form = FormData.fromMap({
-      'selfie': await MultipartFile.fromFile(selfiePath, filename: 'selfie.jpg'),
+      'selfie': await MultipartFile.fromFile(
+        selfiePath,
+        filename: 'selfie.jpg',
+      ),
     });
     final r = await dio.post(
       '/public/events/$eventId/face-search',
@@ -10594,7 +14364,8 @@ class ApiService {
       ),
     );
     if (r.statusCode != 200) throw _errorFromResponse(r);
-    final list = (r.data['suggested'] as List? ?? []).cast<Map<String, dynamic>>();
+    final list = (r.data['suggested'] as List? ?? [])
+        .cast<Map<String, dynamic>>();
     return list.map((json) {
       final map = Map<String, dynamic>.from(json);
       final preview = map['preview_url'] as String?;
@@ -10627,7 +14398,9 @@ class ApiService {
       'delivery_type': deliveryType,
       'delivery_address': deliveryAddress.isEmpty ? null : deliveryAddress,
       'wants_film': wantsFilm,
-      'photo_items': photoItems.map((i) => {'photo_id': i.photoId, 'quantity': i.quantity}).toList(),
+      'photo_items': photoItems
+          .map((i) => {'photo_id': i.photoId, 'quantity': i.quantity})
+          .toList(),
     };
 
     final r = await dio.post(
@@ -10636,7 +14409,9 @@ class ApiService {
       options: Options(headers: {'Authorization': 'Bearer $token'}),
     );
     if (r.statusCode != 201) throw _errorFromResponse(r);
-    return StripeIntentPayload.fromJson((r.data as Map).cast<String, dynamic>());
+    return StripeIntentPayload.fromJson(
+      (r.data as Map).cast<String, dynamic>(),
+    );
   }
 
   Future<StripeCheckoutPayload> createStripeCheckoutSession({
@@ -10662,7 +14437,9 @@ class ApiService {
       'delivery_type': deliveryType,
       'delivery_address': deliveryAddress.isEmpty ? null : deliveryAddress,
       'wants_film': wantsFilm,
-      'photo_items': photoItems.map((i) => {'photo_id': i.photoId, 'quantity': i.quantity}).toList(),
+      'photo_items': photoItems
+          .map((i) => {'photo_id': i.photoId, 'quantity': i.quantity})
+          .toList(),
     };
 
     final r = await dio.post(
@@ -10671,7 +14448,9 @@ class ApiService {
       options: Options(headers: {'Authorization': 'Bearer $token'}),
     );
     if (r.statusCode != 201) throw _errorFromResponse(r);
-    return StripeCheckoutPayload.fromJson((r.data as Map).cast<String, dynamic>());
+    return StripeCheckoutPayload.fromJson(
+      (r.data as Map).cast<String, dynamic>(),
+    );
   }
 
   Future<void> logClientIssue({
@@ -10682,10 +14461,7 @@ class ApiService {
     try {
       await dio.post(
         '/public/logs',
-        data: {
-          'message': message,
-          'context': context ?? {},
-        },
+        data: {'message': message, 'context': context ?? {}},
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
     } catch (_) {
@@ -10707,7 +14483,10 @@ class ApiService {
     required String deliveryAddress,
     required bool wantsFilm,
   }) async {
-    final itemsTotal = photoItems.fold<num>(0, (sum, item) => sum + (item.quantity * pricePerPhoto));
+    final itemsTotal = photoItems.fold<num>(
+      0,
+      (sum, item) => sum + (item.quantity * pricePerPhoto),
+    );
     final shippingFee = deliveryType == 'shipping' ? 5.0 : 0.0;
     final filmFee = wantsFilm ? 30.0 : 0.0;
     final extrasTotal = shippingFee + filmFee;
@@ -10722,7 +14501,9 @@ class ApiService {
       'delivery_type': deliveryType,
       'delivery_address': deliveryAddress.isEmpty ? null : deliveryAddress,
       'wants_film': wantsFilm,
-      'photo_items': photoItems.map((i) => {'photo_id': i.photoId, 'quantity': i.quantity}).toList(),
+      'photo_items': photoItems
+          .map((i) => {'photo_id': i.photoId, 'quantity': i.quantity})
+          .toList(),
     };
     try {
       final r = await dio.post(
@@ -10733,7 +14514,8 @@ class ApiService {
       if (r.statusCode != 201) throw _errorFromResponse(r);
       return r.data['order_code'] as String;
     } on DioException catch (e) {
-      if (e.type == DioExceptionType.connectionError || e.error is SocketException) {
+      if (e.type == DioExceptionType.connectionError ||
+          e.error is SocketException) {
         if (paymentMethod == 'online') {
           throw Exception('Sem internet para pagamento online.');
         }
@@ -10754,7 +14536,15 @@ class ApiService {
           'payment_method': paymentMethod,
           'status': 'paid',
           'total_amount': totalAmount.toStringAsFixed(2),
-          'items': photoItems.map((i) => {'photo_id': i.photoId, 'price': pricePerPhoto, 'quantity': i.quantity}).toList(),
+          'items': photoItems
+              .map(
+                (i) => {
+                  'photo_id': i.photoId,
+                  'price': pricePerPhoto,
+                  'quantity': i.quantity,
+                },
+              )
+              .toList(),
           'created_at': DateTime.now().toIso8601String(),
           'updated_at': DateTime.now().toIso8601String(),
         });
@@ -10764,16 +14554,30 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> offlineExportJson(String token, int eventId) async {
-    final r = await dio.get('/offline/events/$eventId/export', options: Options(headers: {'Authorization': 'Bearer $token'}));
+  Future<Map<String, dynamic>> offlineExportJson(
+    String token,
+    int eventId,
+  ) async {
+    final r = await dio.get(
+      '/offline/events/$eventId/export',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
     return (r.data as Map).cast<String, dynamic>();
   }
 
-  Future<void> offlineImportFile(String token, int eventId, String filePath, String deviceId) async {
+  Future<void> offlineImportFile(
+    String token,
+    int eventId,
+    String filePath,
+    String deviceId,
+  ) async {
     final form = FormData.fromMap({
       'device_id': deviceId,
-      'payload': await MultipartFile.fromFile(filePath, filename: 'offline.json'),
+      'payload': await MultipartFile.fromFile(
+        filePath,
+        filename: 'offline.json',
+      ),
     });
     final r = await dio.post(
       '/offline/events/$eventId/import',
@@ -10796,7 +14600,10 @@ class ApiService {
     required String orderCode,
     required int photoId,
   }) async {
-    final r = await dio.post('/public/orders/$orderCode/download-link', data: {'photo_id': photoId});
+    final r = await dio.post(
+      '/public/orders/$orderCode/download-link',
+      data: {'photo_id': photoId},
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
     final rawUrl = r.data['download_url'] as String?;
     if (rawUrl == null || rawUrl.isEmpty) {
@@ -10806,7 +14613,10 @@ class ApiService {
   }
 
   Future<StaffAuthResponse> staffLogin(String login, String password) async {
-    final r = await dio.post('/auth/login', data: {'login': login, 'password': password});
+    final r = await dio.post(
+      '/auth/login',
+      data: {'login': login, 'password': password},
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
     return StaffAuthResponse.fromJson(r.data as Map<String, dynamic>);
   }
@@ -10824,12 +14634,21 @@ class ApiService {
       if (username != null && username.isNotEmpty) 'username': username,
       if (password != null && password.isNotEmpty) 'password': password,
     };
-    final r = await dio.put('/auth/me', data: data, options: Options(headers: {'Authorization': 'Bearer $token'}));
+    final r = await dio.put(
+      '/auth/me',
+      data: data,
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
     return StaffUser.fromJson((r.data as Map).cast<String, dynamic>());
   }
 
-  Future<List<StaffOrderItem>> staffOrders(String token, int eventId, String q, String status) async {
+  Future<List<StaffOrderItem>> staffOrders(
+    String token,
+    int eventId,
+    String q,
+    String status,
+  ) async {
     final r = await dio.get(
       '/events/$eventId/orders',
       queryParameters: {'q': q, if (status.isNotEmpty) 'status': status},
@@ -10842,14 +14661,19 @@ class ApiService {
 
   Future<bool> markOrderPaid(String token, int orderId, {int? eventId}) async {
     try {
-      final r = await dio.post('/orders/$orderId/mark-paid', options: Options(headers: {'Authorization': 'Bearer $token'}));
+      final r = await dio.post(
+        '/orders/$orderId/mark-paid',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
       if (r.statusCode != 200) throw _errorFromResponse(r);
       if (r.data is Map<String, dynamic>) {
         return r.data['download_link_emailed'] == true;
       }
       return false;
     } on DioException catch (e) {
-      if (eventId != null && (e.type == DioExceptionType.connectionError || e.error is SocketException)) {
+      if (eventId != null &&
+          (e.type == DioExceptionType.connectionError ||
+              e.error is SocketException)) {
         await enqueueOrderUpdate(eventId, orderId, 'paid');
         return false;
       }
@@ -10857,12 +14681,21 @@ class ApiService {
     }
   }
 
-  Future<void> markOrderDelivered(String token, int orderId, {int? eventId}) async {
+  Future<void> markOrderDelivered(
+    String token,
+    int orderId, {
+    int? eventId,
+  }) async {
     try {
-      final r = await dio.post('/orders/$orderId/mark-delivered', options: Options(headers: {'Authorization': 'Bearer $token'}));
+      final r = await dio.post(
+        '/orders/$orderId/mark-delivered',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
       if (r.statusCode != 200) throw _errorFromResponse(r);
     } on DioException catch (e) {
-      if (eventId != null && (e.type == DioExceptionType.connectionError || e.error is SocketException)) {
+      if (eventId != null &&
+          (e.type == DioExceptionType.connectionError ||
+              e.error is SocketException)) {
         await enqueueOrderUpdate(eventId, orderId, 'delivered');
         return;
       }
@@ -10870,7 +14703,12 @@ class ApiService {
     }
   }
 
-  Future<List<StaffEvent>> staffEvents(String token, {String? eventType, bool assignedOnly = false, String? fromDate}) async {
+  Future<List<StaffEvent>> staffEvents(
+    String token, {
+    String? eventType,
+    bool assignedOnly = false,
+    String? fromDate,
+  }) async {
     final params = <String, dynamic>{};
     final type = eventType?.trim() ?? '';
     if (type.isNotEmpty) params['event_type'] = type;
@@ -10897,7 +14735,12 @@ class ApiService {
     return events;
   }
 
-  Future<void> registerDeviceToken(String token, String deviceToken, String platform, {String? deviceId}) async {
+  Future<void> registerDeviceToken(
+    String token,
+    String deviceToken,
+    String platform, {
+    String? deviceId,
+  }) async {
     final data = <String, dynamic>{
       'token': deviceToken,
       'platform': platform,
@@ -10935,15 +14778,27 @@ class ApiService {
     return Uint8List.fromList((r.data as List).cast<int>());
   }
 
-  Future<List<StaffEventStaff>> staffEventStaff(String token, int eventId) async {
-    final r = await dio.get('/events/$eventId/staff', options: Options(headers: {'Authorization': 'Bearer $token'}));
+  Future<List<StaffEventStaff>> staffEventStaff(
+    String token,
+    int eventId,
+  ) async {
+    final r = await dio.get(
+      '/events/$eventId/staff',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
     final list = (r.data['data'] as List).cast<Map<String, dynamic>>();
     return list.map(StaffEventStaff.fromJson).toList();
   }
 
-  Future<List<StaffUser>> staffAssignableUsers(String token, int eventId) async {
-    final r = await dio.get('/events/$eventId/staff/users', options: Options(headers: {'Authorization': 'Bearer $token'}));
+  Future<List<StaffUser>> staffAssignableUsers(
+    String token,
+    int eventId,
+  ) async {
+    final r = await dio.get(
+      '/events/$eventId/staff/users',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
     final list = (r.data['data'] as List).cast<Map<String, dynamic>>();
     return list.map(StaffUser.fromJson).toList();
@@ -10972,7 +14827,11 @@ class ApiService {
     if (r.statusCode != 201) throw _errorFromResponse(r);
   }
 
-  Future<void> staffRemoveEventStaff(String token, int eventId, int userId) async {
+  Future<void> staffRemoveEventStaff(
+    String token,
+    int eventId,
+    int userId,
+  ) async {
     final r = await dio.delete(
       '/events/$eventId/staff/$userId',
       options: Options(headers: {'Authorization': 'Bearer $token'}),
@@ -10980,24 +14839,46 @@ class ApiService {
     if (r.statusCode != 200) throw _errorFromResponse(r);
   }
 
-  Future<StaffEvent> createEvent(String token, StaffEventPayload payload) async {
-    final r = await dio.post('/events', data: payload.toJson(), options: Options(headers: {'Authorization': 'Bearer $token'}));
+  Future<StaffEvent> createEvent(
+    String token,
+    StaffEventPayload payload,
+  ) async {
+    final r = await dio.post(
+      '/events',
+      data: payload.toJson(),
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 201) throw _errorFromResponse(r);
     return StaffEvent.fromJson(r.data as Map<String, dynamic>);
   }
 
-  Future<StaffEvent> updateEvent(String token, int eventId, StaffEventPayload payload) async {
-    final r = await dio.put('/events/$eventId', data: payload.toJson(), options: Options(headers: {'Authorization': 'Bearer $token'}));
+  Future<StaffEvent> updateEvent(
+    String token,
+    int eventId,
+    StaffEventPayload payload,
+  ) async {
+    final r = await dio.put(
+      '/events/$eventId',
+      data: payload.toJson(),
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
     return StaffEvent.fromJson(r.data as Map<String, dynamic>);
   }
 
   Future<void> deleteEvent(String token, int eventId) async {
-    final r = await dio.delete('/events/$eventId', options: Options(headers: {'Authorization': 'Bearer $token'}));
+    final r = await dio.delete(
+      '/events/$eventId',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
   }
 
-  Future<List<StaffPhoto>> staffEventPhotos(String token, int eventId, String search) async {
+  Future<List<StaffPhoto>> staffEventPhotos(
+    String token,
+    int eventId,
+    String search,
+  ) async {
     final r = await dio.get(
       '/events/$eventId/photos',
       queryParameters: {'search': search},
@@ -11016,11 +14897,18 @@ class ApiService {
   }
 
   Future<void> staffDeletePhoto(String token, int eventId, int photoId) async {
-    final r = await dio.delete('/events/$eventId/photos/$photoId', options: Options(headers: {'Authorization': 'Bearer $token'}));
+    final r = await dio.delete(
+      '/events/$eventId/photos/$photoId',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
   }
 
-  Future<int> staffBulkDeletePhotos(String token, int eventId, List<int> photoIds) async {
+  Future<int> staffBulkDeletePhotos(
+    String token,
+    int eventId,
+    List<int> photoIds,
+  ) async {
     final r = await dio.post(
       '/events/$eventId/photos/bulk-delete',
       data: {'photo_ids': photoIds},
@@ -11041,7 +14929,11 @@ class ApiService {
     if (r.statusCode != 200) throw _errorFromResponse(r);
   }
 
-  Future<UploadStatus> staffUploadStatus(String token, int eventId, String uploadId) async {
+  Future<UploadStatus> staffUploadStatus(
+    String token,
+    int eventId,
+    String uploadId,
+  ) async {
     final r = await dio.get(
       '/events/$eventId/uploads/status',
       queryParameters: {'upload_id': uploadId},
@@ -11094,37 +14986,66 @@ class ApiService {
     if (q.isNotEmpty) params['q'] = q;
     if (status.isNotEmpty) params['status'] = status;
     if (eventId != null) params['event_id'] = eventId;
-    if (eventIds != null && eventIds.isNotEmpty) params['event_ids'] = eventIds.join(',');
+    if (eventIds != null && eventIds.isNotEmpty)
+      params['event_ids'] = eventIds.join(',');
     if (eventDate.isNotEmpty) params['event_date'] = eventDate;
     if (eventType.isNotEmpty) params['event_type'] = eventType;
-    final r = await dio.get('/orders', queryParameters: params, options: Options(headers: {'Authorization': 'Bearer $token'}));
+    final r = await dio.get(
+      '/orders',
+      queryParameters: params,
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
     final list = (r.data['data'] as List).cast<Map<String, dynamic>>();
     return list.map(OrderListItem.fromJson).toList();
   }
 
-  Future<int> staffOrdersTotal(String token, {int? eventId, String status = ''}) async {
+  Future<int> staffOrdersTotal(
+    String token, {
+    int? eventId,
+    String status = '',
+  }) async {
     final params = <String, dynamic>{};
     if (status.isNotEmpty) params['status'] = status;
     if (eventId != null) params['event_id'] = eventId;
-    final r = await dio.get('/orders', queryParameters: params, options: Options(headers: {'Authorization': 'Bearer $token'}));
+    final r = await dio.get(
+      '/orders',
+      queryParameters: params,
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
-    return (r.data['total'] as num?)?.toInt() ?? ((r.data['data'] as List?)?.length ?? 0);
+    return (r.data['total'] as num?)?.toInt() ??
+        ((r.data['data'] as List?)?.length ?? 0);
   }
 
   Future<StaffOrderDetail> staffOrderDetail(String token, int orderId) async {
-    final r = await dio.get('/orders/$orderId', options: Options(headers: {'Authorization': 'Bearer $token'}));
+    final r = await dio.get(
+      '/orders/$orderId',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
     return StaffOrderDetail.fromJson(r.data as Map<String, dynamic>);
   }
 
-  Future<StaffOrderDetail> updateOrder(String token, int orderId, StaffOrderUpdatePayload payload) async {
-    final r = await dio.put('/orders/$orderId', data: payload.toJson(), options: Options(headers: {'Authorization': 'Bearer $token'}));
+  Future<StaffOrderDetail> updateOrder(
+    String token,
+    int orderId,
+    StaffOrderUpdatePayload payload,
+  ) async {
+    final r = await dio.put(
+      '/orders/$orderId',
+      data: payload.toJson(),
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
     return StaffOrderDetail.fromJson(r.data as Map<String, dynamic>);
   }
 
-  Future<int> staffBulkOrderStatus(String token, List<int> orderIds, String status) async {
+  Future<int> staffBulkOrderStatus(
+    String token,
+    List<int> orderIds,
+    String status,
+  ) async {
     final r = await dio.post(
       '/orders/bulk-status',
       data: {'order_ids': orderIds, 'status': status},
@@ -11135,7 +15056,10 @@ class ApiService {
   }
 
   Future<bool> staffSendDownloadLink(String token, int orderId) async {
-    final r = await dio.post('/orders/$orderId/send-download-link', options: Options(headers: {'Authorization': 'Bearer $token'}));
+    final r = await dio.post(
+      '/orders/$orderId/send-download-link',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
     if (r.data is Map<String, dynamic>) {
       return r.data['sent'] == true;
@@ -11168,7 +15092,10 @@ class ApiService {
   }
 
   Future<List<StaffUser>> staffUsers(String token) async {
-    final r = await dio.get('/users', options: Options(headers: {'Authorization': 'Bearer $token'}));
+    final r = await dio.get(
+      '/users',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
     final list = (r.data['data'] as List).cast<Map<String, dynamic>>();
     return list.map(StaffUser.fromJson).toList();
@@ -11185,37 +15112,70 @@ class ApiService {
     return list.map(StaffClient.fromJson).toList();
   }
 
-  Future<StaffClient> createClient(String token, StaffClientPayload payload) async {
-    final r = await dio.post('/clients', data: payload.toJson(), options: Options(headers: {'Authorization': 'Bearer $token'}));
+  Future<StaffClient> createClient(
+    String token,
+    StaffClientPayload payload,
+  ) async {
+    final r = await dio.post(
+      '/clients',
+      data: payload.toJson(),
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 201) throw _errorFromResponse(r);
     return StaffClient.fromJson(r.data as Map<String, dynamic>);
   }
 
-  Future<StaffClient> updateClient(String token, int clientId, StaffClientPayload payload) async {
-    final r = await dio.put('/clients/$clientId', data: payload.toJson(), options: Options(headers: {'Authorization': 'Bearer $token'}));
+  Future<StaffClient> updateClient(
+    String token,
+    int clientId,
+    StaffClientPayload payload,
+  ) async {
+    final r = await dio.put(
+      '/clients/$clientId',
+      data: payload.toJson(),
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
     return StaffClient.fromJson(r.data as Map<String, dynamic>);
   }
 
   Future<void> deleteClient(String token, int clientId) async {
-    final r = await dio.delete('/clients/$clientId', options: Options(headers: {'Authorization': 'Bearer $token'}));
+    final r = await dio.delete(
+      '/clients/$clientId',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
   }
 
   Future<StaffUser> createUser(String token, StaffUserPayload payload) async {
-    final r = await dio.post('/users', data: payload.toJson(), options: Options(headers: {'Authorization': 'Bearer $token'}));
+    final r = await dio.post(
+      '/users',
+      data: payload.toJson(),
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 201) throw _errorFromResponse(r);
     return StaffUser.fromJson(r.data as Map<String, dynamic>);
   }
 
-  Future<StaffUser> updateUser(String token, int userId, StaffUserPayload payload) async {
-    final r = await dio.put('/users/$userId', data: payload.toJson(), options: Options(headers: {'Authorization': 'Bearer $token'}));
+  Future<StaffUser> updateUser(
+    String token,
+    int userId,
+    StaffUserPayload payload,
+  ) async {
+    final r = await dio.put(
+      '/users/$userId',
+      data: payload.toJson(),
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
     return StaffUser.fromJson(r.data as Map<String, dynamic>);
   }
 
   Future<void> deleteUser(String token, int userId) async {
-    final r = await dio.delete('/users/$userId', options: Options(headers: {'Authorization': 'Bearer $token'}));
+    final r = await dio.delete(
+      '/users/$userId',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
     if (r.statusCode != 200) throw _errorFromResponse(r);
   }
 
@@ -11226,7 +15186,8 @@ class ApiService {
 
     final data = r.data;
     if (data is Map<String, dynamic>) {
-      if (data['message'] is String && (data['message'] as String).trim().isNotEmpty) {
+      if (data['message'] is String &&
+          (data['message'] as String).trim().isNotEmpty) {
         return data['message'] as String;
       }
       if (data['errors'] is Map<String, dynamic>) {
@@ -11244,7 +15205,12 @@ class ApiService {
 }
 
 class EventItem {
-  EventItem({required this.id, required this.name, required this.eventDate, this.location});
+  EventItem({
+    required this.id,
+    required this.name,
+    required this.eventDate,
+    this.location,
+  });
   final int id;
   final String name;
   final String eventDate;
@@ -11291,11 +15257,15 @@ class GuestSession {
       basePrice: e['base_price'] == null
           ? null
           : (e['base_price'] is num
-              ? e['base_price'] as num
-              : num.tryParse(e['base_price'].toString())),
-      pricePerPhoto: e['price_per_photo'] is num ? e['price_per_photo'] as num : num.tryParse(e['price_per_photo']?.toString() ?? '') ?? 0,
+                ? e['base_price'] as num
+                : num.tryParse(e['base_price'].toString())),
+      pricePerPhoto: e['price_per_photo'] is num
+          ? e['price_per_photo'] as num
+          : num.tryParse(e['price_per_photo']?.toString() ?? '') ?? 0,
       eventType: e['event_type'] as String?,
-      eventMeta: e['event_meta'] is Map<String, dynamic> ? Map<String, dynamic>.from(e['event_meta']) : <String, dynamic>{},
+      eventMeta: e['event_meta'] is Map<String, dynamic>
+          ? Map<String, dynamic>.from(e['event_meta'])
+          : <String, dynamic>{},
       eventDate: e['event_date'] as String?,
       location: e['location'] as String?,
       qrToken: e['qr_token'] as String?,
@@ -11347,6 +15317,7 @@ class OrderDetail {
     required this.deliveryType,
     required this.deliveryAddress,
     required this.wantsFilm,
+    required this.isOffline,
   });
   final String orderCode;
   final String customerName;
@@ -11362,6 +15333,7 @@ class OrderDetail {
   final String? deliveryType;
   final String? deliveryAddress;
   final bool wantsFilm;
+  final bool isOffline;
 
   factory OrderDetail.fromJson(Map<String, dynamic> j) => OrderDetail(
     orderCode: j['order_code'] as String? ?? '',
@@ -11369,7 +15341,9 @@ class OrderDetail {
     paymentMethod: j['payment_method'] as String? ?? '',
     status: j['status'] as String,
     totalAmount: _toNum(j['total_amount']),
-    photos: ((j['photos'] as List).cast<Map<String, dynamic>>()).map(OrderPhoto.fromJson).toList(),
+    photos: ((j['photos'] as List).cast<Map<String, dynamic>>())
+        .map(OrderPhoto.fromJson)
+        .toList(),
     itemsTotal: _toNum(j['items_total']),
     extrasTotal: _toNum(j['extras_total']),
     shippingFee: _toNum(j['shipping_fee']),
@@ -11378,6 +15352,7 @@ class OrderDetail {
     deliveryType: j['delivery_type'] as String?,
     deliveryAddress: j['delivery_address'] as String?,
     wantsFilm: j['wants_film'] == true || j['wants_film'] == 1,
+    isOffline: j['offline_mode'] == true || j['offline_mode'] == 1,
   );
 
   static num _toNum(dynamic value) {
@@ -11399,12 +15374,19 @@ class OrderPhoto {
   factory OrderPhoto.fromJson(Map<String, dynamic> j) => OrderPhoto(
     id: j['id'] as int,
     number: j['number'] as String,
-    quantity: j['quantity'] is int ? j['quantity'] as int : int.tryParse(j['quantity']?.toString() ?? '1') ?? 1,
+    quantity: j['quantity'] is int
+        ? j['quantity'] as int
+        : int.tryParse(j['quantity']?.toString() ?? '1') ?? 1,
   );
 }
 
 class StaffOrderItem {
-  StaffOrderItem({required this.id, required this.orderCode, required this.customerName, required this.status});
+  StaffOrderItem({
+    required this.id,
+    required this.orderCode,
+    required this.customerName,
+    required this.status,
+  });
   final int id;
   final String orderCode;
   final String customerName;
@@ -11423,10 +15405,11 @@ class StaffAuthResponse {
   final String token;
   final StaffUser user;
 
-  factory StaffAuthResponse.fromJson(Map<String, dynamic> j) => StaffAuthResponse(
-    token: j['token'] as String,
-    user: StaffUser.fromJson((j['user'] as Map).cast<String, dynamic>()),
-  );
+  factory StaffAuthResponse.fromJson(Map<String, dynamic> j) =>
+      StaffAuthResponse(
+        token: j['token'] as String,
+        user: StaffUser.fromJson((j['user'] as Map).cast<String, dynamic>()),
+      );
 }
 
 class StaffUser {
@@ -11452,7 +15435,9 @@ class StaffUser {
       name: j['name'] as String? ?? '',
       email: j['email'] as String? ?? '',
       role: _normalizeRole(rawRole),
-      permissions: ((j['permissions'] as List?) ?? []).map((e) => e.toString()).toList(),
+      permissions: ((j['permissions'] as List?) ?? [])
+          .map((e) => e.toString())
+          .toList(),
       username: j['username'] as String?,
     );
   }
@@ -11565,7 +15550,8 @@ class StaffClient {
     phone: j['phone'] as String?,
     email: j['email'] as String?,
     notes: j['notes'] as String?,
-    marketingConsent: j['marketing_consent'] == true || j['marketing_consent'] == 1,
+    marketingConsent:
+        j['marketing_consent'] == true || j['marketing_consent'] == 1,
   );
 }
 
@@ -11635,16 +15621,20 @@ class StaffEvent {
     reportNumber: j['report_number']?.toString(),
     eventDate: j['event_date'] as String? ?? '',
     eventTime: j['event_time'] as String?,
-    pricePerPhoto: j['price_per_photo'] is num ? j['price_per_photo'] as num : num.tryParse(j['price_per_photo']?.toString() ?? '') ?? 0,
+    pricePerPhoto: j['price_per_photo'] is num
+        ? j['price_per_photo'] as num
+        : num.tryParse(j['price_per_photo']?.toString() ?? '') ?? 0,
     basePrice: j['base_price'] == null
         ? null
         : (j['base_price'] is num
-            ? j['base_price'] as num
-            : num.tryParse(j['base_price'].toString())),
+              ? j['base_price'] as num
+              : num.tryParse(j['base_price'].toString())),
     isActiveToday: j['is_active_today'] == true || j['is_active_today'] == 1,
     location: j['location'] as String?,
     eventType: j['event_type'] as String?,
-    eventMeta: j['event_meta'] is Map<String, dynamic> ? Map<String, dynamic>.from(j['event_meta']) : null,
+    eventMeta: j['event_meta'] is Map<String, dynamic>
+        ? Map<String, dynamic>.from(j['event_meta'])
+        : null,
     qrToken: j['qr_token'] as String?,
     accessPin: j['access_pin'] as String?,
     notes: j['notes'] as String?,
@@ -11769,12 +15759,15 @@ class UploadChunkResult {
   final int? totalChunks;
   final StaffPhoto? photo;
 
-  factory UploadChunkResult.fromJson(Map<String, dynamic> j) => UploadChunkResult(
-    uploaded: j['uploaded'] == true,
-    receivedChunks: j['received_chunks'] as int?,
-    totalChunks: j['total_chunks'] as int?,
-    photo: j['photo'] is Map<String, dynamic> ? StaffPhoto.fromJson((j['photo'] as Map).cast<String, dynamic>()) : null,
-  );
+  factory UploadChunkResult.fromJson(Map<String, dynamic> j) =>
+      UploadChunkResult(
+        uploaded: j['uploaded'] == true,
+        receivedChunks: j['received_chunks'] as int?,
+        totalChunks: j['total_chunks'] as int?,
+        photo: j['photo'] is Map<String, dynamic>
+            ? StaffPhoto.fromJson((j['photo'] as Map).cast<String, dynamic>())
+            : null,
+      );
 }
 
 class OrderListItem {
@@ -11800,9 +15793,15 @@ class OrderListItem {
     orderCode: j['order_code'] as String? ?? '',
     customerName: j['customer_name'] as String? ?? '',
     status: j['status'] as String? ?? '',
-    eventName: (j['event'] is Map<String, dynamic>) ? (j['event']['name'] as String?) : null,
-    eventId: (j['event'] is Map<String, dynamic>) ? (j['event']['id'] as int?) : null,
-    totalAmount: j['total_amount'] is num ? j['total_amount'] as num : num.tryParse(j['total_amount']?.toString() ?? ''),
+    eventName: (j['event'] is Map<String, dynamic>)
+        ? (j['event']['name'] as String?)
+        : null,
+    eventId: (j['event'] is Map<String, dynamic>)
+        ? (j['event']['id'] as int?)
+        : null,
+    totalAmount: j['total_amount'] is num
+        ? j['total_amount'] as num
+        : num.tryParse(j['total_amount']?.toString() ?? ''),
   );
 }
 
@@ -11836,9 +15835,16 @@ class StaffOrderDetail {
     customerName: j['customer_name'] as String? ?? '',
     status: j['status'] as String? ?? '',
     paymentMethod: j['payment_method'] as String? ?? '',
-    totalAmount: j['total_amount'] is num ? j['total_amount'] as num : num.tryParse(j['total_amount']?.toString() ?? '') ?? 0,
-    photos: ((j['photos'] as List?) ?? []).cast<Map<String, dynamic>>().map(OrderPhoto.fromJson).toList(),
-    eventName: (j['event'] is Map<String, dynamic>) ? (j['event']['name'] as String?) : null,
+    totalAmount: j['total_amount'] is num
+        ? j['total_amount'] as num
+        : num.tryParse(j['total_amount']?.toString() ?? '') ?? 0,
+    photos: ((j['photos'] as List?) ?? [])
+        .cast<Map<String, dynamic>>()
+        .map(OrderPhoto.fromJson)
+        .toList(),
+    eventName: (j['event'] is Map<String, dynamic>)
+        ? (j['event']['name'] as String?)
+        : null,
     customerEmail: j['customer_email'] as String?,
     customerPhone: j['customer_phone'] as String?,
   );
@@ -11890,7 +15896,9 @@ class _StaffSyncPageState extends ConsumerState<StaffSyncPage> {
     final token = ref.read(staffTokenProvider);
     final user = ref.read(staffUserProvider);
     if (token == null || user == null) return;
-    final events = await ref.read(apiProvider).staffEvents(token, assignedOnly: !_canSeeAllEvents(user));
+    final events = await ref
+        .read(apiProvider)
+        .staffEvents(token, assignedOnly: !_canSeeAllEvents(user));
     final visibleEvents = _filterEventsForUser(events, user);
     setState(() {
       _events = visibleEvents;
@@ -11903,15 +15911,19 @@ class _StaffSyncPageState extends ConsumerState<StaffSyncPage> {
     if (token == null || _eventId == null) return;
     setState(() => _loading = true);
     try {
-      final json = await ref.read(apiProvider).offlineExportJson(token, _eventId!);
+      final json = await ref
+          .read(apiProvider)
+          .offlineExportJson(token, _eventId!);
       final file = await writeOfflineExportFile(_eventId!, json);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Exportado: ${file.path}')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Exportado: ${file.path}')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro export: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro export: $e')));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -11925,18 +15937,26 @@ class _StaffSyncPageState extends ConsumerState<StaffSyncPage> {
       final payload = await buildOfflinePayload(_eventId!);
       if (payload['orders'].isEmpty) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sem pedidos offline.')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Sem pedidos offline.')));
         return;
       }
       final file = await writeOfflineExportFile(_eventId!, payload);
       final deviceId = await getDeviceId();
-      await ref.read(apiProvider).offlineImportFile(token, _eventId!, file.path, deviceId);
+      await ref
+          .read(apiProvider)
+          .offlineImportFile(token, _eventId!, file.path, deviceId);
       await clearOfflineQueue(_eventId!);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sincronizado.')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Sincronizado.')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro sync: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro sync: $e')));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -11945,19 +15965,28 @@ class _StaffSyncPageState extends ConsumerState<StaffSyncPage> {
   Future<void> _uploadFile() async {
     final token = ref.read(staffTokenProvider);
     if (token == null || _eventId == null) return;
-    final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['json']);
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
     if (picked == null || picked.files.isEmpty) return;
     final path = picked.files.single.path;
     if (path == null) return;
     setState(() => _loading = true);
     try {
       final deviceId = await getDeviceId();
-      await ref.read(apiProvider).offlineImportFile(token, _eventId!, path, deviceId);
+      await ref
+          .read(apiProvider)
+          .offlineImportFile(token, _eventId!, path, deviceId);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ficheiro importado.')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Ficheiro importado.')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro import: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro import: $e')));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -11974,11 +16003,7 @@ class _StaffSyncPageState extends ConsumerState<StaffSyncPage> {
     }
     final token = ref.watch(staffTokenProvider);
     if (user != null && token != null && useDesktopLayout(context)) {
-      return StaffDesktopShell(
-        user: user,
-        token: token,
-        initialId: 'sync',
-      );
+      return StaffDesktopShell(user: user, token: token, initialId: 'sync');
     }
 
     return Scaffold(
@@ -11990,8 +16015,15 @@ class _StaffSyncPageState extends ConsumerState<StaffSyncPage> {
           children: [
             DropdownButtonFormField<int>(
               value: _eventId,
-              decoration: const InputDecoration(labelText: 'Evento', border: OutlineInputBorder()),
-              items: _events.map((e) => DropdownMenuItem(value: e.id, child: Text(e.name))).toList(),
+              decoration: const InputDecoration(
+                labelText: 'Evento',
+                border: OutlineInputBorder(),
+              ),
+              items: _events
+                  .map(
+                    (e) => DropdownMenuItem(value: e.id, child: Text(e.name)),
+                  )
+                  .toList(),
               onChanged: _loading ? null : (v) => setState(() => _eventId = v),
             ),
             const SizedBox(height: 12),

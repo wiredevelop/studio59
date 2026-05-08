@@ -39,6 +39,8 @@
 	<string>Permitir acesso à galeria para guardar fotos do evento.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Usar a câmara para ler QR Code e pesquisa facial.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Descobrir e ligar ao PC do fotógrafo na rede local durante sessões offline.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
