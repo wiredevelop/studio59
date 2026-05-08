@@ -2043,6 +2043,7 @@ class TicketPage extends ConsumerStatefulWidget {
 
 class _TicketPageState extends ConsumerState<TicketPage> {
   static const MethodChannel _galleryChannel = MethodChannel('studio59/gallery');
+  static const String _galleryPermissionDeniedMessage = 'Permissão para guardar fotos negada.';
   Timer? timer;
   int? downloadingPhotoId;
   bool downloadingAll = false;
@@ -2074,30 +2075,15 @@ class _TicketPageState extends ConsumerState<TicketPage> {
     );
   }
 
-  Future<bool> _ensureGalleryPermission() async {
+  Future<bool> _hasGalleryPermission() async {
     if (Platform.isIOS) {
-      var status = await Permission.photosAddOnly.status;
-      if (status.isGranted || status.isLimited) return true;
-      if (status.isRestricted || status.isPermanentlyDenied) {
-        await _showPermissionDialog();
-        return false;
-      }
-      status = await Permission.photosAddOnly.request();
-      if (status.isGranted || status.isLimited) return true;
-      if (status.isPermanentlyDenied) await _showPermissionDialog();
-      return false;
+      final status = await Permission.photosAddOnly.status;
+      return status.isGranted || status.isLimited;
     }
     if (Platform.isAndroid) {
-      final photos = await Permission.photos.request();
-      if (photos.isGranted) return true;
-      if (photos.isPermanentlyDenied) {
-        await _showPermissionDialog();
-        return false;
-      }
-      final storage = await Permission.storage.request();
-      if (storage.isGranted) return true;
-      if (storage.isPermanentlyDenied) await _showPermissionDialog();
-      return false;
+      final photos = await Permission.photos.status;
+      final storage = await Permission.storage.status;
+      return photos.isGranted || photos.isLimited || storage.isGranted;
     }
     return true;
   }
@@ -2127,8 +2113,21 @@ class _TicketPageState extends ConsumerState<TicketPage> {
     } catch (_) {}
 
     if (ok != true) {
+      if (!await _hasGalleryPermission()) {
+        throw _galleryPermissionDeniedMessage;
+      }
       throw 'Falha ao guardar na galeria';
     }
+  }
+
+  Future<void> _showGalleryError(Object error, {String? photoNumber}) async {
+    final message = error.toString();
+    if (message == _galleryPermissionDeniedMessage) {
+      await _showPermissionDialog();
+    }
+    if (!mounted) return;
+    final text = photoNumber == null ? 'Erro ao descarregar: $message' : 'Erro no download da foto $photoNumber: $message';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
   Future<void> _downloadPhotoToGallery(OrderDetail order, OrderPhoto photo) async {
@@ -2153,14 +2152,6 @@ class _TicketPageState extends ConsumerState<TicketPage> {
   }
 
   Future<void> _downloadAllToGallery(OrderDetail order) async {
-    if (!await _ensureGalleryPermission()) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Permissão para guardar fotos negada.')),
-      );
-      return;
-    }
-
     setState(() => downloadingAll = true);
     try {
       for (final p in order.photos) {
@@ -2171,10 +2162,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
         const SnackBar(content: Text('Download concluído. Fotos guardadas na galeria.')),
       );
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao descarregar: $e')),
-      );
+      await _showGalleryError(e);
     } finally {
       if (mounted) setState(() => downloadingAll = false);
     }
@@ -2307,13 +2295,6 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                             ? null
                             : () async {
                                 try {
-                                  if (!await _ensureGalleryPermission()) {
-                                    if (!context.mounted) return;
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Permissão para guardar fotos negada.')),
-                                    );
-                                    return;
-                                  }
                                   setState(() => downloadingPhotoId = p.id);
                                   await _downloadPhotoToGallery(order, p);
                                   if (!context.mounted) return;
@@ -2321,10 +2302,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                                     SnackBar(content: Text('Foto ${p.number} guardada na galeria.')),
                                   );
                                 } catch (e) {
-                                  if (!context.mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Erro no download da foto ${p.number}: $e')),
-                                  );
+                                  await _showGalleryError(e, photoNumber: p.number);
                                 } finally {
                                   if (mounted) setState(() => downloadingPhotoId = null);
                                 }
@@ -8492,14 +8470,6 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
     return '$y-$m-$d';
   }
 
-  DateTime _parseDateKey(String raw) {
-    try {
-      return DateTime.parse(raw);
-    } catch (_) {
-      return DateTime(1970, 1, 1);
-    }
-  }
-
   String _formatDateLabel(DateTime date) {
     final d = date.day.toString().padLeft(2, '0');
     final m = date.month.toString().padLeft(2, '0');
@@ -8576,21 +8546,8 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
               children: const [Padding(padding: EdgeInsets.all(16), child: Text('Sem eventos'))],
             );
           }
-          final availableDates = events
-              .map((e) => e.eventDate)
-              .where((d) => d.trim().isNotEmpty)
-              .toSet()
-              .toList()
-            ..sort();
-          final todayKey = _dateKey(DateTime.now());
-          final desiredDateKey = selectedDate != null ? _dateKey(selectedDate!) : '';
-          if (availableDates.isNotEmpty && (selectedDate == null || !availableDates.contains(desiredDateKey))) {
-            final nextKey = availableDates.contains(todayKey) ? todayKey : availableDates.first;
-            selectedDate = _parseDateKey(nextKey);
-            selectedEventType = '';
-            selected.clear();
-          }
-          final resolvedDate = selectedDate ?? _parseDateKey(availableDates.first);
+          selectedDate ??= _startOfDay(DateTime.now());
+          final resolvedDate = _startOfDay(selectedDate!);
           final resolvedDateKey = _dateKey(resolvedDate);
           final eventsForDate = events.where((e) => e.eventDate == resolvedDateKey).toList();
           final eventTypes = eventsForDate
@@ -8620,13 +8577,11 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                         Expanded(
                           child: FilledButton.tonal(
                             onPressed: () async {
-                              final firstDate = availableDates.isNotEmpty ? _parseDateKey(availableDates.first) : DateTime(2000);
-                              final lastDate = availableDates.isNotEmpty ? _parseDateKey(availableDates.last) : DateTime(2100);
                               final picked = await showDatePicker(
                                 context: context,
                                 initialDate: resolvedDate,
-                                firstDate: firstDate,
-                                lastDate: lastDate,
+                                firstDate: DateTime(2020, 1, 1),
+                                lastDate: DateTime(2100, 12, 31),
                               );
                               if (picked == null) return;
                               setState(() {

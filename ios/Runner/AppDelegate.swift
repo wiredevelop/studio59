@@ -33,9 +33,10 @@ import Photos
           result(FlutterError(code: "invalid_args", message: "Missing arguments", details: nil))
           return
         }
+        let name = (args["name"] as? String) ?? "photo.jpg"
         let dataArg = args["bytes"] as? FlutterStandardTypedData
         let data = dataArg?.data
-        guard let bytes = data, let image = UIImage(data: bytes) else {
+        guard let bytes = data else {
           result(FlutterError(code: "invalid_bytes", message: "Invalid image bytes", details: nil))
           return
         }
@@ -47,7 +48,10 @@ import Photos
               return
             }
             PHPhotoLibrary.shared().performChanges({
-              PHAssetChangeRequest.creationRequestForAsset(from: image)
+              let request = PHAssetCreationRequest.forAsset()
+              let options = PHAssetResourceCreationOptions()
+              options.originalFilename = name
+              request.addResource(with: .photo, data: bytes, options: options)
             }) { success, error in
               DispatchQueue.main.async {
                 if success {
@@ -65,7 +69,10 @@ import Photos
               return
             }
             PHPhotoLibrary.shared().performChanges({
-              PHAssetChangeRequest.creationRequestForAsset(from: image)
+              let request = PHAssetCreationRequest.forAsset()
+              let options = PHAssetResourceCreationOptions()
+              options.originalFilename = name
+              request.addResource(with: .photo, data: bytes, options: options)
             }) { success, error in
               DispatchQueue.main.async {
                 if success {
