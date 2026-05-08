@@ -8422,7 +8422,6 @@ class StaffOrdersPage extends ConsumerStatefulWidget {
 
 class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
   DateTime? selectedDate;
-  String selectedEventType = '';
   String status = '';
   final queryCtrl = TextEditingController();
   final selected = <int>{};
@@ -8479,18 +8478,13 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
 
   Future<List<OrderListItem>> _loadOrdersFiltered(
     String token, {
-    required List<int> eventIds,
     required String eventDate,
-    required String eventType,
     required String status,
     required String query,
   }) async {
-    if (eventIds.isEmpty) return const <OrderListItem>[];
     return ref.read(apiProvider).staffOrdersList(
           token,
-          eventIds: eventIds,
           eventDate: eventDate,
-          eventType: eventType,
           status: status,
           q: query,
         );
@@ -8540,31 +8534,11 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
             );
           }
           final events = _filterEventsForUser(snap.data!, user);
-          if (events.isEmpty) {
-            return ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              children: const [Padding(padding: EdgeInsets.all(16), child: Text('Sem eventos'))],
-            );
-          }
           selectedDate ??= _startOfDay(DateTime.now());
           final resolvedDate = _startOfDay(selectedDate!);
           final resolvedDateKey = _dateKey(resolvedDate);
           final eventsForDate = events.where((e) => e.eventDate == resolvedDateKey).toList();
-          final eventTypes = eventsForDate
-              .map((e) => (e.eventType ?? '').trim())
-              .where((t) => t.isNotEmpty)
-              .toSet()
-              .toList()
-            ..sort();
-          if (selectedEventType.isNotEmpty && !eventTypes.contains(selectedEventType)) {
-            selectedEventType = '';
-          } else if (selectedEventType.isEmpty && eventTypes.length == 1) {
-            selectedEventType = eventTypes.first;
-          }
-          final filteredEvents = selectedEventType.isEmpty
-              ? eventsForDate
-              : eventsForDate.where((e) => (e.eventType ?? '') == selectedEventType).toList();
-          final eventIds = filteredEvents.map((e) => e.id).toList();
+          final eventIds = eventsForDate.map((e) => e.id).toList();
           final eventInfoById = {for (final e in events) e.id: e};
           return Column(
             children: [
@@ -8572,47 +8546,23 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                 padding: const EdgeInsets.all(8),
                 child: Column(
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: FilledButton.tonal(
-                            onPressed: () async {
-                              final picked = await showDatePicker(
-                                context: context,
-                                initialDate: resolvedDate,
-                                firstDate: DateTime(2020, 1, 1),
-                                lastDate: DateTime(2100, 12, 31),
-                              );
-                              if (picked == null) return;
-                              setState(() {
-                                selectedDate = picked;
-                                selectedEventType = '';
-                                selected.clear();
-                                _ordersFuture = null;
-                                _lastOrdersKey = null;
-                              });
-                            },
-                            child: Text('Data: ${_formatDateLabel(resolvedDate)}'),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            value: selectedEventType,
-                            items: [
-                              const DropdownMenuItem(value: '', child: Text('Todos tipos')),
-                              ...eventTypes.map((t) => DropdownMenuItem(value: t, child: Text(t))),
-                            ],
-                            onChanged: (v) => setState(() {
-                              selectedEventType = v ?? '';
-                              selected.clear();
-                              _ordersFuture = null;
-                              _lastOrdersKey = null;
-                            }),
-                            decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Tipo evento'),
-                          ),
-                        ),
-                      ],
+                    FilledButton.tonal(
+                      onPressed: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: resolvedDate,
+                          firstDate: DateTime(2020, 1, 1),
+                          lastDate: DateTime(2100, 12, 31),
+                        );
+                        if (picked == null) return;
+                        setState(() {
+                          selectedDate = picked;
+                          selected.clear();
+                          _ordersFuture = null;
+                          _lastOrdersKey = null;
+                        });
+                      },
+                      child: Text('Data: ${_formatDateLabel(resolvedDate)}'),
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
@@ -8692,14 +8642,12 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
               Expanded(
                 child: FutureBuilder<List<OrderListItem>>(
                   future: () {
-                    final key = '$resolvedDateKey|$selectedEventType|$status|${queryCtrl.text.trim()}';
+                    final key = '$resolvedDateKey|$status|${queryCtrl.text.trim()}';
                     if (_ordersFuture == null || _lastOrdersKey != key) {
                       _lastOrdersKey = key;
                       _ordersFuture = _loadOrdersFiltered(
                         token,
-                        eventIds: eventIds,
                         eventDate: resolvedDateKey,
-                        eventType: selectedEventType,
                         status: status,
                         query: queryCtrl.text.trim(),
                       ).timeout(
@@ -8732,9 +8680,6 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                       return const Center(child: CircularProgressIndicator());
                     }
                     final orders = orderSnap.data!;
-                    if (eventIds.isEmpty) {
-                      return const Center(child: Text('Sem eventos para esta data.'));
-                    }
                     if (orders.isEmpty) return const Center(child: Text('Sem pedidos'));
                     return ListView.builder(
                       physics: const AlwaysScrollableScrollPhysics(),

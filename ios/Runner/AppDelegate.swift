@@ -11,9 +11,9 @@ import Photos
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
-
-    if let controller = window?.rootViewController as? FlutterViewController {
-      let channel = FlutterMethodChannel(name: "studio59/screen_record", binaryMessenger: controller.binaryMessenger)
+    if let registrar = registrar(forPlugin: "studio59.app") {
+      let messenger = registrar.messenger()
+      let channel = FlutterMethodChannel(name: "studio59/screen_record", binaryMessenger: messenger)
       screenChannel = channel
       channel.setMethodCallHandler { call, result in
         if call.method == "isCaptured" {
@@ -23,7 +23,7 @@ import Photos
         }
       }
 
-      let galleryChannel = FlutterMethodChannel(name: "studio59/gallery", binaryMessenger: controller.binaryMessenger)
+      let galleryChannel = FlutterMethodChannel(name: "studio59/gallery", binaryMessenger: messenger)
       galleryChannel.setMethodCallHandler { call, result in
         guard call.method == "saveToGallery" else {
           result(FlutterMethodNotImplemented)
