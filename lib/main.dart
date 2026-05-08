@@ -635,7 +635,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         setState(() {
           _discoveringOffline = false;
           _offlineDiscovery = null;
-          _offlineDiscoveryError = manual
+          _offlineDiscoveryError = (manual || isDesktopPlatform())
               ? 'Nenhuma sessão offline encontrada.'
               : null;
         });
@@ -930,20 +930,40 @@ class _HomePageState extends ConsumerState<HomePage> {
                       const SizedBox(height: 8),
                       Align(
                         alignment: Alignment.centerRight,
-                        child: OutlinedButton.icon(
-                          onPressed: _discoveringOffline
-                              ? null
-                              : () => _discoverOfflineSession(manual: true),
-                          icon: _discoveringOffline
-                              ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            if (isDesktopPlatform() &&
+                                _offlineDiscovery == null &&
+                                !_discoveringOffline)
+                              OutlinedButton.icon(
+                                onPressed: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        const OfflineBootstrapPage(),
                                   ),
-                                )
-                              : const Icon(Icons.refresh),
-                          label: const Text('Atualizar'),
+                                ),
+                                icon: const Icon(Icons.wifi_tethering),
+                                label: const Text('Criar sessão offline'),
+                              ),
+                            OutlinedButton.icon(
+                              onPressed: _discoveringOffline
+                                  ? null
+                                  : () => _discoverOfflineSession(manual: true),
+                              icon: _discoveringOffline
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.refresh),
+                              label: const Text('Atualizar'),
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -3388,6 +3408,31 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
   final passCtrl = TextEditingController();
   bool _loading = false;
   bool _obscure = true;
+  bool _checkingOnline = true;
+  bool _onlineReachable = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _probeOnline();
+  }
+
+  Future<void> _probeOnline() async {
+    try {
+      final reachable = await ref.read(apiProvider).pingPublic();
+      if (!mounted) return;
+      setState(() {
+        _checkingOnline = false;
+        _onlineReachable = reachable;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _checkingOnline = false;
+        _onlineReachable = false;
+      });
+    }
+  }
 
   Future<void> _submit() async {
     if (_loading) return;
@@ -3501,6 +3546,27 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
                   onSubmitted: (_) => _submit(),
                 ),
                 const SizedBox(height: 28),
+                if (isDesktopPlatform() &&
+                    !_checkingOnline &&
+                    !_onlineReachable &&
+                    ref.read(offlineHostSessionProvider) == null) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _loading
+                          ? null
+                          : () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const OfflineBootstrapPage(),
+                              ),
+                            ),
+                      icon: const Icon(Icons.wifi_tethering),
+                      label: const Text('Criar sessão offline neste PC'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 SizedBox(
                   width: double.infinity,
                   height: 50,
@@ -12416,6 +12482,29 @@ class _StaffOfflineHostPageState extends ConsumerState<StaffOfflineHostPage> {
   }
 }
 
+class OfflineBootstrapPage extends StatelessWidget {
+  const OfflineBootstrapPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: buildNavAppBar(context, 'Sessão Offline'),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: OfflineHostForm(
+          onStarted: () {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (_) => const StaffDashboardPage()),
+              (_) => false,
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
 class DesktopOfflineHostView extends StatelessWidget {
   const DesktopOfflineHostView({
     super.key,
@@ -12438,10 +12527,16 @@ class DesktopOfflineHostView extends StatelessWidget {
 }
 
 class OfflineHostForm extends ConsumerStatefulWidget {
-  const OfflineHostForm({super.key, this.seedEvent, this.embedded = false});
+  const OfflineHostForm({
+    super.key,
+    this.seedEvent,
+    this.embedded = false,
+    this.onStarted,
+  });
 
   final StaffEvent? seedEvent;
   final bool embedded;
+  final FutureOr<void> Function()? onStarted;
 
   @override
   ConsumerState<OfflineHostForm> createState() => _OfflineHostFormState();
@@ -12630,6 +12725,7 @@ class _OfflineHostFormState extends ConsumerState<OfflineHostForm> {
           content: Text('Sessão offline ativa com ${photos.length} fotos.'),
         ),
       );
+      await widget.onStarted?.call();
       setState(() {});
     } catch (e) {
       if (!mounted) return;
