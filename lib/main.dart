@@ -8509,13 +8509,16 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
 
   Future<List<OrderListItem>> _loadOrdersFiltered(
     String token, {
+    required List<int> eventIds,
     required String eventDate,
     required String eventType,
     required String status,
     required String query,
   }) async {
+    if (eventIds.isEmpty) return const <OrderListItem>[];
     return ref.read(apiProvider).staffOrdersList(
           token,
+          eventIds: eventIds,
           eventDate: eventDate,
           eventType: eventType,
           status: status,
@@ -8739,6 +8742,7 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                       _lastOrdersKey = key;
                       _ordersFuture = _loadOrdersFiltered(
                         token,
+                        eventIds: eventIds,
                         eventDate: resolvedDateKey,
                         eventType: selectedEventType,
                         status: status,
@@ -10778,6 +10782,7 @@ class ApiService {
   Future<List<OrderListItem>> staffOrdersList(
     String token, {
     int? eventId,
+    List<int>? eventIds,
     String eventDate = '',
     String eventType = '',
     String status = '',
@@ -10787,6 +10792,7 @@ class ApiService {
     if (q.isNotEmpty) params['q'] = q;
     if (status.isNotEmpty) params['status'] = status;
     if (eventId != null) params['event_id'] = eventId;
+    if (eventIds != null && eventIds.isNotEmpty) params['event_ids'] = eventIds.join(',');
     if (eventDate.isNotEmpty) params['event_date'] = eventDate;
     if (eventType.isNotEmpty) params['event_type'] = eventType;
     final r = await dio.get('/orders', queryParameters: params, options: Options(headers: {'Authorization': 'Bearer $token'}));

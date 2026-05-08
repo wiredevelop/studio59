@@ -43,6 +43,14 @@ class StaffOrderController extends Controller
     {
         $user = $request->user();
         $query = Order::with(['event'])->orderByDesc('id');
+        $eventIds = $request->query('event_ids');
+        if (is_string($eventIds)) {
+            $eventIds = array_filter(array_map('intval', explode(',', $eventIds)));
+        } elseif (is_array($eventIds)) {
+            $eventIds = array_filter(array_map('intval', $eventIds));
+        } else {
+            $eventIds = [];
+        }
 
         if ($user && in_array($user->role, ['photographer', 'staff'], true)) {
             $query->whereHas('event', fn ($q) => $q->visibleTo($user));
@@ -52,7 +60,11 @@ class StaffOrderController extends Controller
             $query->where('event_id', $request->integer('event_id'));
         }
 
-        if ($request->filled('event_date') || $request->filled('event_type')) {
+        if (! empty($eventIds)) {
+            $query->whereIn('event_id', $eventIds);
+        }
+
+        if (empty($eventIds) && ($request->filled('event_date') || $request->filled('event_type'))) {
             $eventDate = $request->query('event_date');
             $eventType = $request->query('event_type');
             $query->whereHas('event', function ($q) use ($eventDate, $eventType) {
