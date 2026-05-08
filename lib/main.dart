@@ -63,6 +63,7 @@ const String kMerchantCountryCode = 'PT';
 const String kApplePayMerchantId = 'merchant.com.wiredevelop.studio59';
 const bool kEnablePlatformPay = true;
 const String kStripeUrlScheme = 'flutterstripe';
+const String kRuntimeConfigKey = 'app_runtime_config';
 
 bool isDesktopPlatform() {
   if (kIsWeb) return false;
@@ -176,11 +177,74 @@ const Set<String> kStaffDefaultPermissions = {
   'photos.bulk_delete',
   'photos.original',
 };
-final baseUrlProvider = StateProvider<String>((_) => kApiBaseUrl);
+class AppRuntimeConfig {
+  const AppRuntimeConfig({
+    required this.apiBaseUrl,
+    required this.apiFallbackIp,
+    required this.merchantCountryCode,
+    required this.applePayMerchantId,
+    required this.enablePlatformPay,
+    required this.stripeUrlScheme,
+  });
+
+  final String apiBaseUrl;
+  final String apiFallbackIp;
+  final String merchantCountryCode;
+  final String applePayMerchantId;
+  final bool enablePlatformPay;
+  final String stripeUrlScheme;
+
+  static const defaults = AppRuntimeConfig(
+    apiBaseUrl: kApiBaseUrl,
+    apiFallbackIp: kApiFallbackIp,
+    merchantCountryCode: kMerchantCountryCode,
+    applePayMerchantId: kApplePayMerchantId,
+    enablePlatformPay: kEnablePlatformPay,
+    stripeUrlScheme: kStripeUrlScheme,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'api_base_url': apiBaseUrl,
+    'api_fallback_ip': apiFallbackIp,
+    'merchant_country_code': merchantCountryCode,
+    'apple_pay_merchant_id': applePayMerchantId,
+    'enable_platform_pay': enablePlatformPay,
+    'stripe_url_scheme': stripeUrlScheme,
+  };
+
+  factory AppRuntimeConfig.fromJson(Map<String, dynamic> json) => AppRuntimeConfig(
+    apiBaseUrl: (json['api_base_url'] as String? ?? defaults.apiBaseUrl).trim(),
+    apiFallbackIp: (json['api_fallback_ip'] as String? ?? defaults.apiFallbackIp).trim(),
+    merchantCountryCode: (json['merchant_country_code'] as String? ?? defaults.merchantCountryCode).trim(),
+    applePayMerchantId: (json['apple_pay_merchant_id'] as String? ?? defaults.applePayMerchantId).trim(),
+    enablePlatformPay: json.containsKey('enable_platform_pay')
+        ? (json['enable_platform_pay'] == true || json['enable_platform_pay'] == 1)
+        : defaults.enablePlatformPay,
+    stripeUrlScheme: (json['stripe_url_scheme'] as String? ?? defaults.stripeUrlScheme).trim(),
+  );
+
+  AppRuntimeConfig copyWith({
+    String? apiBaseUrl,
+    String? apiFallbackIp,
+    String? merchantCountryCode,
+    String? applePayMerchantId,
+    bool? enablePlatformPay,
+    String? stripeUrlScheme,
+  }) => AppRuntimeConfig(
+    apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
+    apiFallbackIp: apiFallbackIp ?? this.apiFallbackIp,
+    merchantCountryCode: merchantCountryCode ?? this.merchantCountryCode,
+    applePayMerchantId: applePayMerchantId ?? this.applePayMerchantId,
+    enablePlatformPay: enablePlatformPay ?? this.enablePlatformPay,
+    stripeUrlScheme: stripeUrlScheme ?? this.stripeUrlScheme,
+  );
+}
+
+final appRuntimeConfigProvider = StateProvider<AppRuntimeConfig>((_) => AppRuntimeConfig.defaults);
 final guestSessionProvider = StateProvider<GuestSession?>((_) => null);
 final staffTokenProvider = StateProvider<String?>((_) => null);
 final staffUserProvider = StateProvider<StaffUser?>((_) => null);
-final apiProvider = Provider<ApiService>((ref) => ApiService(ref.watch(baseUrlProvider)));
+final apiProvider = Provider<ApiService>((ref) => ApiService(ref.watch(appRuntimeConfigProvider)));
 final cartProvider = StateNotifierProvider<CartNotifier, Map<int, CartItem>>((_) => CartNotifier());
 final savedOrdersProvider = StateNotifierProvider<SavedOrdersNotifier, List<String>>((_) => SavedOrdersNotifier());
 final wantsFilmProvider = StateProvider<bool>((_) => false);
@@ -199,11 +263,21 @@ class _Studio59AppState extends ConsumerState<Studio59App> {
   final _navKey = GlobalKey<NavigatorState>();
   final _appLinks = AppLinks();
   StreamSubscription<Uri>? _appLinkSub;
+  bool _booting = true;
 
   @override
   void initState() {
     super.initState();
-    _initAppLinks();
+    _bootstrap();
+  }
+
+  Future<void> _bootstrap() async {
+    final config = await readAppRuntimeConfig();
+    ref.read(appRuntimeConfigProvider.notifier).state = config;
+    await _initAppLinks();
+    if (mounted) {
+      setState(() => _booting = false);
+    }
   }
 
   Future<void> _initAppLinks() async {
@@ -217,7 +291,7 @@ class _Studio59AppState extends ConsumerState<Studio59App> {
   }
 
   void _handleAppLink(Uri uri) {
-    if (uri.scheme != kStripeUrlScheme) return;
+    if (uri.scheme != ref.read(appRuntimeConfigProvider).stripeUrlScheme) return;
     if (uri.host != 'checkout') return;
     final orderCode = uri.queryParameters['order_code'] ?? uri.queryParameters['order'] ?? '';
     if (orderCode.isEmpty) return;
@@ -237,6 +311,12 @@ class _Studio59AppState extends ConsumerState<Studio59App> {
 
   @override
   Widget build(BuildContext context) {
+    if (_booting) {
+      return const MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: Scaffold(body: Center(child: CircularProgressIndicator())),
+      );
+    }
     final baseScheme = ColorScheme.fromSeed(
       seedColor: kBrandRose,
       brightness: Brightness.dark,
@@ -397,6 +477,13 @@ class _HomePageState extends ConsumerState<HomePage> {
       final token = prefs.getString('staff_token');
       final userRaw = prefs.getString('staff_user');
       if (token == null || userRaw == null) return;
+      final onlineReachable = await ref.read(apiProvider).pingPublic();
+      if (!onlineReachable) {
+        ref.read(staffTokenProvider.notifier).state = null;
+        ref.read(staffUserProvider.notifier).state = null;
+        await clearStaffSession();
+        return;
+      }
       final decoded = jsonDecode(userRaw);
       if (decoded is! Map) return;
       final user = StaffUser.fromJson(decoded.cast<String, dynamic>());
@@ -505,6 +592,9 @@ class _HomePageState extends ConsumerState<HomePage> {
         break;
       case 'settings':
         target = const StaffSettingsPage();
+        break;
+      case 'app-config':
+        target = const StaffAppConfigPage();
         break;
       case 'users':
         target = const StaffUsersPage();
@@ -720,6 +810,32 @@ Future<String> getDeviceId() async {
   final id = const Uuid().v4();
   await prefs.setString('device_id', id);
   return id;
+}
+
+Future<AppRuntimeConfig> readAppRuntimeConfig() async {
+  final prefs = await SharedPreferences.getInstance();
+  final raw = prefs.getString(kRuntimeConfigKey);
+  if (raw == null || raw.trim().isEmpty) return AppRuntimeConfig.defaults;
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map<String, dynamic>) {
+      return AppRuntimeConfig.fromJson(decoded);
+    }
+    if (decoded is Map) {
+      return AppRuntimeConfig.fromJson(decoded.cast<String, dynamic>());
+    }
+  } catch (_) {}
+  return AppRuntimeConfig.defaults;
+}
+
+Future<void> saveAppRuntimeConfig(AppRuntimeConfig config) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(kRuntimeConfigKey, jsonEncode(config.toJson()));
+}
+
+Future<void> clearAppRuntimeConfig() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove(kRuntimeConfigKey);
 }
 
 Future<void> saveStaffSession(String token, StaffUser user) async {
@@ -1578,8 +1694,9 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
     final shippingFee = deliveryType == 'shipping' ? 5.0 : 0.0;
     final extrasTotal = filmFee + shippingFee;
     final total = itemsTotal + extrasTotal;
-    final supportsApplePay = kEnablePlatformPay && Platform.isIOS;
-    final supportsGooglePay = kEnablePlatformPay && Platform.isAndroid;
+    final appConfig = ref.watch(appRuntimeConfigProvider);
+    final supportsApplePay = appConfig.enablePlatformPay && Platform.isIOS;
+    final supportsGooglePay = appConfig.enablePlatformPay && Platform.isAndroid;
     final onlineOptions = buildOnlineMethodOptions(
       supportsApplePay: supportsApplePay,
       supportsGooglePay: supportsGooglePay,
@@ -1824,10 +1941,10 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                             wantsFilm: wantsFilm,
                           );
                           stripe.Stripe.publishableKey = intent.publishableKey;
-                          if (kEnablePlatformPay && Platform.isIOS) {
-                            stripe.Stripe.merchantIdentifier = kApplePayMerchantId;
+                          if (appConfig.enablePlatformPay && Platform.isIOS) {
+                            stripe.Stripe.merchantIdentifier = appConfig.applePayMerchantId;
                           }
-                          stripe.Stripe.urlScheme = kStripeUrlScheme;
+                          stripe.Stripe.urlScheme = appConfig.stripeUrlScheme;
                           await stripe.Stripe.instance.applySettings();
                           final isTestKey = intent.publishableKey.startsWith('pk_test_');
                           if (onlineMethod == 'card') {
@@ -1847,7 +1964,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                               if (confirmed.status == stripe.PaymentIntentsStatus.RequiresAction) {
                                 confirmed = await stripe.Stripe.instance.handleNextAction(
                                   intent.clientSecret,
-                                  returnURL: '$kStripeUrlScheme://redirect',
+                                  returnURL: '${appConfig.stripeUrlScheme}://redirect',
                                 );
                               }
                             } else {
@@ -1855,7 +1972,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                                 paymentSheetParameters: stripe.SetupPaymentSheetParameters(
                                   paymentIntentClientSecret: intent.clientSecret,
                                   merchantDisplayName: 'Studio 59',
-                                  returnURL: '$kStripeUrlScheme://redirect',
+                                  returnURL: '${appConfig.stripeUrlScheme}://redirect',
                                   style: ThemeMode.dark,
                                 ),
                               );
@@ -1878,7 +1995,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                               clientSecret: intent.clientSecret,
                               confirmParams: stripe.PlatformPayConfirmParams.applePay(
                                 applePay: stripe.ApplePayParams(
-                                  merchantCountryCode: kMerchantCountryCode,
+                                  merchantCountryCode: appConfig.merchantCountryCode,
                                   currencyCode: 'EUR',
                                   cartItems: [
                                     stripe.ApplePayCartSummaryItem.immediate(
@@ -1907,7 +2024,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                               confirmParams: stripe.PlatformPayConfirmParams.googlePay(
                                 googlePay: stripe.GooglePayParams(
                                   testEnv: isTestKey,
-                                  merchantCountryCode: kMerchantCountryCode,
+                                  merchantCountryCode: appConfig.merchantCountryCode,
                                   currencyCode: 'EUR',
                                   merchantName: 'Studio 59',
                                 ),
@@ -3420,6 +3537,13 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
             icon: Icons.settings,
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffSettingsPage())),
           ),
+          if (_isAdminRole(user.role))
+            _StaffMenuTile(
+              title: 'Ligações',
+              subtitle: 'API e configurações runtime',
+              icon: Icons.router_outlined,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffAppConfigPage())),
+            ),
           if (user.hasPermission('users.list'))
             _StaffMenuTile(
               title: 'Utilizadores',
@@ -3623,6 +3747,14 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         icon: Icons.bar_chart,
         subtitle: 'Analise e metricas',
         builder: (context, user, token) => DesktopReportsView(user: user, token: token),
+      ),
+      DesktopNavItem(
+        id: 'app-config',
+        label: 'Ligacoes',
+        icon: Icons.router_outlined,
+        subtitle: 'API e runtime config',
+        builder: (context, user, token) => DesktopAppConfigView(user: user, token: token),
+        visibleWhen: (u) => _isAdminRole(u.role),
       ),
       DesktopNavItem(
         id: 'settings',
@@ -5141,6 +5273,20 @@ class DesktopSettingsView extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class DesktopAppConfigView extends StatelessWidget {
+  const DesktopAppConfigView({super.key, required this.user, required this.token});
+  final StaffUser user;
+  final String token;
+
+  @override
+  Widget build(BuildContext context) {
+    return const SingleChildScrollView(
+      padding: EdgeInsets.all(kDeskGutter),
+      child: AppRuntimeConfigForm(embedded: true),
     );
   }
 }
@@ -9189,6 +9335,14 @@ class _StaffSettingsPageState extends ConsumerState<StaffSettingsPage> {
                     },
               child: Text(saving ? 'A guardar...' : 'Guardar'),
             ),
+            if (_isAdminRole(user.role)) ...[
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StaffAppConfigPage())),
+                icon: const Icon(Icons.router_outlined),
+                label: const Text('Ligações e runtime config'),
+              ),
+            ],
             const SizedBox(height: 20),
             OutlinedButton.icon(
               onPressed: () {
@@ -9207,6 +9361,238 @@ class _StaffSettingsPageState extends ConsumerState<StaffSettingsPage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class StaffAppConfigPage extends ConsumerStatefulWidget {
+  const StaffAppConfigPage({super.key});
+
+  @override
+  ConsumerState<StaffAppConfigPage> createState() => _StaffAppConfigPageState();
+}
+
+class _StaffAppConfigPageState extends ConsumerState<StaffAppConfigPage> {
+  @override
+  void initState() {
+    super.initState();
+    saveStaffLastRoute('app-config', userId: ref.read(staffUserProvider)?.id);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final token = ref.watch(staffTokenProvider);
+    final user = ref.watch(staffUserProvider);
+    if (token == null || user == null) return const Scaffold(body: Center(child: Text('Sem sessao staff')));
+    if (!_isAdminRole(user.role)) {
+      return Scaffold(
+        appBar: buildNavAppBar(context, 'Ligações'),
+        body: const Center(child: Text('Sem acesso.')),
+      );
+    }
+    if (useDesktopLayout(context)) {
+      return StaffDesktopShell(
+        user: user,
+        token: token,
+        initialId: 'app-config',
+      );
+    }
+    return Scaffold(
+      appBar: buildNavAppBar(context, 'Ligações'),
+      body: const SingleChildScrollView(
+        padding: EdgeInsets.all(16),
+        child: AppRuntimeConfigForm(),
+      ),
+    );
+  }
+}
+
+class AppRuntimeConfigForm extends ConsumerStatefulWidget {
+  const AppRuntimeConfigForm({super.key, this.embedded = false});
+  final bool embedded;
+
+  @override
+  ConsumerState<AppRuntimeConfigForm> createState() => _AppRuntimeConfigFormState();
+}
+
+class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
+  late final TextEditingController apiBaseUrlCtrl;
+  late final TextEditingController apiFallbackIpCtrl;
+  late final TextEditingController merchantCountryCodeCtrl;
+  late final TextEditingController applePayMerchantIdCtrl;
+  late final TextEditingController stripeUrlSchemeCtrl;
+  bool enablePlatformPay = true;
+  bool saving = false;
+  bool testing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final config = ref.read(appRuntimeConfigProvider);
+    apiBaseUrlCtrl = TextEditingController(text: config.apiBaseUrl);
+    apiFallbackIpCtrl = TextEditingController(text: config.apiFallbackIp);
+    merchantCountryCodeCtrl = TextEditingController(text: config.merchantCountryCode);
+    applePayMerchantIdCtrl = TextEditingController(text: config.applePayMerchantId);
+    stripeUrlSchemeCtrl = TextEditingController(text: config.stripeUrlScheme);
+    enablePlatformPay = config.enablePlatformPay;
+  }
+
+  @override
+  void dispose() {
+    apiBaseUrlCtrl.dispose();
+    apiFallbackIpCtrl.dispose();
+    merchantCountryCodeCtrl.dispose();
+    applePayMerchantIdCtrl.dispose();
+    stripeUrlSchemeCtrl.dispose();
+    super.dispose();
+  }
+
+  AppRuntimeConfig _candidateConfig() => AppRuntimeConfig(
+    apiBaseUrl: apiBaseUrlCtrl.text.trim(),
+    apiFallbackIp: apiFallbackIpCtrl.text.trim(),
+    merchantCountryCode: merchantCountryCodeCtrl.text.trim(),
+    applePayMerchantId: applePayMerchantIdCtrl.text.trim(),
+    enablePlatformPay: enablePlatformPay,
+    stripeUrlScheme: stripeUrlSchemeCtrl.text.trim(),
+  );
+
+  Future<void> _goHomeClearingSessions() async {
+    ref.read(guestSessionProvider.notifier).state = null;
+    ref.read(staffTokenProvider.notifier).state = null;
+    ref.read(staffUserProvider.notifier).state = null;
+    await clearStaffSession();
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const HomePage(skipStaffAutoOpen: true)),
+      (_) => false,
+    );
+  }
+
+  String? _validate(AppRuntimeConfig config) {
+    final uri = Uri.tryParse(config.apiBaseUrl);
+    if (uri == null || !uri.hasScheme || uri.host.trim().isEmpty) {
+      return 'API Base URL inválida.';
+    }
+    if (config.merchantCountryCode.isEmpty) {
+      return 'Merchant Country Code é obrigatório.';
+    }
+    if (config.stripeUrlScheme.isEmpty) {
+      return 'Stripe URL Scheme é obrigatório.';
+    }
+    return null;
+  }
+
+  Future<void> _testConnection() async {
+    final config = _candidateConfig();
+    final error = _validate(config);
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      return;
+    }
+    setState(() => testing = true);
+    try {
+      final ok = await ApiService(config).pingPublic();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(ok ? 'Ligação válida.' : 'Sem resposta do servidor.')),
+      );
+    } finally {
+      if (mounted) setState(() => testing = false);
+    }
+  }
+
+  Future<void> _save() async {
+    final config = _candidateConfig();
+    final error = _validate(config);
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      return;
+    }
+    setState(() => saving = true);
+    try {
+      await saveAppRuntimeConfig(config);
+      ref.read(appRuntimeConfigProvider.notifier).state = config;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Configuração guardada. A sessão será reiniciada.')),
+      );
+      await _goHomeClearingSessions();
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  Future<void> _resetDefaults() async {
+    final config = AppRuntimeConfig.defaults;
+    apiBaseUrlCtrl.text = config.apiBaseUrl;
+    apiFallbackIpCtrl.text = config.apiFallbackIp;
+    merchantCountryCodeCtrl.text = config.merchantCountryCode;
+    applePayMerchantIdCtrl.text = config.applePayMerchantId;
+    stripeUrlSchemeCtrl.text = config.stripeUrlScheme;
+    setState(() => enablePlatformPay = config.enablePlatformPay);
+    await clearAppRuntimeConfig();
+    ref.read(appRuntimeConfigProvider.notifier).state = config;
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Valores repostos aos defaults da build.')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final config = ref.watch(appRuntimeConfigProvider);
+    final header = widget.embedded ? const _DeskSectionHeader('Ligações e runtime config') : const SizedBox.shrink();
+    final body = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Ativo: ${config.apiBaseUrl}', style: TextStyle(color: Colors.white.withOpacity(0.7))),
+        const SizedBox(height: 12),
+        TextField(controller: apiBaseUrlCtrl, decoration: const InputDecoration(labelText: 'API Base URL', border: OutlineInputBorder())),
+        const SizedBox(height: 8),
+        TextField(controller: apiFallbackIpCtrl, decoration: const InputDecoration(labelText: 'API Fallback IP', border: OutlineInputBorder())),
+        const SizedBox(height: 8),
+        TextField(controller: merchantCountryCodeCtrl, decoration: const InputDecoration(labelText: 'Merchant Country Code', border: OutlineInputBorder())),
+        const SizedBox(height: 8),
+        TextField(controller: applePayMerchantIdCtrl, decoration: const InputDecoration(labelText: 'Apple Pay Merchant ID', border: OutlineInputBorder())),
+        const SizedBox(height: 8),
+        TextField(controller: stripeUrlSchemeCtrl, decoration: const InputDecoration(labelText: 'Stripe URL Scheme', border: OutlineInputBorder())),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          value: enablePlatformPay,
+          onChanged: (value) => setState(() => enablePlatformPay = value),
+          title: const Text('Ativar Platform Pay'),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton(
+              onPressed: saving ? null : _save,
+              child: Text(saving ? 'A guardar...' : 'Guardar e reiniciar sessão'),
+            ),
+            OutlinedButton(
+              onPressed: testing ? null : _testConnection,
+              child: Text(testing ? 'A testar...' : 'Testar ligação'),
+            ),
+            OutlinedButton(
+              onPressed: saving ? null : _resetDefaults,
+              child: const Text('Repor defaults'),
+            ),
+          ],
+        ),
+      ],
+    );
+
+    if (!widget.embedded) return body;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        header,
+        const SizedBox(height: 12),
+        _DeskCard(child: body),
+      ],
     );
   }
 }
@@ -10048,12 +10434,13 @@ class SavedOrdersNotifier extends StateNotifier<List<String>> {
   }
 }
 class ApiService {
-  ApiService(this.baseUrl) : dio = _buildDio(baseUrl);
+  ApiService(this.config) : dio = _buildDio(config.apiBaseUrl, config.apiFallbackIp);
 
-  final String baseUrl;
+  final AppRuntimeConfig config;
+  String get baseUrl => config.apiBaseUrl;
   final Dio dio;
 
-  static Dio _buildDio(String baseUrl) {
+  static Dio _buildDio(String baseUrl, String fallbackIp) {
     final dio = Dio(
       BaseOptions(
         baseUrl: baseUrl,
@@ -10067,17 +10454,17 @@ class ApiService {
       ),
     );
     dio.httpClientAdapter = IOHttpClientAdapter(
-      createHttpClient: () => _createHttpClient(baseUrl),
+      createHttpClient: () => _createHttpClient(baseUrl, fallbackIp),
     );
     return dio;
   }
 
-  static HttpClient _createHttpClient(String baseUrl) {
+  static HttpClient _createHttpClient(String baseUrl, String fallbackIp) {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 30)
       ..idleTimeout = const Duration(seconds: 30);
     final apiHost = Uri.tryParse(baseUrl)?.host;
-    final fallbackIp = kApiFallbackIp.trim();
+    final resolvedFallbackIp = fallbackIp.trim();
     client.connectionFactory = (uri, proxyHost, proxyPort) async {
       final proxyTargetHost = proxyHost;
       final proxyTargetPort = proxyPort;
@@ -10087,10 +10474,10 @@ class ApiService {
           : (uri.hasPort ? uri.port : (uri.scheme == 'https' ? 443 : 80));
       final host =
           !isProxy &&
-                  fallbackIp.isNotEmpty &&
+                  resolvedFallbackIp.isNotEmpty &&
                   apiHost != null &&
                   uri.host == apiHost
-              ? fallbackIp
+              ? resolvedFallbackIp
               : (isProxy ? proxyTargetHost : uri.host);
       final task = await Socket.startConnect(host, port);
       if (isProxy || uri.scheme != 'https') return task;
@@ -10100,6 +10487,21 @@ class ApiService {
       );
     };
     return client;
+  }
+
+  Future<bool> pingPublic() async {
+    try {
+      final r = await dio.get(
+        '/public/events/today',
+        options: Options(
+          sendTimeout: const Duration(seconds: 5),
+          receiveTimeout: const Duration(seconds: 5),
+        ),
+      );
+      return r.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
   }
 
   Uri get _publicBaseUri {
