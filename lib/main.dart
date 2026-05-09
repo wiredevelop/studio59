@@ -16317,10 +16317,33 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     _loadEvents();
   }
 
+  Future<bool> _ensureOnlineApi() async {
+    final current = ref.read(appRuntimeConfigProvider);
+    if (!looksLikeLocalApiBaseUrl(current.apiBaseUrl)) {
+      return ref.read(apiProvider).pingPublic();
+    }
+    final backupConfig =
+        await restoreBackedUpRuntimeConfig() ?? AppRuntimeConfig.defaults;
+    final reachable = await ApiService(backupConfig).pingPublic();
+    if (!reachable) return false;
+    await saveAppRuntimeConfig(backupConfig);
+    ref.read(appRuntimeConfigProvider.notifier).state = backupConfig;
+    ref.invalidate(apiProvider);
+    return ref.read(apiProvider).pingPublic();
+  }
+
   Future<void> _loadEvents() async {
     final token = ref.read(staffTokenProvider);
     final user = ref.read(staffUserProvider);
     if (token == null || user == null) return;
+    if (!await _ensureOnlineApi()) {
+      if (!mounted) return;
+      setState(() {
+        _statusMessage =
+            'Sem ligação ao servidor online. Fecha a sessão offline ou verifica a internet.';
+      });
+      return;
+    }
     final events = await ref
         .read(apiProvider)
         .staffEvents(token, assignedOnly: !_canSeeAllEvents(user));
@@ -16381,6 +16404,11 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
   }
 
   Future<Map<String, int>> _loadSummary(String token, int eventId) async {
+    if (!await _ensureOnlineApi()) {
+      throw Exception(
+        'Sem ligação ao servidor online. Fecha a sessão offline ou verifica a internet.',
+      );
+    }
     final results = await Future.wait([
       ref.read(apiProvider).staffOrdersTotal(token, eventId: eventId),
       ref.read(apiProvider).staffEventPhotos(token, eventId, ''),
@@ -16396,6 +16424,11 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     if (token == null || _eventId == null || _jsonPath == null) return;
     setState(() => _loading = true);
     try {
+      if (!await _ensureOnlineApi()) {
+        throw Exception(
+          'Sem ligação ao servidor online. Fecha a sessão offline ou verifica a internet.',
+        );
+      }
       final deviceId = await getDeviceId();
       await ref
           .read(apiProvider)
