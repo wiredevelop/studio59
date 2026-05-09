@@ -117,6 +117,7 @@ Route::middleware(['auth:sanctum', 'role:admin,staff,photographer'])->group(func
         Route::get('/offline/events/{event}/export', [OfflineSyncController::class, 'export']);
     });
     Route::middleware('permission:offline.import')->group(function () {
+        Route::post('/offline/events/{event}/import-photos', [OfflineSyncController::class, 'importPhotoBatch']);
         Route::post('/offline/events/{event}/import', [OfflineSyncController::class, 'import']);
     });
 

@@ -88,6 +88,9 @@ bool useDesktopLayout(BuildContext context) {
 }
 
 String formatUiError(Object error) {
+  if (error is DioException && error.response?.statusCode == 413) {
+    return 'Pacote demasiado grande. As fotos serão enviadas em lotes menores.';
+  }
   if (error is DioException &&
       (error.type == DioExceptionType.connectionError ||
           error.error is SocketException)) {
@@ -15047,6 +15050,36 @@ class ApiService {
     if (r.statusCode != 200) throw _errorFromResponse(r);
   }
 
+  Future<void> offlineImportPhotoBatch(
+    String token,
+    int eventId,
+    List<String> photoPaths, {
+    List<dynamic> photosMeta = const [],
+  }) async {
+    final formPayload = <String, dynamic>{
+      'photos': [
+        for (final photoPath in photoPaths)
+          await MultipartFile.fromFile(
+            photoPath,
+            filename: path.basename(photoPath),
+          ),
+      ],
+    };
+    if (photosMeta.isNotEmpty) {
+      formPayload['photos_meta'] = jsonEncode(photosMeta);
+    }
+    final form = FormData.fromMap(formPayload);
+    final r = await dio.post(
+      '/offline/events/$eventId/import-photos',
+      data: form,
+      options: Options(
+        headers: {'Authorization': 'Bearer $token'},
+        contentType: 'multipart/form-data',
+      ),
+    );
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+  }
+
   Future<OrderDetail> orderDetail(String code) async {
     final r = await dio.get('/public/orders/$code');
     if (r.statusCode != 200) throw _errorFromResponse(r);
@@ -16434,6 +16467,8 @@ class OfflineSyncPanel extends ConsumerStatefulWidget {
 }
 
 class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
+  static const int _photoBatchSize = 10;
+
   List<StaffEvent> _events = [];
   int? _eventId;
   bool _loading = false;
@@ -16550,6 +16585,26 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     };
   }
 
+  Future<List<dynamic>> _loadOfflinePhotosMeta(String jsonPath) async {
+    final raw = await File(jsonPath).readAsString();
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map<String, dynamic>) {
+      return const [];
+    }
+    final photos = decoded['photos'];
+    if (photos is! List) {
+      return const [];
+    }
+    return photos.whereType<dynamic>().toList();
+  }
+
+  Iterable<List<String>> _photoBatches(List<String> photoPaths) sync* {
+    for (var i = 0; i < photoPaths.length; i += _photoBatchSize) {
+      final end = min(i + _photoBatchSize, photoPaths.length);
+      yield photoPaths.sublist(i, end);
+    }
+  }
+
   Future<void> _importPackage() async {
     final token = ref.read(staffTokenProvider);
     if (token == null || _eventId == null || _jsonPath == null) return;
@@ -16560,16 +16615,30 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
           'Sem ligação ao servidor online. Fecha a sessão offline ou verifica a internet.',
         );
       }
+      final photosMeta = await _loadOfflinePhotosMeta(_jsonPath!);
+      if (_photoPaths.isNotEmpty) {
+        final batches = _photoBatches(_photoPaths).toList();
+        for (var i = 0; i < batches.length; i++) {
+          if (!mounted) return;
+          setState(() {
+            _statusMessage = 'A importar fotos ${i + 1}/${batches.length}...';
+          });
+          await ref
+              .read(apiProvider)
+              .offlineImportPhotoBatch(
+                token,
+                _eventId!,
+                batches[i],
+                photosMeta: photosMeta,
+              );
+        }
+      }
+      if (!mounted) return;
+      setState(() => _statusMessage = 'A importar JSON...');
       final deviceId = await getDeviceId();
       await ref
           .read(apiProvider)
-          .offlineImportFile(
-            token,
-            _eventId!,
-            _jsonPath!,
-            deviceId,
-            photoPaths: _photoPaths,
-          );
+          .offlineImportFile(token, _eventId!, _jsonPath!, deviceId);
       if (!mounted) return;
       setState(() {
         _statusMessage = 'Importação concluída.';

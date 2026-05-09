@@ -20,6 +20,24 @@ use Illuminate\Validation\ValidationException;
 
 class OfflineSyncController extends Controller
 {
+    public function importPhotoBatch(Request $request, Event $event)
+    {
+        $validated = $request->validate([
+            'photos' => ['required', 'array', 'min:1', 'max:20'],
+            'photos.*' => ['file', 'mimes:jpg,jpeg', 'max:51200'],
+            'photos_meta' => ['nullable', 'string'],
+        ]);
+
+        $photosMeta = $this->decodePhotosMeta($validated['photos_meta'] ?? null);
+        $photoMap = $this->importPhotos($event, $request->file('photos', []), $photosMeta);
+
+        return response()->json([
+            'message' => 'Photos imported',
+            'imported' => count($request->file('photos', [])),
+            'mapped' => count($photoMap['id_map'] ?? []),
+        ]);
+    }
+
     public function export(Event $event)
     {
         $payload = [
@@ -288,6 +306,23 @@ class OfflineSyncController extends Controller
             'id_map' => $idMap,
             'number_map' => $numberMap,
         ];
+    }
+
+    private function decodePhotosMeta(?string $raw): array
+    {
+        if (! is_string($raw) || trim($raw) === '') {
+            return [];
+        }
+
+        try {
+            $decoded = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\Throwable) {
+            throw ValidationException::withMessages([
+                'photos_meta' => 'Manifesto de fotos inválido.',
+            ]);
+        }
+
+        return is_array($decoded) ? $decoded : [];
     }
 
     private function storeImportedPhoto(Event $event, UploadedFile $file, mixed $preferredNumber = null): Photo
