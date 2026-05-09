@@ -14504,11 +14504,19 @@ class SavedOrdersNotifier extends StateNotifier<List<String>> {
 
 class ApiService {
   ApiService(this.config)
-    : dio = _buildDio(config.apiBaseUrl, config.apiFallbackIp);
+    : _activeBaseUrl = config.apiBaseUrl,
+      _activeFallbackIp = config.apiFallbackIp,
+      _dio = _buildDio(config.apiBaseUrl, config.apiFallbackIp) {
+    _attachRecoveryInterceptor(_dio);
+  }
 
   final AppRuntimeConfig config;
-  String get baseUrl => config.apiBaseUrl;
-  final Dio dio;
+  String _activeBaseUrl;
+  String _activeFallbackIp;
+  Dio _dio;
+
+  String get baseUrl => _activeBaseUrl;
+  Dio get dio => _dio;
 
   static Dio _buildDio(String baseUrl, String fallbackIp) {
     final dio = Dio(
@@ -14554,6 +14562,129 @@ class ApiService {
       );
     };
     return client;
+  }
+
+  void _attachRecoveryInterceptor(Dio client) {
+    client.interceptors.add(
+      InterceptorsWrapper(
+        onError: (error, handler) async {
+          if (!_shouldAttemptRecovery(error)) {
+            handler.next(error);
+            return;
+          }
+          final switched = await _recoverEndpoint();
+          if (!switched) {
+            handler.next(error);
+            return;
+          }
+          try {
+            final retried = await _dio.fetch<dynamic>(
+              error.requestOptions.copyWith(
+                baseUrl: _activeBaseUrl,
+                extra: {
+                  ...error.requestOptions.extra,
+                  'api_recovery_attempted': true,
+                },
+              ),
+            );
+            handler.resolve(retried);
+          } catch (_) {
+            handler.next(error);
+          }
+        },
+      ),
+    );
+  }
+
+  bool _shouldAttemptRecovery(DioException error) {
+    final isConnectionIssue =
+        error.type == DioExceptionType.connectionError ||
+        error.error is SocketException;
+    if (!isConnectionIssue) return false;
+    return error.requestOptions.extra['api_recovery_attempted'] != true;
+  }
+
+  Future<bool> _recoverEndpoint() async {
+    final candidates = <({String baseUrl, String fallbackIp})>[];
+    if (looksLikeLocalApiBaseUrl(_activeBaseUrl)) {
+      final onlineConfig =
+          await restoreBackedUpRuntimeConfig() ?? AppRuntimeConfig.defaults;
+      candidates.add((
+        baseUrl: onlineConfig.apiBaseUrl,
+        fallbackIp: onlineConfig.apiFallbackIp,
+      ));
+      final discovery = await discoverOfflineSession(
+        timeout: const Duration(seconds: 2),
+      );
+      if (discovery != null) {
+        candidates.add((baseUrl: discovery.serverUrl, fallbackIp: ''));
+      }
+    } else {
+      final discovery = await discoverOfflineSession(
+        timeout: const Duration(seconds: 2),
+      );
+      if (discovery != null) {
+        candidates.add((baseUrl: discovery.serverUrl, fallbackIp: ''));
+      }
+    }
+
+    for (final candidate in candidates) {
+      if (candidate.baseUrl == _activeBaseUrl &&
+          candidate.fallbackIp == _activeFallbackIp) {
+        continue;
+      }
+      if (!await _canReachApiBaseUrl(candidate.baseUrl, candidate.fallbackIp)) {
+        continue;
+      }
+      await _switchEndpoint(candidate.baseUrl, candidate.fallbackIp);
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> _switchEndpoint(String baseUrl, String fallbackIp) async {
+    final previousBaseUrl = _activeBaseUrl;
+    final previousFallbackIp = _activeFallbackIp;
+    final nextConfig = config.copyWith(
+      apiBaseUrl: baseUrl,
+      apiFallbackIp: fallbackIp,
+    );
+
+    if (!looksLikeLocalApiBaseUrl(baseUrl) &&
+        looksLikeLocalApiBaseUrl(previousBaseUrl)) {
+      await clearBackedUpRuntimeConfig();
+    } else if (looksLikeLocalApiBaseUrl(baseUrl) &&
+        !looksLikeLocalApiBaseUrl(previousBaseUrl)) {
+      await backupRuntimeConfig(
+        config.copyWith(
+          apiBaseUrl: previousBaseUrl,
+          apiFallbackIp: previousFallbackIp,
+        ),
+      );
+    }
+
+    _activeBaseUrl = baseUrl;
+    _activeFallbackIp = fallbackIp;
+    _dio = _buildDio(baseUrl, fallbackIp);
+    _attachRecoveryInterceptor(_dio);
+    await saveAppRuntimeConfig(nextConfig);
+  }
+
+  Future<bool> _canReachApiBaseUrl(String baseUrl, String fallbackIp) async {
+    try {
+      final probe = _buildDio(baseUrl, fallbackIp);
+      final response = await probe.get(
+        '/public/events/today',
+        options: Options(
+          sendTimeout: const Duration(seconds: 3),
+          receiveTimeout: const Duration(seconds: 3),
+          extra: {'api_recovery_attempted': true},
+        ),
+      );
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<bool> pingPublic() async {
