@@ -5711,6 +5711,10 @@ class DesktopDashboardView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final canSeeAllEvents = _canSeeAllEvents(user);
+    final runtimeConfig = ref.watch(appRuntimeConfigProvider);
+    final offlineSession = ref.watch(offlineHostSessionProvider);
+    final isOfflineMode =
+        offlineSession != null || looksLikeLocalApiBaseUrl(runtimeConfig.apiBaseUrl);
     final fromDate = DateTime.now();
     final fromDateParam =
         '${fromDate.year.toString().padLeft(4, '0')}-${fromDate.month.toString().padLeft(2, '0')}-${fromDate.day.toString().padLeft(2, '0')}';
@@ -5761,12 +5765,18 @@ class DesktopDashboardView extends ConsumerWidget {
                       ),
                       SizedBox(
                         width: cardWidth,
-                        child: _DeskKpiCard(
-                          title: 'Pedidos pendentes',
-                          value: '—',
-                          subtitle: 'A confirmar',
-                          icon: Icons.receipt_long,
-                          color: Colors.orangeAccent,
+                        child: FutureBuilder<List<OrderListItem>>(
+                          future: ordersFuture,
+                          builder: (context, orderSnap) {
+                            final count = orderSnap.data?.length ?? 0;
+                            return _DeskKpiCard(
+                              title: 'Pedidos pendentes',
+                              value: count.toString(),
+                              subtitle: 'A confirmar',
+                              icon: Icons.receipt_long,
+                              color: Colors.orangeAccent,
+                            );
+                          },
                         ),
                       ),
                       SizedBox(
@@ -5794,30 +5804,10 @@ class DesktopDashboardView extends ConsumerWidget {
                 children: [
                   _DeskSectionHeader('Atividade recente'),
                   const SizedBox(height: 10),
-                  _DeskCard(
-                    child: Column(
-                      children: [
-                        _DesktopActivityRow(
-                          title: 'Pagamento confirmado',
-                          subtitle: 'Pedido S59-43MZX',
-                          time: 'agora',
-                        ),
-                        _DesktopActivityRow(
-                          title: 'Upload concluido',
-                          subtitle: 'Evento Casamento Silva',
-                          time: 'há 1h',
-                        ),
-                        _DesktopActivityRow(
-                          title: 'Servico agendado',
-                          subtitle: 'Batizado 14/04',
-                          time: 'há 3h',
-                        ),
-                        _DesktopActivityRow(
-                          title: 'Cliente criou pedido',
-                          subtitle: 'Pedido S59-43MZW',
-                          time: 'ontem',
-                        ),
-                      ],
+                  const _DeskCard(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 6),
+                      child: Text('Sem atividade recente.'),
                     ),
                   ),
                   const SizedBox(height: 22),
@@ -5828,47 +5818,34 @@ class DesktopDashboardView extends ConsumerWidget {
                     builder: (context, snap) {
                       final orders = snap.data ?? const <OrderListItem>[];
                       final visible = orders.take(5).toList();
-                      final rows = visible.isNotEmpty
-                          ? visible
-                                .map(
-                                  (o) => List<Widget>.of([
-                                    Text(
-                                      o.orderCode,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    Text(o.customerName),
-                                    _DeskStatusBadge(
-                                      o.status.toUpperCase(),
-                                      color: Colors.orangeAccent,
-                                    ),
-                                    Text(
-                                      '€${(o.totalAmount ?? 0).toStringAsFixed(2)}',
-                                    ),
-                                  ]),
-                                )
-                                .toList()
-                          : [
-                              [
-                                const Text('S59-XX12'),
-                                const Text('Maria Costa'),
-                                const _DeskStatusBadge(
-                                  'PENDENTE',
-                                  color: Colors.orangeAccent,
+                      if (visible.isEmpty) {
+                        return const _DeskCard(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(vertical: 6),
+                            child: Text('Sem pedidos pendentes.'),
+                          ),
+                        );
+                      }
+                      final rows = visible
+                          .map(
+                            (o) => List<Widget>.of([
+                              Text(
+                                o.orderCode,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
                                 ),
-                                const Text('€85.00'),
-                              ],
-                              [
-                                const Text('S59-XX13'),
-                                const Text('Joao Silva'),
-                                const _DeskStatusBadge(
-                                  'PENDENTE',
-                                  color: Colors.orangeAccent,
-                                ),
-                                const Text('€50.00'),
-                              ],
-                            ];
+                              ),
+                              Text(o.customerName),
+                              _DeskStatusBadge(
+                                o.status.toUpperCase(),
+                                color: Colors.orangeAccent,
+                              ),
+                              Text(
+                                '€${(o.totalAmount ?? 0).toStringAsFixed(2)}',
+                              ),
+                            ]),
+                          )
+                          .toList();
                       return _DeskTable(
                         columns: const [
                           _DeskTableColumn('Pedido', flex: 2),
@@ -5898,34 +5875,29 @@ class DesktopDashboardView extends ConsumerWidget {
                       final upcoming = _upcomingEvents(
                         _filterEventsForUser(events, user),
                       ).take(5).toList();
+                      if (upcoming.isEmpty) {
+                        return const _DeskCard(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(vertical: 6),
+                            child: Text('Sem eventos futuros.'),
+                          ),
+                        );
+                      }
                       return _DeskCard(
                         child: Column(
                           children: [
-                            if (upcoming.isEmpty) ...[
-                              _DesktopEventRow(
-                                title: 'Casamento Costa',
-                                subtitle: '14/04/2026 • 16:00',
-                                badge: 'Agendado',
-                              ),
-                              _DesktopEventRow(
-                                title: 'Batizado Lima',
-                                subtitle: '21/04/2026 • 10:00',
-                                badge: 'Confirmado',
-                              ),
-                            ] else ...[
-                              ...upcoming.map(
-                                (e) => _DesktopEventRow(
-                                  title: e.name.isNotEmpty
-                                      ? e.name
-                                      : 'Evento ${e.id}',
-                                  subtitle: _formatEventDateTime(
-                                    e.eventDate,
-                                    e.eventTime,
-                                  ),
-                                  badge: _eventTypeLabel(e),
+                            ...upcoming.map(
+                              (e) => _DesktopEventRow(
+                                title: e.name.isNotEmpty
+                                    ? e.name
+                                    : 'Evento ${e.id}',
+                                subtitle: _formatEventDateTime(
+                                  e.eventDate,
+                                  e.eventTime,
                                 ),
+                                badge: _eventTypeLabel(e),
                               ),
-                            ],
+                            ),
                           ],
                         ),
                       );
@@ -5939,59 +5911,40 @@ class DesktopDashboardView extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
-                          children: const [
+                          children: [
                             _DeskStatusBadge(
-                              'ONLINE',
-                              color: Colors.lightGreenAccent,
+                              isOfflineMode ? 'OFFLINE' : 'ONLINE',
+                              color: isOfflineMode
+                                  ? Colors.orangeAccent
+                                  : Colors.lightGreenAccent,
                             ),
-                            SizedBox(width: 10),
-                            Text('Sincronizacao ativa'),
+                            const SizedBox(width: 10),
+                            Text(
+                              isOfflineMode
+                                  ? 'Sessão local ativa'
+                                  : 'Ligação online ativa',
+                            ),
                           ],
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'Ultima sync: há 2 minutos',
+                          isOfflineMode
+                              ? (offlineSession != null
+                                    ? offlineSession.lanApiBaseUrl
+                                    : runtimeConfig.apiBaseUrl)
+                              : runtimeConfig.apiBaseUrl,
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.6),
                           ),
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'Pendentes: 0 uploads • 1 pedido offline',
+                          isOfflineMode
+                              ? 'Os dados aparecem quando existirem pedidos ou eventos.'
+                              : 'Sem resumo adicional disponível.',
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.6),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  _DeskSectionHeader('Resumo mensal'),
-                  const SizedBox(height: 10),
-                  _DeskCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Vendas totais',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.6),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          '€4 280',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: const [
-                            Expanded(child: Text('Eventos: 12')),
-                            Expanded(child: Text('Pedidos pagos: 86')),
-                          ],
                         ),
                       ],
                     ),
@@ -6013,62 +5966,6 @@ class DesktopDashboardView extends ConsumerWidget {
                 ],
               );
             },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DesktopActivityRow extends StatelessWidget {
-  const _DesktopActivityRow({
-    required this.title,
-    required this.subtitle,
-    required this.time,
-  });
-  final String title;
-  final String subtitle;
-  final String time;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              color: kBrandRose,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.6),
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Text(
-            time,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.5),
-              fontSize: 11,
-            ),
           ),
         ],
       ),
@@ -14308,25 +14205,20 @@ class ApiService {
   static HttpClient _createHttpClient(String baseUrl, String fallbackIp) {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 30)
-      ..idleTimeout = const Duration(seconds: 30);
+      ..idleTimeout = const Duration(seconds: 30)
+      ..findProxy = (_) => 'DIRECT';
     final apiHost = Uri.tryParse(baseUrl)?.host;
     final resolvedFallbackIp = fallbackIp.trim();
-    client.connectionFactory = (uri, proxyHost, proxyPort) async {
-      final proxyTargetHost = proxyHost;
-      final proxyTargetPort = proxyPort;
-      final isProxy = proxyTargetHost != null && proxyTargetPort != null;
-      final port = isProxy
-          ? proxyTargetPort
-          : (uri.hasPort ? uri.port : (uri.scheme == 'https' ? 443 : 80));
+    client.connectionFactory = (uri, _, __) async {
+      final port = uri.hasPort ? uri.port : (uri.scheme == 'https' ? 443 : 80);
       final host =
-          !isProxy &&
-              resolvedFallbackIp.isNotEmpty &&
+          resolvedFallbackIp.isNotEmpty &&
               apiHost != null &&
               uri.host == apiHost
           ? resolvedFallbackIp
-          : (isProxy ? proxyTargetHost : uri.host);
+          : uri.host;
       final task = await Socket.startConnect(host, port);
-      if (isProxy || uri.scheme != 'https') return task;
+      if (uri.scheme != 'https') return task;
       return ConnectionTask.fromSocket(
         task.socket.then(
           (socket) => SecureSocket.secure(socket, host: uri.host),

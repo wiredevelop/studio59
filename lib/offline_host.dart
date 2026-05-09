@@ -104,6 +104,7 @@ class OfflineDiscoveryResult {
     required this.qrUrl,
     required this.host,
     required this.port,
+    required this.candidateUrls,
   });
 
   final String serverUrl;
@@ -112,6 +113,25 @@ class OfflineDiscoveryResult {
   final String qrUrl;
   final String host;
   final int port;
+  final List<String> candidateUrls;
+
+  OfflineDiscoveryResult copyWith({
+    String? serverUrl,
+    String? eventName,
+    String? sessionId,
+    String? qrUrl,
+    String? host,
+    int? port,
+    List<String>? candidateUrls,
+  }) => OfflineDiscoveryResult(
+    serverUrl: serverUrl ?? this.serverUrl,
+    eventName: eventName ?? this.eventName,
+    sessionId: sessionId ?? this.sessionId,
+    qrUrl: qrUrl ?? this.qrUrl,
+    host: host ?? this.host,
+    port: port ?? this.port,
+    candidateUrls: candidateUrls ?? this.candidateUrls,
+  );
 
   factory OfflineDiscoveryResult.fromJson(Map<String, dynamic> json) =>
       OfflineDiscoveryResult(
@@ -121,6 +141,10 @@ class OfflineDiscoveryResult {
         qrUrl: json['qr_url']?.toString() ?? '',
         host: json['host']?.toString() ?? '',
         port: (json['port'] as num?)?.toInt() ?? 4000,
+        candidateUrls: ((json['candidate_urls'] as List?) ?? const [])
+            .map((item) => item.toString().trim())
+            .where((item) => item.isNotEmpty)
+            .toList(),
       );
 }
 
@@ -680,11 +704,65 @@ Future<OfflineDiscoveryResult?> discoverOfflineSession({
     );
     await sub.cancel();
     socket.close();
-    return result;
+    if (result == null) return null;
+    return _resolveReachableDiscoveryResult(result);
   } catch (_) {
     socket?.close();
     return null;
   }
+}
+
+Future<OfflineDiscoveryResult> _resolveReachableDiscoveryResult(
+  OfflineDiscoveryResult result,
+) async {
+  final candidates = <String>{
+    if (result.serverUrl.trim().isNotEmpty) result.serverUrl.trim(),
+    ...result.candidateUrls.map((item) => item.trim()).where((item) => item.isNotEmpty),
+    if (result.host.trim().isNotEmpty)
+      'http://${result.host.trim()}:${result.port}/api',
+  }.toList();
+  for (final candidate in candidates) {
+    if (await _canReachOfflineApi(candidate)) {
+      return result.copyWith(serverUrl: candidate, candidateUrls: candidates);
+    }
+  }
+  return result.copyWith(
+    serverUrl: candidates.isNotEmpty ? candidates.first : result.serverUrl,
+    candidateUrls: candidates,
+  );
+}
+
+Future<bool> _canReachOfflineApi(String apiBaseUrl) async {
+  HttpClient? client;
+  try {
+    client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 2)
+      ..idleTimeout = const Duration(seconds: 2)
+      ..findProxy = (_) => 'DIRECT';
+    final uri = Uri.parse('$apiBaseUrl/public/events/today');
+    final request = await client
+        .getUrl(uri)
+        .timeout(const Duration(seconds: 2));
+    final response = await request.close().timeout(const Duration(seconds: 2));
+    await response.drain<void>();
+    return response.statusCode >= 200 && response.statusCode < 500;
+  } catch (_) {
+    return false;
+  } finally {
+    client?.close(force: true);
+  }
+}
+
+String _publicQrUrlForApiBaseUrl(String apiBaseUrl, String qrToken) {
+  final uri = Uri.tryParse(apiBaseUrl.trim());
+  if (uri == null) return '';
+  return uri
+      .replace(
+        path: '${uri.path}/public/events/qr/$qrToken',
+        query: null,
+        fragment: null,
+      )
+      .toString();
 }
 
 class OfflineHostStartResult {
@@ -712,7 +790,8 @@ class OfflineHostServer {
 
   Future<OfflineHostStartResult> start(OfflineHostSession session) async {
     await stop(clearSessionFile: false);
-    final host = await _resolveLanHost();
+    final lanHosts = await _resolveLanHosts();
+    final host = lanHosts.isNotEmpty ? lanHosts.first : '127.0.0.1';
     final server = await _bindServer(session.port);
     _server = server;
     _session = session.copyWith(
@@ -794,7 +873,7 @@ class OfflineHostServer {
     );
     socket.broadcastEnabled = true;
     _discoverySocket = socket;
-    socket.listen((event) {
+    socket.listen((event) async {
       if (event != RawSocketEvent.read) return;
       final datagram = socket.receive();
       if (datagram == null) return;
@@ -807,15 +886,28 @@ class OfflineHostServer {
         if (map['type']?.toString() != kOfflineDiscoveryType) return;
         final session = _session;
         if (session == null || !session.isActive) return;
+        final candidateUrls = (await _resolveLanHosts())
+            .map((host) => 'http://$host:${session.port}/api')
+            .toList();
         final response = utf8.encode(
           jsonEncode({
             'type': kOfflineDiscoveryResponseType,
-            'server_url': session.lanApiBaseUrl,
+            'server_url': candidateUrls.isNotEmpty
+                ? candidateUrls.first
+                : session.lanApiBaseUrl,
             'event_name': session.eventName,
             'session_id': session.sessionId,
-            'qr_url': session.publicQrUrl,
-            'host': session.serverHost,
+            'qr_url': candidateUrls.isNotEmpty
+                ? _publicQrUrlForApiBaseUrl(
+                    candidateUrls.first,
+                    session.qrToken,
+                  )
+                : session.publicQrUrl,
+            'host': candidateUrls.isNotEmpty
+                ? Uri.parse(candidateUrls.first).host
+                : session.serverHost,
             'port': session.port,
+            'candidate_urls': candidateUrls,
           }),
         );
         socket.send(response, datagram.address, datagram.port);
@@ -823,22 +915,28 @@ class OfflineHostServer {
     });
   }
 
-  Future<String> _resolveLanHost() async {
+  Future<List<String>> _resolveLanHosts() async {
+    final candidates = <String>[];
     try {
       final interfaces = await NetworkInterface.list(
         includeLoopback: false,
         type: InternetAddressType.IPv4,
       );
-      for (final iface in interfaces) {
+      final sorted = [...interfaces];
+      sorted.sort(
+        (a, b) => _interfaceScore(b.name).compareTo(_interfaceScore(a.name)),
+      );
+      for (final iface in sorted) {
         for (final address in iface.addresses) {
           if (!address.isLoopback &&
               looksLikeLocalApiBaseUrl('http://${address.address}')) {
-            return address.address;
+            candidates.add(address.address);
           }
         }
       }
     } catch (_) {}
-    return '127.0.0.1';
+    if (candidates.isEmpty) return const ['127.0.0.1'];
+    return candidates.toSet().toList();
   }
 
   Future<void> _listen(HttpServer server) async {
@@ -1722,4 +1820,36 @@ class OfflineHostServer {
     }
     await _json(request, HttpStatus.ok, session.buildExportPayload());
   }
+}
+
+int _interfaceScore(String name) {
+  final value = name.toLowerCase();
+  var score = 0;
+  if (value.contains('wi-fi') ||
+      value.contains('wifi') ||
+      value.contains('wlan') ||
+      value.contains('wireless')) {
+    score += 50;
+  }
+  if (value.contains('ethernet') ||
+      value == 'en0' ||
+      value == 'en1' ||
+      value.startsWith('eth')) {
+    score += 40;
+  }
+  if (value.contains('virtual') ||
+      value.contains('vbox') ||
+      value.contains('vmware') ||
+      value.contains('hyper-v') ||
+      value.contains('docker') ||
+      value.contains('wsl') ||
+      value.contains('loopback') ||
+      value.contains('tailscale') ||
+      value.contains('hamachi') ||
+      value.contains('zerotier') ||
+      value.contains('bridge') ||
+      value.contains('vpn')) {
+    score -= 100;
+  }
+  return score;
 }
