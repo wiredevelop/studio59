@@ -96,6 +96,92 @@ String formatUiError(Object error) {
   return text.startsWith('Exception: ') ? text.substring(11) : text;
 }
 
+String formatEuroAmount(num value) => value.toStringAsFixed(2);
+
+class CashSettlement {
+  const CashSettlement({
+    required this.receivedAmount,
+    required this.changeAmount,
+    required this.dueAmount,
+  });
+
+  final num receivedAmount;
+  final num changeAmount;
+  final num dueAmount;
+}
+
+Future<CashSettlement?> promptCashSettlement(
+  BuildContext context, {
+  required num totalAmount,
+}) async {
+  final ctrl = TextEditingController(text: formatEuroAmount(totalAmount));
+  try {
+    return await showDialog<CashSettlement>(
+      context: context,
+      builder: (dialogContext) {
+        num received = totalAmount;
+
+        num parseAmount() {
+          final normalized = ctrl.text.trim().replaceAll(',', '.');
+          return num.tryParse(normalized) ?? 0;
+        }
+
+        return StatefulBuilder(
+          builder: (context, setState) {
+            received = parseAmount();
+            final change = received > totalAmount ? received - totalAmount : 0;
+            final due = received < totalAmount ? totalAmount - received : 0;
+            return AlertDialog(
+              title: const Text('Pagamento em dinheiro'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Total: €${formatEuroAmount(totalAmount)}'),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: ctrl,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Valor entregue',
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  const SizedBox(height: 12),
+                  Text('Troco: €${formatEuroAmount(change)}'),
+                  Text('Falta: €${formatEuroAmount(due)}'),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(
+                    dialogContext,
+                    CashSettlement(
+                      receivedAmount: received,
+                      changeAmount: change,
+                      dueAmount: due,
+                    ),
+                  ),
+                  child: const Text('Confirmar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  } finally {
+    ctrl.dispose();
+  }
+}
+
 const Color kDeskBg = Color(0xFF0B0A0A);
 const Color kDeskSurface = Color(0xFF111010);
 const Color kDeskCard = Color(0xFF151313);
@@ -627,6 +713,29 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  Future<OfflineDiscoveryResult?> _currentOfflineDiscovery() async {
+    final config = ref.read(appRuntimeConfigProvider);
+    if (!looksLikeLocalApiBaseUrl(config.apiBaseUrl)) return null;
+    if (!await ref.read(apiProvider).pingPublic()) return null;
+    String eventName = 'Sessão offline ativa';
+    try {
+      final events = await ref.read(apiProvider).todayEvents();
+      if (events.isNotEmpty) {
+        eventName = events.first.name;
+      }
+    } catch (_) {}
+    final uri = Uri.tryParse(config.apiBaseUrl);
+    return OfflineDiscoveryResult(
+      serverUrl: config.apiBaseUrl,
+      eventName: eventName,
+      sessionId: '',
+      qrUrl: '',
+      host: uri?.host ?? '',
+      port: uri?.hasPort == true ? uri!.port : 80,
+      candidateUrls: [config.apiBaseUrl],
+    );
+  }
+
   Future<bool> _ensureOfflineAccess({String? qrRaw}) async {
     if (await ref.read(apiProvider).pingPublic()) {
       return true;
@@ -663,6 +772,17 @@ class _HomePageState extends ConsumerState<HomePage> {
       if (manual) _offlineDiscoveryError = null;
     });
     try {
+      final currentOffline = await _currentOfflineDiscovery();
+      if (currentOffline != null) {
+        if (!mounted) return;
+        setState(() {
+          _discoveringOffline = false;
+          _showOfflineDiscovery = true;
+          _offlineDiscovery = currentOffline;
+          _offlineDiscoveryError = null;
+        });
+        return;
+      }
       final onlineReachable = await ref.read(apiProvider).pingPublic();
       if (onlineReachable) {
         if (!mounted) return;
@@ -1420,7 +1540,14 @@ Future<void> enqueueSelection(int eventId, int photoId, String status) async {
   await _writeOfflinePayload(eventId, payload);
 }
 
-Future<void> enqueueOrderUpdate(int eventId, int orderId, String status) async {
+Future<void> enqueueOrderUpdate(
+  int eventId,
+  int orderId,
+  String status, {
+  num? cashReceivedAmount,
+  num? cashChangeAmount,
+  num? cashDueAmount,
+}) async {
   final payload = await _readOfflinePayload(eventId);
   final updates = (payload['order_updates'] as List? ?? [])
       .cast<Map<String, dynamic>>();
@@ -1429,6 +1556,9 @@ Future<void> enqueueOrderUpdate(int eventId, int orderId, String status) async {
     'event_id': eventId,
     'order_id': orderId,
     'status': status,
+    'cash_received_amount': cashReceivedAmount,
+    'cash_change_amount': cashChangeAmount,
+    'cash_due_amount': cashDueAmount,
     'updated_at': DateTime.now().toIso8601String(),
   });
   payload['order_updates'] = updates;
@@ -1533,7 +1663,7 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
   List<PhotoItem> suggested = [];
   bool faceSearching = false;
   int page = 1;
-  static const int perPage = 50;
+  static const int perPage = 24;
 
   void _openPhotoPreview(PhotoItem photo) {
     showDialog(
@@ -1557,7 +1687,7 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                           child: Image.network(
                             photo.previewUrl!,
                             fit: BoxFit.contain,
-                            cacheWidth: 1800,
+                            cacheWidth: 1080,
                             filterQuality: FilterQuality.medium,
                           ),
                         ),
@@ -1805,7 +1935,7 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                                             photo.previewUrl!,
                                             fit: BoxFit.cover,
                                             width: double.infinity,
-                                            cacheWidth: 1200,
+                                            cacheWidth: 420,
                                             filterQuality: FilterQuality.medium,
                                             errorBuilder:
                                                 (context, error, stackTrace) =>
@@ -2165,7 +2295,7 @@ class _CartPageState extends ConsumerState<CartPage> {
                                 width: 56,
                                 height: 56,
                                 fit: BoxFit.cover,
-                                cacheWidth: 320,
+                                cacheWidth: 160,
                                 filterQuality: FilterQuality.medium,
                               ),
                         title: Text('Foto ${item.number}'),
@@ -3053,9 +3183,11 @@ class _TicketPageState extends ConsumerState<TicketPage> {
   static const String _galleryPermissionDeniedMessage =
       'Permissão para guardar fotos negada.';
   Timer? timer;
+  Timer? resetTimer;
   int? downloadingPhotoId;
   bool downloadingAll = false;
   late Future<OrderDetail> _orderFuture;
+  String? _resetScheduledOrderCode;
 
   Future<void> _showPermissionDialog() async {
     if (!mounted) return;
@@ -3201,7 +3333,33 @@ class _TicketPageState extends ConsumerState<TicketPage> {
   @override
   void dispose() {
     timer?.cancel();
+    resetTimer?.cancel();
     super.dispose();
+  }
+
+  void _scheduleCatalogReset(OrderDetail order) {
+    if (order.status == 'paid' || order.paymentMethod == 'online') {
+      resetTimer?.cancel();
+      _resetScheduledOrderCode = null;
+      return;
+    }
+    if (_resetScheduledOrderCode == order.orderCode) {
+      return;
+    }
+    final session = ref.read(guestSessionProvider);
+    if (session == null) return;
+    _resetScheduledOrderCode = order.orderCode;
+    resetTimer?.cancel();
+    resetTimer = Timer(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+          builder: (_) => GuestCatalogPage(eventId: session.eventId),
+        ),
+        (route) => false,
+      );
+    });
   }
 
   @override
@@ -3225,6 +3383,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
             final isPaid = order.status == 'paid';
             final isOnline = order.paymentMethod == 'online';
             final isOfflineOrder = order.isOffline;
+            _scheduleCatalogReset(order);
 
             return ListView(
               padding: const EdgeInsets.all(16),
@@ -3260,7 +3419,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                             ? 'As tuas fotos estão prontas. Vais receber/recebeste um link único no email para download dos originais.'
                             : (isOnline
                                   ? 'Estamos a confirmar o pagamento. Assim que estiver pago o download fica disponível.'
-                                  : 'Dirige-te ao fotografo, paga e mostra este ticket para ele marcar como PAID.'),
+                                  : 'Dirige-te ao fotógrafo, paga, mostra este ticket e deixa o iPad no mesmo local.'),
                       ),
                     ],
                   ),
@@ -3282,6 +3441,18 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                           'Pagamento: ${isOnline ? 'ONLINE (STRIPE)' : 'DINHEIRO'}',
                         ),
                         Text('Total: ${order.totalAmount} EUR'),
+                        if (order.cashReceivedAmount != null)
+                          Text(
+                            'Entregue: ${formatEuroAmount(order.cashReceivedAmount!)}€',
+                          ),
+                        if ((order.cashChangeAmount ?? 0) > 0)
+                          Text(
+                            'Troco: ${formatEuroAmount(order.cashChangeAmount!)}€',
+                          ),
+                        if ((order.cashDueAmount ?? 0) > 0)
+                          Text(
+                            'Em falta: ${formatEuroAmount(order.cashDueAmount!)}€',
+                          ),
                         if (order.productType != null)
                           Text('Produto: ${order.productType}'),
                         if (order.deliveryType != null)
@@ -3432,6 +3603,12 @@ class OrderDetailPage extends ConsumerWidget {
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 Text('Total: ${o.totalAmount} EUR'),
+                if (o.cashReceivedAmount != null)
+                  Text('Entregue: ${formatEuroAmount(o.cashReceivedAmount!)}€'),
+                if ((o.cashChangeAmount ?? 0) > 0)
+                  Text('Troco: ${formatEuroAmount(o.cashChangeAmount!)}€'),
+                if ((o.cashDueAmount ?? 0) > 0)
+                  Text('Em falta: ${formatEuroAmount(o.cashDueAmount!)}€'),
                 if (o.productType != null) Text('Produto: ${o.productType}'),
                 if (o.deliveryType != null) Text('Entrega: ${o.deliveryType}'),
                 if (o.deliveryAddress != null && o.deliveryAddress!.isNotEmpty)
@@ -3543,6 +3720,29 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
     await clearStaffSession();
   }
 
+  bool _isInvalidCredentialsError(Object error) {
+    final text = formatUiError(error).toLowerCase();
+    return text.contains('invalid credentials');
+  }
+
+  Future<StaffAuthResponse> _loginWithOnlineFallback(
+    String login,
+    String password,
+  ) async {
+    try {
+      return await ref.read(apiProvider).staffLogin(login, password);
+    } catch (error) {
+      final current = ref.read(appRuntimeConfigProvider);
+      if (!_isInvalidCredentialsError(error) ||
+          !looksLikeLocalApiBaseUrl(current.apiBaseUrl)) {
+        rethrow;
+      }
+      final restored = await _tryRestoreOnlineRuntimeConfig();
+      if (!restored) rethrow;
+      return ref.read(apiProvider).staffLogin(login, password);
+    }
+  }
+
   Future<void> _submit() async {
     if (_loading) return;
     setState(() => _loading = true);
@@ -3564,11 +3764,14 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
         }
       }
       if (!reachable) {
-        throw Exception('Sem ligação ao servidor online nem a uma sessão offline.');
+        throw Exception(
+          'Sem ligação ao servidor online nem a uma sessão offline.',
+        );
       }
-      final token = await ref
-          .read(apiProvider)
-          .staffLogin(loginCtrl.text.trim(), passCtrl.text.trim());
+      final token = await _loginWithOnlineFallback(
+        loginCtrl.text.trim(),
+        passCtrl.text.trim(),
+      );
       ref.read(staffTokenProvider.notifier).state = token.token;
       ref.read(staffUserProvider.notifier).state = token.user;
       await saveStaffSession(token.token, token.user);
@@ -5842,7 +6045,8 @@ class DesktopDashboardView extends ConsumerWidget {
     final runtimeConfig = ref.watch(appRuntimeConfigProvider);
     final offlineSession = ref.watch(offlineHostSessionProvider);
     final isOfflineMode =
-        offlineSession != null || looksLikeLocalApiBaseUrl(runtimeConfig.apiBaseUrl);
+        offlineSession != null ||
+        looksLikeLocalApiBaseUrl(runtimeConfig.apiBaseUrl);
     final fromDate = DateTime.now();
     final fromDateParam =
         '${fromDate.year.toString().padLeft(4, '0')}-${fromDate.month.toString().padLeft(2, '0')}-${fromDate.day.toString().padLeft(2, '0')}';
@@ -6700,7 +6904,7 @@ class DesktopPaymentsView extends StatelessWidget {
                 Text('pi_3T...'),
                 Text('Maria Costa'),
                 Text('Cartao'),
-                _DeskStatusBadge('Pago', color: Colors.lightGreenAccent),
+                _DeskStatusBadge('Pagar', color: Colors.lightGreenAccent),
                 Text('€85.00'),
               ],
               [
@@ -11810,15 +12014,38 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                 o.status != 'paid' &&
                                                 o.status != 'delivered')
                                               _MobileActionChip(
-                                                label: 'Pago',
+                                                label: 'Pagar',
                                                 color: Colors.lightGreenAccent,
                                                 onTap: () async {
+                                                  CashSettlement? settlement;
+                                                  if (o.paymentMethod !=
+                                                      'online') {
+                                                    settlement =
+                                                        await promptCashSettlement(
+                                                          context,
+                                                          totalAmount:
+                                                              o.totalAmount ??
+                                                              0,
+                                                        );
+                                                    if (settlement == null) {
+                                                      return;
+                                                    }
+                                                  }
                                                   final emailed = await ref
                                                       .read(apiProvider)
                                                       .markOrderPaid(
                                                         token,
                                                         o.id,
                                                         eventId: o.eventId,
+                                                        cashReceivedAmount:
+                                                            settlement
+                                                                ?.receivedAmount,
+                                                        cashChangeAmount:
+                                                            settlement
+                                                                ?.changeAmount,
+                                                        cashDueAmount:
+                                                            settlement
+                                                                ?.dueAmount,
                                                       );
                                                   if (!context.mounted) return;
                                                   ScaffoldMessenger.of(
@@ -11826,7 +12053,18 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                   ).showSnackBar(
                                                     SnackBar(
                                                       content: Text(
-                                                        emailed
+                                                        settlement != null &&
+                                                                settlement
+                                                                        .dueAmount >
+                                                                    0
+                                                            ? 'Registado. Falta ${formatEuroAmount(settlement.dueAmount)}€.'
+                                                            : settlement !=
+                                                                      null &&
+                                                                  settlement
+                                                                          .changeAmount >
+                                                                      0
+                                                            ? 'Registado. Troco ${formatEuroAmount(settlement.changeAmount)}€.'
+                                                            : emailed
                                                             ? 'Marcado pago e link enviado.'
                                                             : 'Marcado pago. Sem email.',
                                                       ),
@@ -12054,6 +12292,14 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                 'Pagamento: ${order.paymentMethod.isEmpty ? '-' : order.paymentMethod}',
               ),
               Text('Total: ${order.totalAmount}'),
+              if (order.cashReceivedAmount != null)
+                Text(
+                  'Entregue: ${formatEuroAmount(order.cashReceivedAmount!)}€',
+                ),
+              if ((order.cashChangeAmount ?? 0) > 0)
+                Text('Troco: ${formatEuroAmount(order.cashChangeAmount!)}€'),
+              if ((order.cashDueAmount ?? 0) > 0)
+                Text('Em falta: ${formatEuroAmount(order.cashDueAmount!)}€'),
               const SizedBox(height: 12),
               Text('Cliente: ${order.customerName}'),
               if ((order.customerEmail ?? '').isNotEmpty)
@@ -12065,13 +12311,27 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                   padding: const EdgeInsets.only(top: 12),
                   child: FilledButton(
                     onPressed: () async {
+                      CashSettlement? settlement;
+                      if (order.paymentMethod != 'online') {
+                        settlement = await promptCashSettlement(
+                          context,
+                          totalAmount: order.totalAmount,
+                        );
+                        if (settlement == null) return;
+                      }
                       await ref
                           .read(apiProvider)
-                          .markOrderPaid(token, order.id);
+                          .markOrderPaid(
+                            token,
+                            order.id,
+                            cashReceivedAmount: settlement?.receivedAmount,
+                            cashChangeAmount: settlement?.changeAmount,
+                            cashDueAmount: settlement?.dueAmount,
+                          );
                       if (!context.mounted) return;
                       setState(() => _loadDetail(token));
                     },
-                    child: const Text('Marcar como pago'),
+                    child: const Text('Pagar'),
                   ),
                 ),
             ] else ...[
@@ -14775,10 +15035,22 @@ class ApiService {
     return list.map(StaffOrderItem.fromJson).toList();
   }
 
-  Future<bool> markOrderPaid(String token, int orderId, {int? eventId}) async {
+  Future<bool> markOrderPaid(
+    String token,
+    int orderId, {
+    int? eventId,
+    num? cashReceivedAmount,
+    num? cashChangeAmount,
+    num? cashDueAmount,
+  }) async {
     try {
       final r = await dio.post(
         '/orders/$orderId/mark-paid',
+        data: {
+          'cash_received_amount': cashReceivedAmount,
+          'cash_change_amount': cashChangeAmount,
+          'cash_due_amount': cashDueAmount,
+        },
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
       if (r.statusCode != 200) throw _errorFromResponse(r);
@@ -14790,7 +15062,14 @@ class ApiService {
       if (eventId != null &&
           (e.type == DioExceptionType.connectionError ||
               e.error is SocketException)) {
-        await enqueueOrderUpdate(eventId, orderId, 'paid');
+        await enqueueOrderUpdate(
+          eventId,
+          orderId,
+          'paid',
+          cashReceivedAmount: cashReceivedAmount,
+          cashChangeAmount: cashChangeAmount,
+          cashDueAmount: cashDueAmount,
+        );
         return false;
       }
       rethrow;
@@ -15433,6 +15712,9 @@ class OrderDetail {
     required this.deliveryType,
     required this.deliveryAddress,
     required this.wantsFilm,
+    required this.cashReceivedAmount,
+    required this.cashChangeAmount,
+    required this.cashDueAmount,
     required this.isOffline,
   });
   final String orderCode;
@@ -15449,6 +15731,9 @@ class OrderDetail {
   final String? deliveryType;
   final String? deliveryAddress;
   final bool wantsFilm;
+  final num? cashReceivedAmount;
+  final num? cashChangeAmount;
+  final num? cashDueAmount;
   final bool isOffline;
 
   factory OrderDetail.fromJson(Map<String, dynamic> j) => OrderDetail(
@@ -15468,6 +15753,9 @@ class OrderDetail {
     deliveryType: j['delivery_type'] as String?,
     deliveryAddress: j['delivery_address'] as String?,
     wantsFilm: j['wants_film'] == true || j['wants_film'] == 1,
+    cashReceivedAmount: _toNullableNum(j['cash_received_amount']),
+    cashChangeAmount: _toNullableNum(j['cash_change_amount']),
+    cashDueAmount: _toNullableNum(j['cash_due_amount']),
     isOffline: j['offline_mode'] == true || j['offline_mode'] == 1,
   );
 
@@ -15478,6 +15766,13 @@ class OrderDetail {
       if (parsed != null) return parsed;
     }
     return 0;
+  }
+
+  static num? _toNullableNum(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value;
+    if (value is String) return num.tryParse(value);
+    return null;
   }
 }
 
@@ -15892,23 +16187,32 @@ class OrderListItem {
     required this.orderCode,
     required this.customerName,
     required this.status,
+    required this.paymentMethod,
     this.eventName,
     this.eventId,
     this.totalAmount,
+    this.cashReceivedAmount,
+    this.cashChangeAmount,
+    this.cashDueAmount,
   });
   final int id;
   final String orderCode;
   final String customerName;
   final String status;
+  final String paymentMethod;
   final String? eventName;
   final int? eventId;
   final num? totalAmount;
+  final num? cashReceivedAmount;
+  final num? cashChangeAmount;
+  final num? cashDueAmount;
 
   factory OrderListItem.fromJson(Map<String, dynamic> j) => OrderListItem(
     id: j['id'] as int,
     orderCode: j['order_code'] as String? ?? '',
     customerName: j['customer_name'] as String? ?? '',
     status: j['status'] as String? ?? '',
+    paymentMethod: j['payment_method'] as String? ?? '',
     eventName: (j['event'] is Map<String, dynamic>)
         ? (j['event']['name'] as String?)
         : null,
@@ -15918,6 +16222,9 @@ class OrderListItem {
     totalAmount: j['total_amount'] is num
         ? j['total_amount'] as num
         : num.tryParse(j['total_amount']?.toString() ?? ''),
+    cashReceivedAmount: OrderDetail._toNullableNum(j['cash_received_amount']),
+    cashChangeAmount: OrderDetail._toNullableNum(j['cash_change_amount']),
+    cashDueAmount: OrderDetail._toNullableNum(j['cash_due_amount']),
   );
 }
 
@@ -15933,6 +16240,9 @@ class StaffOrderDetail {
     this.eventName,
     this.customerEmail,
     this.customerPhone,
+    this.cashReceivedAmount,
+    this.cashChangeAmount,
+    this.cashDueAmount,
   });
   final int id;
   final String orderCode;
@@ -15944,6 +16254,9 @@ class StaffOrderDetail {
   final String? eventName;
   final String? customerEmail;
   final String? customerPhone;
+  final num? cashReceivedAmount;
+  final num? cashChangeAmount;
+  final num? cashDueAmount;
 
   factory StaffOrderDetail.fromJson(Map<String, dynamic> j) => StaffOrderDetail(
     id: j['id'] as int,
@@ -15963,6 +16276,9 @@ class StaffOrderDetail {
         : null,
     customerEmail: j['customer_email'] as String?,
     customerPhone: j['customer_phone'] as String?,
+    cashReceivedAmount: OrderDetail._toNullableNum(j['cash_received_amount']),
+    cashChangeAmount: OrderDetail._toNullableNum(j['cash_change_amount']),
+    cashDueAmount: OrderDetail._toNullableNum(j['cash_due_amount']),
   );
 }
 

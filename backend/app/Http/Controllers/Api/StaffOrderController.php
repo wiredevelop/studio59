@@ -106,6 +106,9 @@ class StaffOrderController extends Controller
             'customer_email' => $order->customer_email,
             'customer_phone' => $order->customer_phone,
             'payment_method' => $order->payment_method,
+            'cash_received_amount' => $order->cash_received_amount,
+            'cash_change_amount' => $order->cash_change_amount,
+            'cash_due_amount' => $order->cash_due_amount,
             'status' => $order->status,
             'total_amount' => $order->total_amount,
             'event' => $order->event ? [
@@ -176,10 +179,23 @@ class StaffOrderController extends Controller
         return response()->json(['updated' => $updated]);
     }
 
-    public function markPaid(Order $order)
+    public function markPaid(Request $request, Order $order)
     {
         $this->ensureOrderAccess($order);
-        $order->update(['status' => 'paid']);
+        $validated = $request->validate([
+            'cash_received_amount' => ['nullable', 'numeric', 'min:0'],
+            'cash_change_amount' => ['nullable', 'numeric', 'min:0'],
+            'cash_due_amount' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $update = ['status' => 'paid'];
+        if ($order->payment_method === 'cash') {
+            $update['cash_received_amount'] = $validated['cash_received_amount'] ?? null;
+            $update['cash_change_amount'] = $validated['cash_change_amount'] ?? null;
+            $update['cash_due_amount'] = $validated['cash_due_amount'] ?? null;
+        }
+
+        $order->update($update);
         $sent = OrderDownloadService::sendAccessLink($order);
         Audit::log('api.order.mark_paid', Order::class, $order->id, ['order_code' => $order->order_code]);
 

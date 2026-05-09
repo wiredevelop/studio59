@@ -216,6 +216,9 @@ class OfflineHostOrder {
     required this.extrasTotal,
     required this.itemsTotal,
     required this.paymentMethod,
+    required this.cashReceivedAmount,
+    required this.cashChangeAmount,
+    required this.cashDueAmount,
     required this.status,
     required this.totalAmount,
     required this.items,
@@ -237,6 +240,9 @@ class OfflineHostOrder {
   final num extrasTotal;
   final num itemsTotal;
   final String paymentMethod;
+  final num? cashReceivedAmount;
+  final num? cashChangeAmount;
+  final num? cashDueAmount;
   final String status;
   final num totalAmount;
   final List<OfflineHostOrderItem> items;
@@ -248,6 +254,9 @@ class OfflineHostOrder {
     String? customerPhone,
     String? customerEmail,
     String? paymentMethod,
+    num? cashReceivedAmount,
+    num? cashChangeAmount,
+    num? cashDueAmount,
     String? status,
     String? updatedAt,
   }) => OfflineHostOrder(
@@ -265,6 +274,9 @@ class OfflineHostOrder {
     extrasTotal: extrasTotal,
     itemsTotal: itemsTotal,
     paymentMethod: paymentMethod ?? this.paymentMethod,
+    cashReceivedAmount: cashReceivedAmount ?? this.cashReceivedAmount,
+    cashChangeAmount: cashChangeAmount ?? this.cashChangeAmount,
+    cashDueAmount: cashDueAmount ?? this.cashDueAmount,
     status: status ?? this.status,
     totalAmount: totalAmount,
     items: items,
@@ -287,6 +299,9 @@ class OfflineHostOrder {
     'extras_total': extrasTotal,
     'items_total': itemsTotal,
     'payment_method': paymentMethod,
+    'cash_received_amount': cashReceivedAmount,
+    'cash_change_amount': cashChangeAmount,
+    'cash_due_amount': cashDueAmount,
     'status': status,
     'total_amount': totalAmount,
     'items': items.map((e) => e.toJson()).toList(),
@@ -307,6 +322,9 @@ class OfflineHostOrder {
     'delivery_address': deliveryAddress,
     'wants_film': wantsFilm,
     'payment_method': paymentMethod,
+    'cash_received_amount': cashReceivedAmount,
+    'cash_change_amount': cashChangeAmount,
+    'cash_due_amount': cashDueAmount,
     'customer_name': customerName,
     'customer_email': customerEmail,
     'customer_phone': customerPhone,
@@ -329,6 +347,9 @@ class OfflineHostOrder {
     'customer_phone': customerPhone,
     'customer_email': customerEmail,
     'payment_method': paymentMethod,
+    'cash_received_amount': cashReceivedAmount,
+    'cash_change_amount': cashChangeAmount,
+    'cash_due_amount': cashDueAmount,
     'status': status,
     'total_amount': totalAmount,
     'event': event,
@@ -358,6 +379,23 @@ class OfflineHostOrder {
             ? json['items_total'] as num
             : num.tryParse(json['items_total']?.toString() ?? '') ?? 0,
         paymentMethod: json['payment_method']?.toString() ?? 'cash',
+        cashReceivedAmount: json['cash_received_amount'] == null
+            ? null
+            : (json['cash_received_amount'] is num
+                  ? json['cash_received_amount'] as num
+                  : num.tryParse(
+                      json['cash_received_amount']?.toString() ?? '',
+                    )),
+        cashChangeAmount: json['cash_change_amount'] == null
+            ? null
+            : (json['cash_change_amount'] is num
+                  ? json['cash_change_amount'] as num
+                  : num.tryParse(json['cash_change_amount']?.toString() ?? '')),
+        cashDueAmount: json['cash_due_amount'] == null
+            ? null
+            : (json['cash_due_amount'] is num
+                  ? json['cash_due_amount'] as num
+                  : num.tryParse(json['cash_due_amount']?.toString() ?? '')),
         status: json['status']?.toString() ?? 'pending',
         totalAmount: json['total_amount'] is num
             ? json['total_amount'] as num
@@ -717,7 +755,9 @@ Future<OfflineDiscoveryResult> _resolveReachableDiscoveryResult(
 ) async {
   final candidates = <String>{
     if (result.serverUrl.trim().isNotEmpty) result.serverUrl.trim(),
-    ...result.candidateUrls.map((item) => item.trim()).where((item) => item.isNotEmpty),
+    ...result.candidateUrls
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty),
     if (result.host.trim().isNotEmpty)
       'http://${result.host.trim()}:${result.port}/api',
   }.toList();
@@ -1425,6 +1465,9 @@ class OfflineHostServer {
       extrasTotal: extrasTotal,
       itemsTotal: itemsTotal,
       paymentMethod: 'cash',
+      cashReceivedAmount: null,
+      cashChangeAmount: null,
+      cashDueAmount: null,
       status: 'pending',
       totalAmount: totalAmount,
       items: items,
@@ -1707,6 +1750,21 @@ class OfflineHostServer {
           body['payment_method']?.toString().trim().isNotEmpty == true
           ? body['payment_method']?.toString().trim()
           : current.paymentMethod,
+      cashReceivedAmount: body['cash_received_amount'] == null
+          ? current.cashReceivedAmount
+          : (body['cash_received_amount'] is num
+                ? body['cash_received_amount'] as num
+                : num.tryParse(body['cash_received_amount']?.toString() ?? '')),
+      cashChangeAmount: body['cash_change_amount'] == null
+          ? current.cashChangeAmount
+          : (body['cash_change_amount'] is num
+                ? body['cash_change_amount'] as num
+                : num.tryParse(body['cash_change_amount']?.toString() ?? '')),
+      cashDueAmount: body['cash_due_amount'] == null
+          ? current.cashDueAmount
+          : (body['cash_due_amount'] is num
+                ? body['cash_due_amount'] as num
+                : num.tryParse(body['cash_due_amount']?.toString() ?? '')),
       status: body['status']?.toString().trim().isNotEmpty == true
           ? body['status']?.toString().trim()
           : current.status,
@@ -1783,7 +1841,17 @@ class OfflineHostServer {
       });
       return;
     }
+    final body = await _readJsonBody(request);
     final updated = current.copyWith(
+      cashReceivedAmount: body['cash_received_amount'] is num
+          ? body['cash_received_amount'] as num
+          : num.tryParse(body['cash_received_amount']?.toString() ?? ''),
+      cashChangeAmount: body['cash_change_amount'] is num
+          ? body['cash_change_amount'] as num
+          : num.tryParse(body['cash_change_amount']?.toString() ?? ''),
+      cashDueAmount: body['cash_due_amount'] is num
+          ? body['cash_due_amount'] as num
+          : num.tryParse(body['cash_due_amount']?.toString() ?? ''),
       status: 'paid',
       updatedAt: DateTime.now().toIso8601String(),
     );

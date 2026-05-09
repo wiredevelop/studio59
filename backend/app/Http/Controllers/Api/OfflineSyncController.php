@@ -126,6 +126,9 @@ class OfflineSyncController extends Controller
                             'extras_total' => $orderPayload['extras_total'] ?? 0,
                             'items_total' => $orderPayload['items_total'] ?? 0,
                             'payment_method' => $orderPayload['payment_method'] ?? 'cash',
+                            'cash_received_amount' => $orderPayload['cash_received_amount'] ?? null,
+                            'cash_change_amount' => $orderPayload['cash_change_amount'] ?? null,
+                            'cash_due_amount' => $orderPayload['cash_due_amount'] ?? null,
                             'status' => $orderPayload['status'] ?? 'pending',
                             'total_amount' => $orderPayload['total_amount'] ?? 0,
                             'created_at' => $orderPayload['created_at'] ?? now(),
@@ -165,7 +168,12 @@ class OfflineSyncController extends Controller
 
                 foreach ($orderUpdates as $update) {
                     if (empty($update['order_id']) || empty($update['status'])) continue;
-                    Order::where('id', $update['order_id'])->update(['status' => $update['status']]);
+                    Order::where('id', $update['order_id'])->update([
+                        'status' => $update['status'],
+                        'cash_received_amount' => $update['cash_received_amount'] ?? null,
+                        'cash_change_amount' => $update['cash_change_amount'] ?? null,
+                        'cash_due_amount' => $update['cash_due_amount'] ?? null,
+                    ]);
                 }
             });
 
