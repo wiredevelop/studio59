@@ -22,18 +22,38 @@ class OfflineSyncController extends Controller
 {
     public function importPhotoBatch(Request $request, Event $event)
     {
+        $files = $this->extractPhotoUploads($request);
         $validated = $request->validate([
-            'photos' => ['required', 'array', 'min:1', 'max:20'],
-            'photos.*' => ['file', 'mimes:jpg,jpeg', 'max:51200'],
             'photos_meta' => ['nullable', 'string'],
         ]);
+        if (count($files) < 1) {
+            throw ValidationException::withMessages([
+                'photos' => 'The photos field is required.',
+            ]);
+        }
+        if (count($files) > 20) {
+            throw ValidationException::withMessages([
+                'photos' => 'No máximo 20 fotos por lote.',
+            ]);
+        }
+        foreach ($files as $file) {
+            $validator = validator(
+                ['photo' => $file],
+                ['photo' => ['file', 'mimes:jpg,jpeg', 'max:51200']],
+            );
+            if ($validator->fails()) {
+                throw ValidationException::withMessages([
+                    'photos' => $validator->errors()->first('photo'),
+                ]);
+            }
+        }
 
         $photosMeta = $this->decodePhotosMeta($validated['photos_meta'] ?? null);
-        $photoMap = $this->importPhotos($event, $request->file('photos', []), $photosMeta);
+        $photoMap = $this->importPhotos($event, $files, $photosMeta);
 
         return response()->json([
             'message' => 'Photos imported',
-            'imported' => count($request->file('photos', [])),
+            'imported' => count($files),
             'mapped' => count($photoMap['id_map'] ?? []),
         ]);
     }
@@ -323,6 +343,47 @@ class OfflineSyncController extends Controller
         }
 
         return is_array($decoded) ? $decoded : [];
+    }
+
+    private function extractPhotoUploads(Request $request): array
+    {
+        $candidates = [
+            $request->file('photos'),
+            $request->file('photos[]'),
+        ];
+
+        foreach ($request->allFiles() as $key => $value) {
+            if (str_starts_with((string) $key, 'photos')) {
+                $candidates[] = $value;
+            }
+        }
+
+        $files = [];
+        $seen = [];
+        foreach ($candidates as $candidate) {
+            if ($candidate instanceof UploadedFile) {
+                $key = spl_object_id($candidate);
+                if (! isset($seen[$key])) {
+                    $files[] = $candidate;
+                    $seen[$key] = true;
+                }
+                continue;
+            }
+            if (! is_array($candidate)) {
+                continue;
+            }
+            foreach ($candidate as $file) {
+                if ($file instanceof UploadedFile) {
+                    $key = spl_object_id($file);
+                    if (! isset($seen[$key])) {
+                        $files[] = $file;
+                        $seen[$key] = true;
+                    }
+                }
+            }
+        }
+
+        return array_values($files);
     }
 
     private function storeImportedPhoto(Event $event, UploadedFile $file, mixed $preferredNumber = null): Photo

@@ -15056,19 +15056,21 @@ class ApiService {
     List<String> photoPaths, {
     List<dynamic> photosMeta = const [],
   }) async {
-    final formPayload = <String, dynamic>{
-      'photos': [
-        for (final photoPath in photoPaths)
+    final form = FormData();
+    for (final photoPath in photoPaths) {
+      form.files.add(
+        MapEntry(
+          'photos[]',
           await MultipartFile.fromFile(
             photoPath,
             filename: path.basename(photoPath),
           ),
-      ],
-    };
-    if (photosMeta.isNotEmpty) {
-      formPayload['photos_meta'] = jsonEncode(photosMeta);
+        ),
+      );
     }
-    final form = FormData.fromMap(formPayload);
+    if (photosMeta.isNotEmpty) {
+      form.fields.add(MapEntry('photos_meta', jsonEncode(photosMeta)));
+    }
     final r = await dio.post(
       '/offline/events/$eventId/import-photos',
       data: form,
