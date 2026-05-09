@@ -81,7 +81,7 @@
                             <span>Clientes</span>
                         </a>
                     @endif
-                    @if($user && $user->hasPermission('offline.export') && $user->role !== 'photographer')
+                    @if($user && $user->hasPermission('offline.import'))
                         <a href="{{ route('offline.index') }}" class="desk-nav-item {{ request()->routeIs('offline.*') ? 'is-active' : '' }}">
                             <span class="desk-icon">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">

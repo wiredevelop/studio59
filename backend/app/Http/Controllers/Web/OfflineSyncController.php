@@ -11,11 +11,6 @@ class OfflineSyncController extends Controller
 {
     public function index()
     {
-        $user = auth()->user();
-        if ($user && $user->role === 'photographer') {
-            abort(403);
-        }
-
         return view('offline.index', [
             'events' => Event::orderByDesc('event_date')->get(),
             'syncs' => OfflineSync::with('event')->orderByDesc('id')->limit(50)->get(),
@@ -24,11 +19,6 @@ class OfflineSyncController extends Controller
 
     public function import(Request $request)
     {
-        $user = $request->user();
-        if ($user && $user->role === 'photographer') {
-            abort(403);
-        }
-
         $validated = $request->validate([
             'event_id' => ['required', 'integer', 'exists:events,id'],
             'payload' => ['required', 'file', 'mimes:json,txt', 'max:20480'],

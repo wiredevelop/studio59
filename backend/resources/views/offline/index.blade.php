@@ -13,6 +13,10 @@
         </select>
     </div>
     <div>
+        <label class="block text-sm">Fotos JPG/JPEG</label>
+        <input type="file" name="photos[]" class="desk-input w-full" accept=".jpg,.jpeg,image/jpeg" multiple>
+    </div>
+    <div>
         <label class="block text-sm">Ficheiro JSON</label>
         <input type="file" name="payload" class="desk-input w-full" accept=".json">
     </div>

@@ -9,8 +9,14 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Client;
 use App\Models\EventSelection;
+use App\Models\Photo;
+use App\Jobs\GeneratePhotoPreview;
+use App\Support\OrderDownloadService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Validation\ValidationException;
 
 class OfflineSyncController extends Controller
 {
@@ -56,6 +62,8 @@ class OfflineSyncController extends Controller
         $validated = $request->validate([
             'device_id' => ['nullable', 'string', 'max:120'],
             'payload' => ['required', 'file', 'mimes:json,txt', 'max:20480'],
+            'photos' => ['nullable', 'array'],
+            'photos.*' => ['file', 'mimes:jpg,jpeg', 'max:51200'],
         ]);
 
         $raw = file_get_contents($validated['payload']->getRealPath());
@@ -76,12 +84,14 @@ class OfflineSyncController extends Controller
 
         try {
             $data = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+            $photoMap = $this->importPhotos($event, $request->file('photos', []), $data['photos'] ?? []);
             $orders = $data['orders'] ?? [];
             $clients = $data['clients'] ?? [];
             $selections = $data['selections'] ?? [];
             $orderUpdates = $data['order_updates'] ?? [];
+            $emailsToSend = [];
 
-            DB::transaction(function () use ($event, $orders, $clients, $selections, $orderUpdates) {
+            DB::transaction(function () use ($event, $orders, $clients, $selections, $orderUpdates, $photoMap, &$emailsToSend) {
                 foreach ($clients as $clientPayload) {
                     $email = $clientPayload['email'] ?? null;
                     $phone = $clientPayload['phone'] ?? null;
@@ -138,10 +148,11 @@ class OfflineSyncController extends Controller
 
                     if (! empty($orderPayload['items']) && is_array($orderPayload['items'])) {
                         foreach ($orderPayload['items'] as $item) {
+                            $resolvedPhotoId = $this->resolveImportedPhotoId($event, $item, $photoMap);
                             OrderItem::query()->firstOrCreate(
                                 [
                                     'order_id' => $order->id,
-                                    'photo_id' => $item['photo_id'] ?? null,
+                                    'photo_id' => $resolvedPhotoId,
                                 ],
                                 [
                                     'price' => $item['price'] ?? 0,
@@ -150,16 +161,25 @@ class OfflineSyncController extends Controller
                             );
                         }
                     }
+
+                    if (
+                        in_array($order->status, ['paid', 'delivered'], true) &&
+                        in_array((string) $order->product_type, ['digital', 'both'], true) &&
+                        ! empty($order->customer_email)
+                    ) {
+                        $emailsToSend[] = $order->id;
+                    }
                 }
 
                 foreach ($selections as $sel) {
                     if (empty($sel['uuid'])) continue;
+                    $resolvedPhotoId = $this->resolveImportedPhotoId($event, $sel, $photoMap);
                     EventSelection::firstOrCreate(
                         ['uuid' => $sel['uuid']],
                         [
                             'event_id' => $event->id,
                             'device_id' => $sel['device_id'] ?? null,
-                            'photo_id' => $sel['photo_id'] ?? null,
+                            'photo_id' => $resolvedPhotoId,
                             'status' => $sel['status'] ?? 'selected',
                             'selected_at' => $sel['selected_at'] ?? now(),
                         ]
@@ -177,6 +197,13 @@ class OfflineSyncController extends Controller
                 }
             });
 
+            foreach (array_unique($emailsToSend) as $orderId) {
+                $order = Order::query()->find($orderId);
+                if ($order) {
+                    OrderDownloadService::sendAccessLink($order, true);
+                }
+            }
+
             $sync->update(['status' => 'completed']);
 
             return response()->json(['message' => 'Imported', 'sync_id' => $sync->id]);
@@ -188,5 +215,165 @@ class OfflineSyncController extends Controller
 
             return response()->json(['message' => 'Import failed', 'detail' => $e->getMessage()], 422);
         }
+    }
+
+    private function importPhotos(Event $event, array $files, array $photosMeta): array
+    {
+        $idMap = [];
+        $numberMap = [];
+
+        $metaByName = collect($photosMeta)
+            ->filter(fn ($photo) => is_array($photo))
+            ->mapWithKeys(function (array $photo) {
+                $paths = [
+                    $photo['original_path'] ?? null,
+                    $photo['preview_path'] ?? null,
+                ];
+                foreach ($paths as $path) {
+                    if (! is_string($path) || trim($path) === '') {
+                        continue;
+                    }
+                    return [basename($path) => $photo];
+                }
+
+                return [];
+            });
+        $metaByNumber = collect($photosMeta)
+            ->filter(fn ($photo) => is_array($photo) && ! empty($photo['number']))
+            ->mapWithKeys(fn (array $photo) => [trim((string) $photo['number']) => $photo]);
+
+        foreach ($files as $file) {
+            if (! $file instanceof UploadedFile) {
+                continue;
+            }
+
+            $meta = $metaByName->get($file->getClientOriginalName());
+            $numberFromFile = preg_replace('/\D+/', '', pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME));
+            if (! is_array($meta) && is_string($numberFromFile) && $numberFromFile !== '') {
+                $meta = $metaByNumber->get(str_pad($numberFromFile, 4, '0', STR_PAD_LEFT));
+            }
+            $photo = $this->storeImportedPhoto(
+                $event,
+                $file,
+                is_array($meta) ? ($meta['number'] ?? null) : null
+            );
+
+            if (is_array($meta) && ! empty($meta['id'])) {
+                $idMap[(int) $meta['id']] = $photo->id;
+            }
+            if (! empty($photo->number)) {
+                $numberMap[(string) $photo->number] = $photo->id;
+            }
+        }
+
+        $existingByNumber = Photo::query()
+            ->where('event_id', $event->id)
+            ->get(['id', 'number'])
+            ->keyBy('number');
+
+        foreach ($photosMeta as $meta) {
+            if (! is_array($meta)) {
+                continue;
+            }
+            $number = isset($meta['number']) ? trim((string) $meta['number']) : '';
+            if ($number !== '' && isset($existingByNumber[$number])) {
+                $numberMap[$number] = $existingByNumber[$number]->id;
+            }
+            if (! empty($meta['id']) && $number !== '' && isset($numberMap[$number])) {
+                $idMap[(int) $meta['id']] = $numberMap[$number];
+            }
+        }
+
+        return [
+            'id_map' => $idMap,
+            'number_map' => $numberMap,
+        ];
+    }
+
+    private function storeImportedPhoto(Event $event, UploadedFile $file, mixed $preferredNumber = null): Photo
+    {
+        $imageType = @exif_imagetype($file->getRealPath());
+        if ($imageType !== IMAGETYPE_JPEG) {
+            throw ValidationException::withMessages([
+                'photos' => 'Só são aceites fotos JPG/JPEG na importação offline.',
+            ]);
+        }
+
+        $checksum = hash_file('sha256', $file->getRealPath());
+        $existingByChecksum = Photo::query()
+            ->where('event_id', $event->id)
+            ->where('checksum', $checksum)
+            ->first();
+        if ($existingByChecksum) {
+            return $existingByChecksum;
+        }
+
+        $number = trim((string) ($preferredNumber ?? ''));
+        if ($number !== '') {
+            $conflict = Photo::query()
+                ->where('event_id', $event->id)
+                ->where('number', $number)
+                ->first();
+            if ($conflict) {
+                throw ValidationException::withMessages([
+                    'photos' => "Já existe uma foto #{$number} neste evento com ficheiro diferente.",
+                ]);
+            }
+        } else {
+            $number = str_pad(
+                (string) ((int) (Photo::query()->where('event_id', $event->id)->max('number') ?? 0) + 1),
+                4,
+                '0',
+                STR_PAD_LEFT
+            );
+        }
+
+        $originalPath = 'events/'.$event->id.'/originals/'.$number.'.jpg';
+        Storage::disk('local')->makeDirectory(dirname($originalPath));
+        Storage::disk('local')->put($originalPath, file_get_contents($file->getRealPath()));
+        [$width, $height] = getimagesize(Storage::disk('local')->path($originalPath)) ?: [null, null];
+
+        $photo = Photo::query()->create([
+            'event_id' => $event->id,
+            'number' => $number,
+            'original_path' => $originalPath,
+            'mime' => 'image/jpeg',
+            'size' => Storage::disk('local')->size($originalPath),
+            'width' => $width,
+            'height' => $height,
+            'status' => 'active',
+            'preview_status' => 'pending',
+            'preview_error' => null,
+            'checksum' => $checksum,
+        ]);
+
+        GeneratePhotoPreview::dispatchSync($photo->id);
+
+        return $photo;
+    }
+
+    private function resolveImportedPhotoId(Event $event, array $payload, array $photoMap): ?int
+    {
+        $number = isset($payload['photo_number']) ? trim((string) $payload['photo_number']) : '';
+        if ($number !== '' && isset($photoMap['number_map'][$number])) {
+            return (int) $photoMap['number_map'][$number];
+        }
+
+        $photoId = isset($payload['photo_id']) ? (int) $payload['photo_id'] : 0;
+        if ($photoId > 0 && isset($photoMap['id_map'][$photoId])) {
+            return (int) $photoMap['id_map'][$photoId];
+        }
+
+        if ($photoId > 0) {
+            $existing = Photo::query()
+                ->where('event_id', $event->id)
+                ->where('id', $photoId)
+                ->first();
+            if ($existing) {
+                return $existing->id;
+            }
+        }
+
+        return null;
     }
 }

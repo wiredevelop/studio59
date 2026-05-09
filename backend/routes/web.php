@@ -179,7 +179,7 @@ Route::middleware(['auth', 'nocache'])->group(function () {
         Route::delete('/clients/{client}', [ClientController::class, 'destroy'])->name('clients.destroy');
     });
 
-    Route::middleware('permission:offline.export')->group(function () {
+    Route::middleware('permission:offline.import')->group(function () {
         Route::get('/offline', [WebOfflineSyncController::class, 'index'])->name('offline.index');
     });
     Route::middleware('permission:offline.import')->group(function () {

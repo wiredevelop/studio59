@@ -22,6 +22,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:path/path.dart' as path;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
@@ -1596,6 +1597,28 @@ Future<File> writeOfflineExportFile(
   final file = File(path);
   await file.writeAsString(jsonEncode(payload));
   return file;
+}
+
+const Set<String> kOfflinePhotoExtensions = {'jpg', 'jpeg'};
+
+List<String> listOfflinePhotoPathsFromDirectory(String directoryPath) {
+  final dir = Directory(directoryPath);
+  if (!dir.existsSync()) return const [];
+  final files =
+      dir
+          .listSync()
+          .whereType<File>()
+          .where((file) {
+            final ext = path
+                .extension(file.path)
+                .toLowerCase()
+                .replaceFirst('.', '');
+            return kOfflinePhotoExtensions.contains(ext);
+          })
+          .map((file) => file.path)
+          .toList()
+        ..sort();
+  return files;
 }
 
 class QrScanPage extends StatefulWidget {
@@ -5050,10 +5073,10 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
                 MaterialPageRoute(builder: (_) => const StaffClientsPage()),
               ),
             ),
-          if (user.hasPermission('offline.export') && !isPhotographer)
+          if (user.hasPermission('offline.import'))
             _StaffMenuTile(
               title: 'Sincronizar',
-              subtitle: 'Exportar/Importar dados offline',
+              subtitle: 'Importar fotos e JSON offline',
               icon: Icons.sync,
               onTap: () => Navigator.push(
                 context,
@@ -5270,7 +5293,7 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         subtitle: 'Offline e importacao',
         builder: (context, user, token) =>
             DesktopSyncView(user: user, token: token),
-        visibleWhen: (u) => u.hasPermission('offline.export'),
+        visibleWhen: (u) => u.hasPermission('offline.import'),
       ),
       DesktopNavItem(
         id: 'reports',
@@ -6931,91 +6954,7 @@ class DesktopSyncView extends StatelessWidget {
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(kDeskGutter),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _DeskSectionHeader('Sincronizacao offline'),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _DeskCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Estado',
-                        style: TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: const [
-                          _DeskStatusBadge(
-                            'ONLINE',
-                            color: Colors.lightGreenAccent,
-                          ),
-                          SizedBox(width: 8),
-                          Text('Sincronizacao ativa'),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Ultimo sync: há 2 minutos',
-                        style: TextStyle(color: Colors.white.withOpacity(0.6)),
-                      ),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        children: [
-                          OutlinedButton.icon(
-                            onPressed: () {},
-                            icon: const Icon(Icons.file_download),
-                            label: const Text('Exportar'),
-                          ),
-                          OutlinedButton.icon(
-                            onPressed: () {},
-                            icon: const Icon(Icons.file_upload),
-                            label: const Text('Importar'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _DeskCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Pendentes',
-                        style: TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Pedidos offline: 1',
-                        style: TextStyle(color: Colors.white.withOpacity(0.6)),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Uploads em fila: 0',
-                        style: TextStyle(color: Colors.white.withOpacity(0.6)),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Erro recente: nenhum',
-                        style: TextStyle(color: Colors.white.withOpacity(0.6)),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+      child: const OfflineSyncPanel(embedded: true),
     );
   }
 }
@@ -14946,15 +14885,26 @@ class ApiService {
     String token,
     int eventId,
     String filePath,
-    String deviceId,
-  ) async {
-    final form = FormData.fromMap({
+    String deviceId, {
+    List<String> photoPaths = const [],
+  }) async {
+    final formPayload = <String, dynamic>{
       'device_id': deviceId,
       'payload': await MultipartFile.fromFile(
         filePath,
-        filename: 'offline.json',
+        filename: path.basename(filePath),
       ),
-    });
+    };
+    if (photoPaths.isNotEmpty) {
+      formPayload['photos'] = [
+        for (final photoPath in photoPaths)
+          await MultipartFile.fromFile(
+            photoPath,
+            filename: path.basename(photoPath),
+          ),
+      ];
+    }
+    final form = FormData.fromMap(formPayload);
     final r = await dio.post(
       '/offline/events/$eventId/import',
       data: form,
@@ -16313,121 +16263,16 @@ class StaffSyncPage extends ConsumerStatefulWidget {
 }
 
 class _StaffSyncPageState extends ConsumerState<StaffSyncPage> {
-  List<StaffEvent> _events = [];
-  int? _eventId;
-  bool _loading = false;
-
   @override
   void initState() {
     super.initState();
     saveStaffLastRoute('sync', userId: ref.read(staffUserProvider)?.id);
-    _loadEvents();
-  }
-
-  Future<void> _loadEvents() async {
-    final token = ref.read(staffTokenProvider);
-    final user = ref.read(staffUserProvider);
-    if (token == null || user == null) return;
-    final events = await ref
-        .read(apiProvider)
-        .staffEvents(token, assignedOnly: !_canSeeAllEvents(user));
-    final visibleEvents = _filterEventsForUser(events, user);
-    setState(() {
-      _events = visibleEvents;
-      _eventId ??= visibleEvents.isNotEmpty ? visibleEvents.first.id : null;
-    });
-  }
-
-  Future<void> _exportJson() async {
-    final token = ref.read(staffTokenProvider);
-    if (token == null || _eventId == null) return;
-    setState(() => _loading = true);
-    try {
-      final json = await ref
-          .read(apiProvider)
-          .offlineExportJson(token, _eventId!);
-      final file = await writeOfflineExportFile(_eventId!, json);
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Exportado: ${file.path}')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Erro export: $e')));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _uploadQueue() async {
-    final token = ref.read(staffTokenProvider);
-    if (token == null || _eventId == null) return;
-    setState(() => _loading = true);
-    try {
-      final payload = await buildOfflinePayload(_eventId!);
-      if (payload['orders'].isEmpty) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Sem pedidos offline.')));
-        return;
-      }
-      final file = await writeOfflineExportFile(_eventId!, payload);
-      final deviceId = await getDeviceId();
-      await ref
-          .read(apiProvider)
-          .offlineImportFile(token, _eventId!, file.path, deviceId);
-      await clearOfflineQueue(_eventId!);
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Sincronizado.')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Erro sync: $e')));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _uploadFile() async {
-    final token = ref.read(staffTokenProvider);
-    if (token == null || _eventId == null) return;
-    final picked = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['json'],
-    );
-    if (picked == null || picked.files.isEmpty) return;
-    final path = picked.files.single.path;
-    if (path == null) return;
-    setState(() => _loading = true);
-    try {
-      final deviceId = await getDeviceId();
-      await ref
-          .read(apiProvider)
-          .offlineImportFile(token, _eventId!, path, deviceId);
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Ficheiro importado.')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Erro import: $e')));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(staffUserProvider);
-    if (user != null && _isPhotographerRole(user.role)) {
+    if (user != null && !user.hasPermission('offline.import')) {
       return Scaffold(
         appBar: buildNavAppBar(context, 'Sincronizar'),
         body: const Center(child: Text('Sem acesso.')),
@@ -16440,42 +16285,286 @@ class _StaffSyncPageState extends ConsumerState<StaffSyncPage> {
 
     return Scaffold(
       appBar: buildNavAppBar(context, 'Sincronizar'),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            DropdownButtonFormField<int>(
-              value: _eventId,
-              decoration: const InputDecoration(
-                labelText: 'Evento',
-                border: OutlineInputBorder(),
-              ),
-              items: _events
-                  .map(
-                    (e) => DropdownMenuItem(value: e.id, child: Text(e.name)),
-                  )
-                  .toList(),
-              onChanged: _loading ? null : (v) => setState(() => _eventId = v),
-            ),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: _loading ? null : _exportJson,
-              child: const Text('Exportar JSON do servidor'),
-            ),
-            const SizedBox(height: 8),
-            FilledButton.tonal(
-              onPressed: _loading ? null : _uploadQueue,
-              child: const Text('Enviar fila offline deste dispositivo'),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton(
-              onPressed: _loading ? null : _uploadFile,
-              child: const Text('Importar ficheiro JSON'),
-            ),
-          ],
-        ),
+      body: const SingleChildScrollView(
+        padding: EdgeInsets.all(16),
+        child: OfflineSyncPanel(),
       ),
+    );
+  }
+}
+
+class OfflineSyncPanel extends ConsumerStatefulWidget {
+  const OfflineSyncPanel({super.key, this.embedded = false});
+
+  final bool embedded;
+
+  @override
+  ConsumerState<OfflineSyncPanel> createState() => _OfflineSyncPanelState();
+}
+
+class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
+  List<StaffEvent> _events = [];
+  int? _eventId;
+  bool _loading = false;
+  String? _jsonPath;
+  List<String> _photoPaths = const [];
+  String? _photoSourceLabel;
+  String? _statusMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEvents();
+  }
+
+  Future<void> _loadEvents() async {
+    final token = ref.read(staffTokenProvider);
+    final user = ref.read(staffUserProvider);
+    if (token == null || user == null) return;
+    final events = await ref
+        .read(apiProvider)
+        .staffEvents(token, assignedOnly: !_canSeeAllEvents(user));
+    final visibleEvents = _filterEventsForUser(events, user);
+    if (!mounted) return;
+    setState(() {
+      _events = visibleEvents;
+      _eventId ??= visibleEvents.isNotEmpty ? visibleEvents.first.id : null;
+    });
+  }
+
+  Future<void> _pickJsonFile() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+    if (picked == null || picked.files.isEmpty) return;
+    final selectedPath = picked.files.single.path;
+    if (selectedPath == null || !mounted) return;
+    setState(() {
+      _jsonPath = selectedPath;
+      _statusMessage = null;
+    });
+  }
+
+  Future<void> _pickPhotos() async {
+    if (isDesktopPlatform()) {
+      final directoryPath = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Selecionar pasta das fotos',
+      );
+      if (directoryPath != null) {
+        final files = listOfflinePhotoPathsFromDirectory(directoryPath);
+        if (!mounted) return;
+        setState(() {
+          _photoPaths = files;
+          _photoSourceLabel = directoryPath;
+          _statusMessage = null;
+        });
+        return;
+      }
+    }
+
+    final picked = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      type: FileType.custom,
+      allowedExtensions: kOfflinePhotoExtensions.toList(),
+    );
+    if (picked == null || picked.files.isEmpty || !mounted) return;
+    final files = picked.files
+        .map((file) => file.path)
+        .whereType<String>()
+        .toList();
+    setState(() {
+      _photoPaths = files;
+      _photoSourceLabel = files.isEmpty ? null : '${files.length} ficheiros';
+      _statusMessage = null;
+    });
+  }
+
+  Future<Map<String, int>> _loadSummary(String token, int eventId) async {
+    final results = await Future.wait([
+      ref.read(apiProvider).staffOrdersTotal(token, eventId: eventId),
+      ref.read(apiProvider).staffEventPhotos(token, eventId, ''),
+    ]);
+    return {
+      'orders': results[0] as int,
+      'photos': (results[1] as List<StaffPhoto>).length,
+    };
+  }
+
+  Future<void> _importPackage() async {
+    final token = ref.read(staffTokenProvider);
+    if (token == null || _eventId == null || _jsonPath == null) return;
+    setState(() => _loading = true);
+    try {
+      final deviceId = await getDeviceId();
+      await ref
+          .read(apiProvider)
+          .offlineImportFile(
+            token,
+            _eventId!,
+            _jsonPath!,
+            deviceId,
+            photoPaths: _photoPaths,
+          );
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = 'Importação concluída.';
+        _jsonPath = null;
+        _photoPaths = const [];
+        _photoSourceLabel = null;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Importação concluída.')));
+    } catch (e) {
+      if (!mounted) return;
+      final message = formatUiError(e);
+      setState(() => _statusMessage = 'Erro: $message');
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro import: $message')));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final token = ref.watch(staffTokenProvider);
+    if (token == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (widget.embedded) ...[
+          const _DeskSectionHeader('Sincronizacao offline'),
+          const SizedBox(height: 12),
+        ],
+        DropdownButtonFormField<int>(
+          value: _eventId,
+          decoration: const InputDecoration(
+            labelText: '1. Evento',
+            border: OutlineInputBorder(),
+          ),
+          items: _events
+              .map(
+                (event) =>
+                    DropdownMenuItem(value: event.id, child: Text(event.name)),
+              )
+              .toList(),
+          onChanged: _loading
+              ? null
+              : (value) => setState(() => _eventId = value),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _loading ? null : _pickPhotos,
+          icon: const Icon(Icons.photo_library_outlined),
+          label: Text(
+            _photoPaths.isEmpty
+                ? '2. Escolher fotos JPG/JPEG'
+                : '2. Fotos selecionadas: ${_photoPaths.length}',
+          ),
+        ),
+        if ((_photoSourceLabel ?? '').isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            _photoSourceLabel!,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.65),
+              fontSize: 12,
+            ),
+          ),
+        ],
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: _loading ? null : _pickJsonFile,
+          icon: const Icon(Icons.description_outlined),
+          label: Text(
+            _jsonPath == null
+                ? '3. Escolher ficheiro JSON'
+                : '3. JSON: ${path.basename(_jsonPath!)}',
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _loading || _eventId == null || _jsonPath == null
+                ? null
+                : _importPackage,
+            icon: _loading
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.cloud_upload_outlined),
+            label: Text(_loading ? 'A importar...' : 'Importar'),
+          ),
+        ),
+        if ((_statusMessage ?? '').isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text(_statusMessage!),
+        ],
+        const SizedBox(height: 18),
+        if (_eventId != null)
+          FutureBuilder<Map<String, int>>(
+            future: _loadSummary(token, _eventId!),
+            builder: (context, snapshot) {
+              final orders = snapshot.data?['orders'] ?? 0;
+              final photos = snapshot.data?['photos'] ?? 0;
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  _DeskCard(
+                    child: SizedBox(
+                      width: 260,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Base de dados',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 8),
+                          Text('Pedidos no evento: $orders'),
+                          const SizedBox(height: 6),
+                          Text('Fotos no evento: $photos'),
+                        ],
+                      ),
+                    ),
+                  ),
+                  _DeskCard(
+                    child: SizedBox(
+                      width: 260,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Pacote selecionado',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 8),
+                          Text('Fotos: ${_photoPaths.length}'),
+                          const SizedBox(height: 6),
+                          Text(
+                            _jsonPath == null
+                                ? 'JSON: nenhum'
+                                : 'JSON: ${path.basename(_jsonPath!)}',
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+      ],
     );
   }
 }
