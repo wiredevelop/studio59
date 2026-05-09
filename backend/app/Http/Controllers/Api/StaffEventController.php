@@ -836,7 +836,7 @@ class StaffEventController extends Controller
                     'checksum' => $checksum,
                 ]);
 
-                GeneratePhotoPreview::dispatchSync($photo->id);
+                GeneratePhotoPreview::dispatch($photo->id);
                 Audit::log('api.photo.uploaded', Photo::class, $photo->id, [
                     'event_id' => $event->id,
                     'number' => $photo->number,

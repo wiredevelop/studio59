@@ -443,7 +443,7 @@ class OfflineSyncController extends Controller
             'checksum' => $checksum,
         ]);
 
-        GeneratePhotoPreview::dispatchSync($photo->id);
+        GeneratePhotoPreview::dispatch($photo->id);
 
         return $photo;
     }

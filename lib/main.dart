@@ -15045,6 +15045,8 @@ class ApiService {
       options: Options(
         headers: {'Authorization': 'Bearer $token'},
         contentType: 'multipart/form-data',
+        sendTimeout: const Duration(minutes: 10),
+        receiveTimeout: const Duration(minutes: 10),
       ),
     );
     if (r.statusCode != 200) throw _errorFromResponse(r);
@@ -15077,6 +15079,8 @@ class ApiService {
       options: Options(
         headers: {'Authorization': 'Bearer $token'},
         contentType: 'multipart/form-data',
+        sendTimeout: const Duration(minutes: 10),
+        receiveTimeout: const Duration(minutes: 10),
       ),
     );
     if (r.statusCode != 200) throw _errorFromResponse(r);
@@ -16469,7 +16473,7 @@ class OfflineSyncPanel extends ConsumerStatefulWidget {
 }
 
 class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
-  static const int _photoBatchSize = 10;
+  static const int _photoBatchSize = 20;
 
   List<StaffEvent> _events = [];
   int? _eventId;
@@ -16587,17 +16591,48 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     };
   }
 
-  Future<List<dynamic>> _loadOfflinePhotosMeta(String jsonPath) async {
+  Future<Map<String, dynamic>> _loadOfflinePhotosMetaIndex(
+    String jsonPath,
+  ) async {
     final raw = await File(jsonPath).readAsString();
     final decoded = jsonDecode(raw);
     if (decoded is! Map<String, dynamic>) {
-      return const [];
+      return const {};
     }
     final photos = decoded['photos'];
     if (photos is! List) {
-      return const [];
+      return const {};
     }
-    return photos.whereType<dynamic>().toList();
+    final index = <String, dynamic>{};
+    for (final photo in photos.whereType<Map>()) {
+      final map = Map<String, dynamic>.from(photo.cast<String, dynamic>());
+      final originalPath = map['original_path']?.toString();
+      final previewPath = map['preview_path']?.toString();
+      final fileName = originalPath != null && originalPath.isNotEmpty
+          ? path.basename(originalPath)
+          : previewPath != null && previewPath.isNotEmpty
+          ? path.basename(previewPath)
+          : null;
+      if (fileName != null && fileName.isNotEmpty) {
+        index[fileName.toLowerCase()] = map;
+      }
+    }
+    return index;
+  }
+
+  List<dynamic> _matchPhotosMetaForBatch(
+    Map<String, dynamic> photoMetaIndex,
+    List<String> batchPaths,
+  ) {
+    final matched = <dynamic>[];
+    for (final photoPath in batchPaths) {
+      final fileName = path.basename(photoPath).toLowerCase();
+      final meta = photoMetaIndex[fileName];
+      if (meta != null) {
+        matched.add(meta);
+      }
+    }
+    return matched;
   }
 
   Iterable<List<String>> _photoBatches(List<String> photoPaths) sync* {
@@ -16617,22 +16652,27 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
           'Sem ligação ao servidor online. Fecha a sessão offline ou verifica a internet.',
         );
       }
-      final photosMeta = await _loadOfflinePhotosMeta(_jsonPath!);
+      final photoMetaIndex = await _loadOfflinePhotosMetaIndex(_jsonPath!);
       if (_photoPaths.isNotEmpty) {
         final batches = _photoBatches(_photoPaths).toList();
+        var uploadedPhotos = 0;
         for (var i = 0; i < batches.length; i++) {
+          final batch = batches[i];
+          final batchMeta = _matchPhotosMetaForBatch(photoMetaIndex, batch);
           if (!mounted) return;
           setState(() {
-            _statusMessage = 'A importar fotos ${i + 1}/${batches.length}...';
+            _statusMessage =
+                'A importar fotos ${uploadedPhotos + 1}-${uploadedPhotos + batch.length} de ${_photoPaths.length}...';
           });
           await ref
               .read(apiProvider)
               .offlineImportPhotoBatch(
                 token,
                 _eventId!,
-                batches[i],
-                photosMeta: photosMeta,
+                batch,
+                photosMeta: batchMeta,
               );
+          uploadedPhotos += batch.length;
         }
       }
       if (!mounted) return;
