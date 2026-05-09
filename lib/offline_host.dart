@@ -1283,15 +1283,20 @@ class OfflineHostServer {
     final slice = start >= total
         ? <OfflineHostPhoto>[]
         : filtered.skip(start).take(safePerPage).toList();
-    final host =
-        request.headers.host ?? '${session.serverHost}:${session.port}';
+    final requested = request.requestedUri;
     await _json(request, HttpStatus.ok, {
       'data': [
         for (final photo in slice)
           {
             'id': photo.id,
             'number': photo.number,
-            'preview_url': 'http://$host/offline/photos/${photo.id}',
+            'preview_url': requested
+                .replace(
+                  path: '/offline/photos/${photo.id}',
+                  query: null,
+                  fragment: null,
+                )
+                .toString(),
           },
       ],
       'total': total,

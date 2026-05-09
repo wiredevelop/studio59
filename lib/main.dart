@@ -317,6 +317,16 @@ class _Studio59AppState extends ConsumerState<Studio59App> {
           await saveAppRuntimeConfig(config);
         } catch (_) {}
       }
+    } else if (looksLikeLocalApiBaseUrl(config.apiBaseUrl)) {
+      final backupConfig = await restoreBackedUpRuntimeConfig();
+      if (backupConfig != null) {
+        final backupReachable = await ApiService(backupConfig).pingPublic();
+        if (backupReachable) {
+          config = backupConfig;
+          await saveAppRuntimeConfig(config);
+          await clearBackedUpRuntimeConfig();
+        }
+      }
     }
     ref.read(appRuntimeConfigProvider.notifier).state = config;
     await _initAppLinks();
@@ -549,7 +559,10 @@ class _HomePageState extends ConsumerState<HomePage> {
       final token = prefs.getString('staff_token');
       final userRaw = prefs.getString('staff_user');
       if (token == null || userRaw == null) return;
-      final onlineReachable = await ref.read(apiProvider).pingPublic();
+      var onlineReachable = await ref.read(apiProvider).pingPublic();
+      if (!onlineReachable) {
+        onlineReachable = await _tryRestoreOnlineRuntimeConfig();
+      }
       if (!onlineReachable) {
         ref.read(staffTokenProvider.notifier).state = null;
         ref.read(staffUserProvider.notifier).state = null;
@@ -572,21 +585,64 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
   }
 
-  Future<void> _applyOfflineDiscovery(OfflineDiscoveryResult discovery) async {
+  Future<bool> _tryRestoreOnlineRuntimeConfig() async {
     final current = ref.read(appRuntimeConfigProvider);
-    if (current.apiBaseUrl == discovery.serverUrl) return;
+    if (!looksLikeLocalApiBaseUrl(current.apiBaseUrl)) return false;
+    final backupConfig = await restoreBackedUpRuntimeConfig();
+    if (backupConfig == null) return false;
+    final backupReachable = await ApiService(backupConfig).pingPublic();
+    if (!backupReachable) return false;
+    await saveAppRuntimeConfig(backupConfig);
+    ref.read(appRuntimeConfigProvider.notifier).state = backupConfig;
+    await clearBackedUpRuntimeConfig();
+    return true;
+  }
+
+  Future<void> _applyOfflineApiBaseUrl(String apiBaseUrl) async {
+    final current = ref.read(appRuntimeConfigProvider);
+    if (current.apiBaseUrl == apiBaseUrl) return;
     if (!looksLikeLocalApiBaseUrl(current.apiBaseUrl)) {
       await backupRuntimeConfig(current);
     }
-    final next = current.copyWith(
-      apiBaseUrl: discovery.serverUrl,
-      apiFallbackIp: '',
-    );
+    final next = current.copyWith(apiBaseUrl: apiBaseUrl, apiFallbackIp: '');
     await saveAppRuntimeConfig(next);
     ref.read(appRuntimeConfigProvider.notifier).state = next;
     ref.read(staffTokenProvider.notifier).state = null;
     ref.read(staffUserProvider.notifier).state = null;
     await clearStaffSession();
+  }
+
+  Future<void> _applyOfflineDiscovery(OfflineDiscoveryResult discovery) async {
+    await _applyOfflineApiBaseUrl(discovery.serverUrl);
+  }
+
+  Future<bool> _ensureOfflineAccess({String? qrRaw}) async {
+    if (await ref.read(apiProvider).pingPublic()) {
+      return true;
+    }
+    if (qrRaw != null && qrRaw.trim().isNotEmpty) {
+      await _maybeApplyQrRuntimeConfig(qrRaw);
+      if (await ref.read(apiProvider).pingPublic()) {
+        return true;
+      }
+    }
+    if (_offlineDiscovery != null) {
+      await _applyOfflineDiscovery(_offlineDiscovery!);
+      if (await ref.read(apiProvider).pingPublic()) {
+        return true;
+      }
+    }
+    final discovery = await discoverOfflineSession(
+      timeout: const Duration(seconds: 4),
+    );
+    if (discovery == null) return false;
+    await _applyOfflineDiscovery(discovery);
+    if (!mounted) return false;
+    setState(() {
+      _offlineDiscovery = discovery;
+      _offlineDiscoveryError = null;
+    });
+    return ref.read(apiProvider).pingPublic();
   }
 
   Future<void> _discoverOfflineSession({bool manual = false}) async {
@@ -596,7 +652,6 @@ class _HomePageState extends ConsumerState<HomePage> {
       if (manual) _offlineDiscoveryError = null;
     });
     try {
-      final currentConfig = ref.read(appRuntimeConfigProvider);
       final onlineReachable = await ref.read(apiProvider).pingPublic();
       if (onlineReachable) {
         if (!mounted) return;
@@ -607,23 +662,14 @@ class _HomePageState extends ConsumerState<HomePage> {
         });
         return;
       }
-      if (looksLikeLocalApiBaseUrl(currentConfig.apiBaseUrl)) {
-        final backupConfig = await restoreBackedUpRuntimeConfig();
-        if (backupConfig != null) {
-          final backupReachable = await ApiService(backupConfig).pingPublic();
-          if (backupReachable) {
-            await saveAppRuntimeConfig(backupConfig);
-            ref.read(appRuntimeConfigProvider.notifier).state = backupConfig;
-            await clearBackedUpRuntimeConfig();
-            if (!mounted) return;
-            setState(() {
-              _discoveringOffline = false;
-              _offlineDiscovery = null;
-              _offlineDiscoveryError = null;
-            });
-            return;
-          }
-        }
+      if (await _tryRestoreOnlineRuntimeConfig()) {
+        if (!mounted) return;
+        setState(() {
+          _discoveringOffline = false;
+          _offlineDiscovery = null;
+          _offlineDiscoveryError = null;
+        });
+        return;
       }
       final discovery = await discoverOfflineSession(
         timeout: manual
@@ -671,18 +717,15 @@ class _HomePageState extends ConsumerState<HomePage> {
         .replace(path: apiPath, query: null, fragment: null)
         .toString();
     if (!looksLikeLocalApiBaseUrl(apiBaseUrl)) return;
-    final current = ref.read(appRuntimeConfigProvider);
-    final next = current.copyWith(apiBaseUrl: apiBaseUrl, apiFallbackIp: '');
-    await saveAppRuntimeConfig(next);
-    ref.read(appRuntimeConfigProvider.notifier).state = next;
-    ref.read(staffTokenProvider.notifier).state = null;
-    ref.read(staffUserProvider.notifier).state = null;
-    await clearStaffSession();
+    await _applyOfflineApiBaseUrl(apiBaseUrl);
   }
 
   Future<void> _enterByQrToken(String raw) async {
     try {
-      await _maybeApplyQrRuntimeConfig(raw);
+      final ready = await _ensureOfflineAccess(qrRaw: raw);
+      if (!ready) {
+        throw Exception('Não foi possível ligar à sessão offline.');
+      }
       final token = extractQrToken(raw);
       final session = await ref.read(apiProvider).enterEventByQr(token);
       ref.read(guestSessionProvider.notifier).state = session;
@@ -704,6 +747,10 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   Future<void> _enterByPin(String pin) async {
     try {
+      final ready = await _ensureOfflineAccess();
+      if (!ready) {
+        throw Exception('Não foi possível ligar à sessão offline.');
+      }
       final session = await ref.read(apiProvider).enterEventByPin(pin);
       ref.read(guestSessionProvider.notifier).state = session;
       ref.read(cartProvider.notifier).clear();
@@ -893,9 +940,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                 ),
               ),
               const SizedBox(height: 32),
-              if (_offlineDiscovery != null ||
-                  _discoveringOffline ||
-                  _offlineDiscoveryError != null)
+              if (_offlineDiscovery != null || _offlineDiscoveryError != null)
                 Container(
                   width: double.infinity,
                   margin: const EdgeInsets.only(bottom: 20),
@@ -1491,6 +1536,8 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                           child: Image.network(
                             photo.previewUrl!,
                             fit: BoxFit.contain,
+                            cacheWidth: 1800,
+                            filterQuality: FilterQuality.medium,
                           ),
                         ),
                       ),
@@ -1737,6 +1784,8 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                                             photo.previewUrl!,
                                             fit: BoxFit.cover,
                                             width: double.infinity,
+                                            cacheWidth: 1200,
+                                            filterQuality: FilterQuality.medium,
                                             errorBuilder:
                                                 (context, error, stackTrace) =>
                                                     const Center(
@@ -2095,6 +2144,8 @@ class _CartPageState extends ConsumerState<CartPage> {
                                 width: 56,
                                 height: 56,
                                 fit: BoxFit.cover,
+                                cacheWidth: 320,
+                                filterQuality: FilterQuality.medium,
                               ),
                         title: Text('Foto ${item.number}'),
                         subtitle: Text('Quantidade: ${item.quantity}'),
@@ -3434,10 +3485,50 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
     }
   }
 
+  Future<bool> _tryRestoreOnlineRuntimeConfig() async {
+    final current = ref.read(appRuntimeConfigProvider);
+    if (!looksLikeLocalApiBaseUrl(current.apiBaseUrl)) return false;
+    final backupConfig = await restoreBackedUpRuntimeConfig();
+    if (backupConfig == null) return false;
+    final backupReachable = await ApiService(backupConfig).pingPublic();
+    if (!backupReachable) return false;
+    await saveAppRuntimeConfig(backupConfig);
+    ref.read(appRuntimeConfigProvider.notifier).state = backupConfig;
+    await clearBackedUpRuntimeConfig();
+    return true;
+  }
+
+  Future<void> _applyOfflineApiBaseUrl(String apiBaseUrl) async {
+    final current = ref.read(appRuntimeConfigProvider);
+    if (current.apiBaseUrl == apiBaseUrl) return;
+    if (!looksLikeLocalApiBaseUrl(current.apiBaseUrl)) {
+      await backupRuntimeConfig(current);
+    }
+    final next = current.copyWith(apiBaseUrl: apiBaseUrl, apiFallbackIp: '');
+    await saveAppRuntimeConfig(next);
+    ref.read(appRuntimeConfigProvider.notifier).state = next;
+    ref.read(staffTokenProvider.notifier).state = null;
+    ref.read(staffUserProvider.notifier).state = null;
+    await clearStaffSession();
+  }
+
   Future<void> _submit() async {
     if (_loading) return;
     setState(() => _loading = true);
     try {
+      var reachable = await ref.read(apiProvider).pingPublic();
+      if (!reachable) {
+        reachable = await _tryRestoreOnlineRuntimeConfig();
+      }
+      if (!reachable) {
+        final discovery = await discoverOfflineSession(
+          timeout: const Duration(seconds: 4),
+        );
+        if (discovery != null) {
+          await _applyOfflineApiBaseUrl(discovery.serverUrl);
+          reachable = await ref.read(apiProvider).pingPublic();
+        }
+      }
       final token = await ref
           .read(apiProvider)
           .staffLogin(loginCtrl.text.trim(), passCtrl.text.trim());
