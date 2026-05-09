@@ -319,16 +319,16 @@ class _Studio59AppState extends ConsumerState<Studio59App> {
       }
     } else if (looksLikeLocalApiBaseUrl(config.apiBaseUrl)) {
       final backupConfig = await restoreBackedUpRuntimeConfig();
-      if (backupConfig != null) {
-        final backupReachable = await ApiService(backupConfig).pingPublic();
-        if (backupReachable) {
-          config = backupConfig;
-          await saveAppRuntimeConfig(config);
-          await clearBackedUpRuntimeConfig();
-        }
+      final fallbackConfig = backupConfig ?? AppRuntimeConfig.defaults;
+      final fallbackReachable = await ApiService(fallbackConfig).pingPublic();
+      if (fallbackReachable) {
+        config = fallbackConfig;
+        await saveAppRuntimeConfig(config);
+        await clearBackedUpRuntimeConfig();
       }
     }
     ref.read(appRuntimeConfigProvider.notifier).state = config;
+    ref.invalidate(apiProvider);
     await _initAppLinks();
     if (mounted) {
       setState(() => _booting = false);
@@ -530,6 +530,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   bool _handlingScan = false;
   bool _pinSubmitting = false;
   bool _discoveringOffline = false;
+  bool _showOfflineDiscovery = false;
   int _logoTapCount = 0;
   DateTime? _firstTapAt;
   bool _autoOpenedStaff = false;
@@ -589,31 +590,41 @@ class _HomePageState extends ConsumerState<HomePage> {
     final current = ref.read(appRuntimeConfigProvider);
     if (!looksLikeLocalApiBaseUrl(current.apiBaseUrl)) return false;
     final backupConfig = await restoreBackedUpRuntimeConfig();
-    if (backupConfig == null) return false;
-    final backupReachable = await ApiService(backupConfig).pingPublic();
+    final fallbackConfig = backupConfig ?? AppRuntimeConfig.defaults;
+    final backupReachable = await ApiService(fallbackConfig).pingPublic();
     if (!backupReachable) return false;
-    await saveAppRuntimeConfig(backupConfig);
-    ref.read(appRuntimeConfigProvider.notifier).state = backupConfig;
+    await saveAppRuntimeConfig(fallbackConfig);
+    ref.read(appRuntimeConfigProvider.notifier).state = fallbackConfig;
+    ref.invalidate(apiProvider);
     await clearBackedUpRuntimeConfig();
     return true;
   }
 
-  Future<void> _applyOfflineApiBaseUrl(String apiBaseUrl) async {
+  Future<void> _applyOfflineApiBaseUrl(
+    String apiBaseUrl, {
+    bool persist = false,
+  }) async {
     final current = ref.read(appRuntimeConfigProvider);
     if (current.apiBaseUrl == apiBaseUrl) return;
-    if (!looksLikeLocalApiBaseUrl(current.apiBaseUrl)) {
+    if (persist && !looksLikeLocalApiBaseUrl(current.apiBaseUrl)) {
       await backupRuntimeConfig(current);
     }
     final next = current.copyWith(apiBaseUrl: apiBaseUrl, apiFallbackIp: '');
-    await saveAppRuntimeConfig(next);
+    if (persist) {
+      await saveAppRuntimeConfig(next);
+    }
     ref.read(appRuntimeConfigProvider.notifier).state = next;
+    ref.invalidate(apiProvider);
     ref.read(staffTokenProvider.notifier).state = null;
     ref.read(staffUserProvider.notifier).state = null;
     await clearStaffSession();
   }
 
   Future<void> _applyOfflineDiscovery(OfflineDiscoveryResult discovery) async {
-    await _applyOfflineApiBaseUrl(discovery.serverUrl);
+    await _applyOfflineApiBaseUrl(
+      discovery.serverUrl,
+      persist: isDesktopPlatform(),
+    );
   }
 
   Future<bool> _ensureOfflineAccess({String? qrRaw}) async {
@@ -657,6 +668,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         if (!mounted) return;
         setState(() {
           _discoveringOffline = false;
+          _showOfflineDiscovery = false;
           _offlineDiscovery = null;
           _offlineDiscoveryError = null;
         });
@@ -666,11 +678,16 @@ class _HomePageState extends ConsumerState<HomePage> {
         if (!mounted) return;
         setState(() {
           _discoveringOffline = false;
+          _showOfflineDiscovery = false;
           _offlineDiscovery = null;
           _offlineDiscoveryError = null;
         });
         return;
       }
+      if (!mounted) return;
+      setState(() {
+        _showOfflineDiscovery = true;
+      });
       final discovery = await discoverOfflineSession(
         timeout: manual
             ? const Duration(seconds: 4)
@@ -680,10 +697,9 @@ class _HomePageState extends ConsumerState<HomePage> {
       if (discovery == null) {
         setState(() {
           _discoveringOffline = false;
+          _showOfflineDiscovery = true;
           _offlineDiscovery = null;
-          _offlineDiscoveryError = (manual || isDesktopPlatform())
-              ? 'Nenhuma sessão offline encontrada.'
-              : null;
+          _offlineDiscoveryError = 'Nenhuma sessão offline encontrada.';
         });
         return;
       }
@@ -691,6 +707,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       if (!mounted) return;
       setState(() {
         _discoveringOffline = false;
+        _showOfflineDiscovery = true;
         _offlineDiscovery = discovery;
         _offlineDiscoveryError = null;
       });
@@ -698,7 +715,8 @@ class _HomePageState extends ConsumerState<HomePage> {
       if (!mounted) return;
       setState(() {
         _discoveringOffline = false;
-        _offlineDiscoveryError = manual ? e.toString() : null;
+        _showOfflineDiscovery = true;
+        _offlineDiscoveryError = e.toString();
       });
     }
   }
@@ -940,7 +958,10 @@ class _HomePageState extends ConsumerState<HomePage> {
                 ),
               ),
               const SizedBox(height: 32),
-              if (_offlineDiscovery != null || _offlineDiscoveryError != null)
+              if (_showOfflineDiscovery ||
+                  _offlineDiscovery != null ||
+                  _discoveringOffline ||
+                  _offlineDiscoveryError != null)
                 Container(
                   width: double.infinity,
                   margin: const EdgeInsets.only(bottom: 20),
@@ -3470,7 +3491,10 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
 
   Future<void> _probeOnline() async {
     try {
-      final reachable = await ref.read(apiProvider).pingPublic();
+      var reachable = await ref.read(apiProvider).pingPublic();
+      if (!reachable) {
+        reachable = await _tryRestoreOnlineRuntimeConfig();
+      }
       if (!mounted) return;
       setState(() {
         _checkingOnline = false;
@@ -3489,24 +3513,31 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
     final current = ref.read(appRuntimeConfigProvider);
     if (!looksLikeLocalApiBaseUrl(current.apiBaseUrl)) return false;
     final backupConfig = await restoreBackedUpRuntimeConfig();
-    if (backupConfig == null) return false;
-    final backupReachable = await ApiService(backupConfig).pingPublic();
+    final fallbackConfig = backupConfig ?? AppRuntimeConfig.defaults;
+    final backupReachable = await ApiService(fallbackConfig).pingPublic();
     if (!backupReachable) return false;
-    await saveAppRuntimeConfig(backupConfig);
-    ref.read(appRuntimeConfigProvider.notifier).state = backupConfig;
+    await saveAppRuntimeConfig(fallbackConfig);
+    ref.read(appRuntimeConfigProvider.notifier).state = fallbackConfig;
+    ref.invalidate(apiProvider);
     await clearBackedUpRuntimeConfig();
     return true;
   }
 
-  Future<void> _applyOfflineApiBaseUrl(String apiBaseUrl) async {
+  Future<void> _applyOfflineApiBaseUrl(
+    String apiBaseUrl, {
+    bool persist = false,
+  }) async {
     final current = ref.read(appRuntimeConfigProvider);
     if (current.apiBaseUrl == apiBaseUrl) return;
-    if (!looksLikeLocalApiBaseUrl(current.apiBaseUrl)) {
+    if (persist && !looksLikeLocalApiBaseUrl(current.apiBaseUrl)) {
       await backupRuntimeConfig(current);
     }
     final next = current.copyWith(apiBaseUrl: apiBaseUrl, apiFallbackIp: '');
-    await saveAppRuntimeConfig(next);
+    if (persist) {
+      await saveAppRuntimeConfig(next);
+    }
     ref.read(appRuntimeConfigProvider.notifier).state = next;
+    ref.invalidate(apiProvider);
     ref.read(staffTokenProvider.notifier).state = null;
     ref.read(staffUserProvider.notifier).state = null;
     await clearStaffSession();
@@ -3525,9 +3556,15 @@ class _StaffLoginPageState extends ConsumerState<StaffLoginPage> {
           timeout: const Duration(seconds: 4),
         );
         if (discovery != null) {
-          await _applyOfflineApiBaseUrl(discovery.serverUrl);
+          await _applyOfflineApiBaseUrl(
+            discovery.serverUrl,
+            persist: isDesktopPlatform(),
+          );
           reachable = await ref.read(apiProvider).pingPublic();
         }
+      }
+      if (!reachable) {
+        throw Exception('Sem ligação ao servidor online nem a uma sessão offline.');
       }
       final token = await ref
           .read(apiProvider)
@@ -14325,8 +14362,8 @@ class ApiService {
       final r = await dio.get(
         '/public/events/today',
         options: Options(
-          sendTimeout: const Duration(seconds: 5),
-          receiveTimeout: const Duration(seconds: 5),
+          sendTimeout: const Duration(seconds: 3),
+          receiveTimeout: const Duration(seconds: 3),
         ),
       );
       return r.statusCode == 200;
