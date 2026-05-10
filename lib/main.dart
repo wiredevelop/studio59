@@ -3364,7 +3364,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
   }
 
   void _scheduleCatalogReset(OrderDetail order) {
-    if (order.status == 'paid' || order.paymentMethod == 'online') {
+    if (!order.isOffline || order.status == 'paid') {
       resetTimer?.cancel();
       _resetScheduledOrderCode = null;
       return;
@@ -3407,7 +3407,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
 
             final order = snap.data!;
             final isPaid = order.status == 'paid';
-            final isOnline = order.paymentMethod == 'online';
+            final isOnlinePayment = order.paymentMethod == 'online';
             final isOfflineOrder = order.isOffline;
             _scheduleCatalogReset(order);
 
@@ -3429,9 +3429,11 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                             ? 'Pagamento registado offline!'
                             : isPaid
                             ? 'Pagamento confirmado!'
-                            : (isOnline
+                            : (isOnlinePayment
                                   ? 'A confirmar pagamento online'
-                                  : 'Mostra este ecrã ao fotografo'),
+                                  : isOfflineOrder
+                                  ? 'Mostra este ecrã ao fotografo'
+                                  : 'Aguarda confirmação do fotógrafo'),
                         style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.w800,
@@ -3443,9 +3445,11 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                             ? 'O pedido ficou guardado no PC do fotógrafo. O email com o link sai depois da sincronização online.'
                             : isPaid
                             ? 'As tuas fotos estão prontas. Vais receber/recebeste um link único no email para download dos originais.'
-                            : (isOnline
+                            : (isOnlinePayment
                                   ? 'Estamos a confirmar o pagamento. Assim que estiver pago o download fica disponível.'
-                                  : 'Dirige-te ao fotógrafo, paga, mostra este ticket e deixa o iPad no mesmo local.'),
+                                  : isOfflineOrder
+                                  ? 'Dirige-te ao fotógrafo, paga, mostra este ticket e deixa o iPad no mesmo local.'
+                                  : 'Dirige-te ao fotógrafo, paga e mostra este ticket. Este ecrã fica aqui até o fotógrafo marcar o pagamento.'),
                       ),
                     ],
                   ),
@@ -3464,7 +3468,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                         Text('Nome: ${order.customerName}'),
                         Text('Estado: ${order.status.toUpperCase()}'),
                         Text(
-                          'Pagamento: ${isOnline ? 'ONLINE (STRIPE)' : 'DINHEIRO'}',
+                          'Pagamento: ${isOnlinePayment ? 'ONLINE (STRIPE)' : 'DINHEIRO'}',
                         ),
                         Text('Total: ${order.totalAmount} EUR'),
                         if (order.cashReceivedAmount != null)
