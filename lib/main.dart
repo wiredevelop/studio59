@@ -5146,6 +5146,25 @@ class DesktopNavItem {
   final bool Function(StaffUser user)? visibleWhen;
 }
 
+Widget _pageForDesktopSection(String id) {
+  switch (id) {
+    case 'events':
+      return const StaffEventsPage();
+    case 'orders':
+      return const StaffOrdersPage();
+    case 'clients':
+      return const StaffClientsPage();
+    case 'users':
+      return const StaffUsersPage();
+    case 'sync':
+      return const StaffSyncPage();
+    case 'settings':
+      return const StaffSettingsPage();
+    default:
+      return const StaffDashboardPage();
+  }
+}
+
 class StaffDesktopShell extends ConsumerStatefulWidget {
   const StaffDesktopShell({
     super.key,
@@ -5391,13 +5410,21 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
               selectedId: _selectedId,
               user: widget.user,
               onSelect: (id) {
-                setState(() {
-                  _selectedId = id;
-                  _searchCtrl.clear();
-                  _searchValue.value = '';
-                });
                 saveStaffLastRoute(id, userId: widget.user.id);
-                Navigator.pop(context);
+                if (widget.overrideContent != null) {
+                  Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(
+                      builder: (_) => _pageForDesktopSection(id),
+                    ),
+                  );
+                } else {
+                  setState(() {
+                    _selectedId = id;
+                    _searchCtrl.clear();
+                    _searchValue.value = '';
+                  });
+                  Navigator.pop(context);
+                }
               },
             ),
           ),
@@ -5416,12 +5443,20 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
               selectedId: _selectedId,
               user: widget.user,
               onSelect: (id) {
-                setState(() {
-                  _selectedId = id;
-                  _searchCtrl.clear();
-                  _searchValue.value = '';
-                });
                 saveStaffLastRoute(id, userId: widget.user.id);
+                if (widget.overrideContent != null) {
+                  Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(
+                      builder: (_) => _pageForDesktopSection(id),
+                    ),
+                  );
+                } else {
+                  setState(() {
+                    _selectedId = id;
+                    _searchCtrl.clear();
+                    _searchValue.value = '';
+                  });
+                }
               },
             ),
             Expanded(child: content),
