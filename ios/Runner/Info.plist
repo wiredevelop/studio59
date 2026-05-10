@@ -30,17 +30,17 @@
 	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
+		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Guardar fotos do pedido na galeria.</string>
+	<string>Guardar as fotos do pedido na galeria do dispositivo.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Permitir acesso à galeria para guardar fotos do evento.</string>
+	<string>Permitir guardar e gerir as fotos descarregadas do evento.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Usar a câmara para ler QR Code e pesquisa facial.</string>
+	<string>Usar a câmara para ler QR codes e tirar uma selfie para procurar fotos do evento.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Descobrir e ligar ao PC do fotógrafo na rede local durante sessões offline.</string>
+	<string>Descobrir e ligar ao PC do fotógrafo na rede local durante as sessões offline.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
