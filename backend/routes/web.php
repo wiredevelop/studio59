@@ -20,6 +20,8 @@ Route::middleware('guest')->group(function () {
     Route::post('/login', [AuthController::class, 'login'])->name('login.submit');
 });
 
+Route::view('/', 'welcome')->name('welcome');
+
 Route::post('/logout', [AuthController::class, 'logout'])->middleware(['auth', 'nocache'])->name('logout');
 
 Route::prefix('/guest')->name('guest.')->group(function () {
@@ -60,7 +62,7 @@ Route::get('/preview/{photo}', function (Photo $photo) {
 })->name('preview.image');
 
 Route::middleware(['auth', 'nocache'])->group(function () {
-    Route::get('/', [DashboardController::class, 'index'])
+    Route::get('/dashboard', [DashboardController::class, 'index'])
         ->middleware('permission:dashboard.view')
         ->name('dashboard');
 
