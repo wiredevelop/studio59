@@ -6140,38 +6140,71 @@ class DesktopDashboardView extends ConsumerWidget {
                           ),
                         );
                       }
-                      final rows = visible
-                          .map(
-                            (o) => List<Widget>.of([
-                              Text(
-                                o.orderCode,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
+                      return Column(
+                        children: visible.map((o) {
+                          final statusColor = o.status == 'paid'
+                              ? Colors.lightGreenAccent
+                              : o.status == 'pending'
+                              ? Colors.orangeAccent
+                              : Colors.lightBlueAccent;
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            child: _DeskCard(
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(
+                                  kDeskRadius,
+                                ),
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        StaffOrderDetailPage(orderId: o.id),
+                                  ),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(2),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              o.orderCode,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              o.customerName,
+                                              style: const TextStyle(
+                                                color: kBrandRose,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      _DeskStatusBadge(
+                                        o.status.toUpperCase(),
+                                        color: statusColor,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Text(
+                                        '€${(o.totalAmount ?? 0).toStringAsFixed(2)}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
-                              Text(o.customerName),
-                              _DeskStatusBadge(
-                                o.status.toUpperCase(),
-                                color: Colors.orangeAccent,
-                              ),
-                              Text(
-                                '€${(o.totalAmount ?? 0).toStringAsFixed(2)}',
-                              ),
-                            ]),
-                          )
-                          .toList();
-                      return _DeskTable(
-                        columns: const [
-                          _DeskTableColumn('Pedido', flex: 2),
-                          _DeskTableColumn('Cliente', flex: 3),
-                          _DeskTableColumn('Estado', flex: 2),
-                          _DeskTableColumn(
-                            'Total',
-                            flex: 2,
-                            align: CrossAxisAlignment.end,
-                          ),
-                        ],
-                        rows: rows,
+                            ),
+                          );
+                        }).toList(),
                       );
                     },
                   ),
@@ -6210,6 +6243,13 @@ class DesktopDashboardView extends ConsumerWidget {
                                   e.eventTime,
                                 ),
                                 badge: _eventTypeLabel(e),
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        StaffEventDetailPage(event: e),
+                                  ),
+                                ),
                               ),
                             ),
                           ],
@@ -6292,37 +6332,43 @@ class _DesktopEventRow extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.badge,
+    this.onTap,
   });
   final String title;
   final String subtitle;
   final String badge;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.6),
-                    fontSize: 12,
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
-                ),
-              ],
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.6),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          _DeskStatusBadge(badge, color: kBrandRose),
-        ],
+            _DeskStatusBadge(badge, color: kBrandRose),
+          ],
+        ),
       ),
     );
   }
@@ -6361,7 +6407,6 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
           eventType: _eventType.isEmpty ? null : _eventType,
           assignedOnly: !_canSeeAllEvents(widget.user),
         );
-    setState(() {});
   }
 
   @override
@@ -6401,7 +6446,7 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
                 }),
               ),
               OutlinedButton.icon(
-                onPressed: _reload,
+                onPressed: () => setState(_reload),
                 icon: const Icon(Icons.refresh),
                 label: const Text('Atualizar'),
               ),
@@ -6422,97 +6467,140 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
                       : filtered
                             .where((e) => _eventSearchBlob(e).contains(search))
                             .toList();
-                  final rows = visible.isNotEmpty
-                      ? visible
-                            .map(
-                              (e) => [
-                                Text(
-                                  _formatEventDateTime(
-                                    e.eventDate,
-                                    e.eventTime,
-                                  ),
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                Text(_eventTypeLabel(e)),
-                                Text(_displayReportNumber(e) ?? '—'),
-                                Text(
-                                  _eventTeamLabel(e).isEmpty
-                                      ? '—'
-                                      : _eventTeamLabel(e),
-                                ),
-                                Text('${_eventPhotoCount(e)}'),
-                                Text(
-                                  '€${_eventSalesTotal(e).toStringAsFixed(0)}',
-                                ),
-                                _DeskStatusBadge(
-                                  'Ativo',
-                                  color: Colors.lightGreenAccent,
-                                ),
-                                Row(
-                                  children: [
-                                    TextButton(
-                                      onPressed:
-                                          widget.user.hasPermission(
-                                            'events.view',
-                                          )
-                                          ? () => Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                builder: (_) =>
-                                                    StaffEventDetailPage(
-                                                      event: e,
-                                                    ),
-                                              ),
-                                            )
-                                          : null,
-                                      child: const Text('Detalhe'),
+                  if (visible.isEmpty) {
+                    return const _DeskCard(child: Text('Sem resultados.'));
+                  }
+                  return Column(
+                    children: visible.map((e) {
+                      final dateLabel = _formatEventDateTime(
+                        e.eventDate,
+                        e.eventTime,
+                      );
+                      final report = _displayReportNumber(e);
+                      final team = _eventTeamLabel(e);
+                      final canView = widget.user.hasPermission('events.view');
+                      final canUpdate = widget.user.hasPermission(
+                        'events.update',
+                      );
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: _DeskCard(
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(kDeskRadius),
+                            onTap: canView
+                                ? () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          StaffEventDetailPage(event: e),
                                     ),
-                                    if (widget.user.hasPermission(
-                                      'events.update',
-                                    )) ...[
-                                      const SizedBox(width: 4),
-                                      TextButton(
-                                        onPressed: () => Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (_) =>
-                                                StaffEventStaffPage(event: e),
-                                          ),
+                                  )
+                                : null,
+                            child: Padding(
+                              padding: const EdgeInsets.all(2),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              e.name,
+                                              style: const TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 6),
+                                            Text(
+                                              dateLabel,
+                                              style: const TextStyle(
+                                                color: kDeskMuted,
+                                              ),
+                                            ),
+                                          ],
                                         ),
-                                        child: const Text('Equipe'),
+                                      ),
+                                      _DeskStatusBadge(
+                                        _eventTypeLabel(e),
+                                        color: Colors.lightGreenAccent,
                                       ),
                                     ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Wrap(
+                                    spacing: 10,
+                                    runSpacing: 10,
+                                    children: [
+                                      _DeskStatusBadge(
+                                        report == null || report.isEmpty
+                                            ? 'Sem relatório'
+                                            : 'Rel. $report',
+                                      ),
+                                      _DeskStatusBadge(
+                                        'Fotos ${_eventPhotoCount(e)}',
+                                      ),
+                                      _DeskStatusBadge(
+                                        'Vendas €${_eventSalesTotal(e).toStringAsFixed(0)}',
+                                      ),
+                                      if (team.isNotEmpty)
+                                        _DeskStatusBadge('Equipa $team'),
+                                    ],
+                                  ),
+                                  if ((e.location ?? '').trim().isNotEmpty) ...[
+                                    const SizedBox(height: 10),
+                                    Text(
+                                      e.location!.trim(),
+                                      style: const TextStyle(
+                                        color: kDeskMuted,
+                                      ),
+                                    ),
                                   ],
-                                ),
-                              ],
-                            )
-                            .toList()
-                      : [
-                          [
-                            const Text('Sem resultados'),
-                            const Text('—'),
-                            const Text('—'),
-                            const Text('—'),
-                            const Text('—'),
-                            const Text('—'),
-                            const _DeskStatusBadge('—'),
-                            const SizedBox.shrink(),
-                          ],
-                        ];
-                  return _DeskTable(
-                    columns: const [
-                      _DeskTableColumn('Data', flex: 2),
-                      _DeskTableColumn('Tipo'),
-                      _DeskTableColumn('Relatorio'),
-                      _DeskTableColumn('Equipa', flex: 2),
-                      _DeskTableColumn('Fotos'),
-                      _DeskTableColumn('Vendas'),
-                      _DeskTableColumn('Estado'),
-                      _DeskTableColumn('Acoes'),
-                    ],
-                    rows: rows,
+                                  const SizedBox(height: 12),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      if (canView)
+                                        _MobileActionChip(
+                                          label: 'Detalhe',
+                                          color: kBrandRose,
+                                          onTap: () => Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) => StaffEventDetailPage(
+                                                event: e,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      if (canUpdate)
+                                        _MobileActionChip(
+                                          label: 'Equipa',
+                                          color: Colors.lightBlueAccent,
+                                          onTap: () => Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  StaffEventStaffPage(event: e),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
                   );
                 },
               );
@@ -6576,6 +6664,7 @@ class DesktopOrdersView extends ConsumerStatefulWidget {
 
 class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
   String _status = '';
+  DateTime _selectedDate = _startOfDay(DateTime.now());
   Future<List<OrderListItem>>? _future;
 
   @override
@@ -6587,8 +6676,12 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
   void _reload() {
     _future = ref
         .read(apiProvider)
-        .staffOrdersList(widget.token, status: _status);
-    setState(() {});
+        .staffOrdersList(
+          widget.token,
+          status: _status,
+          eventDate:
+              '${_selectedDate.year.toString().padLeft(4, '0')}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}',
+        );
   }
 
   @override
@@ -6603,6 +6696,24 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
             runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
+              FilledButton.tonal(
+                onPressed: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: _selectedDate,
+                    firstDate: DateTime(2020, 1, 1),
+                    lastDate: DateTime(2100, 12, 31),
+                  );
+                  if (picked == null) return;
+                  setState(() {
+                    _selectedDate = _startOfDay(picked);
+                    _reload();
+                  });
+                },
+                child: Text(
+                  'Data: ${_selectedDate.day.toString().padLeft(2, '0')}/${_selectedDate.month.toString().padLeft(2, '0')}/${_selectedDate.year}',
+                ),
+              ),
               _DeskStatusFilterChip(
                 label: 'Todos',
                 selected: _status.isEmpty,
@@ -6636,7 +6747,7 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                 }),
               ),
               OutlinedButton.icon(
-                onPressed: _reload,
+                onPressed: () => setState(_reload),
                 icon: const Icon(Icons.refresh),
                 label: const Text('Atualizar'),
               ),
@@ -6651,66 +6762,237 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                 builder: (context, snap) {
                   final orders = snap.data ?? const <OrderListItem>[];
                   final query = value.trim().toLowerCase();
+                  final isPhotographer = _isPhotographerRole(widget.user.role);
+                  final canUpdate = widget.user.hasPermission('orders.update');
+                  final canDownload =
+                      widget.user.hasPermission('orders.download') &&
+                      !isPhotographer;
                   final visible = query.isEmpty
                       ? orders
                       : orders
                             .where(
                               (o) =>
                                   o.orderCode.toLowerCase().contains(query) ||
-                                  o.customerName.toLowerCase().contains(query),
+                                  o.customerName.toLowerCase().contains(query) ||
+                                  (o.eventName ?? '').toLowerCase().contains(
+                                    query,
+                                  ),
                             )
                             .toList();
-                  final rows = visible.isNotEmpty
-                      ? visible
-                            .map(
-                              (o) => [
-                                Text(
-                                  o.orderCode,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                Text(o.customerName),
-                                Text(o.eventName ?? '—'),
-                                _DeskStatusBadge(
-                                  o.status.toUpperCase(),
-                                  color: o.status == 'paid'
-                                      ? Colors.lightGreenAccent
-                                      : o.status == 'pending'
-                                      ? Colors.orangeAccent
-                                      : Colors.lightBlueAccent,
-                                ),
-                                Text(
-                                  '€${(o.totalAmount ?? 0).toStringAsFixed(2)}',
-                                ),
-                              ],
-                            )
-                            .toList()
-                      : [
-                          [
-                            const Text('S59-XY01'),
-                            const Text('Joana Pinto'),
-                            const Text('Casamento'),
-                            const _DeskStatusBadge(
-                              'PENDENTE',
-                              color: Colors.orangeAccent,
+                  if (visible.isEmpty) {
+                    return const _DeskCard(child: Text('Sem pedidos.'));
+                  }
+                  return Column(
+                    children: visible.map((o) {
+                      final statusColor = o.status == 'paid'
+                          ? Colors.lightGreenAccent
+                          : o.status == 'pending'
+                          ? Colors.orangeAccent
+                          : Colors.lightBlueAccent;
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: _DeskCard(
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(kDeskRadius),
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    StaffOrderDetailPage(orderId: o.id),
+                              ),
                             ),
-                            const Text('€65.00'),
-                          ],
-                        ];
-                  return _DeskTable(
-                    columns: const [
-                      _DeskTableColumn('Pedido', flex: 2),
-                      _DeskTableColumn('Cliente', flex: 2),
-                      _DeskTableColumn('Evento', flex: 2),
-                      _DeskTableColumn('Estado', flex: 2),
-                      _DeskTableColumn(
-                        'Total',
-                        flex: 1,
-                        align: CrossAxisAlignment.end,
-                      ),
-                    ],
-                    rows: rows,
+                            child: Padding(
+                              padding: const EdgeInsets.all(2),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              o.orderCode,
+                                              style: const TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              o.customerName,
+                                              style: const TextStyle(
+                                                color: kBrandRose,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.end,
+                                        children: [
+                                          _DeskStatusBadge(
+                                            o.status.toUpperCase(),
+                                            color: statusColor,
+                                          ),
+                                          const SizedBox(height: 6),
+                                          Text(
+                                            '€${(o.totalAmount ?? 0).toStringAsFixed(2)}',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Wrap(
+                                    spacing: 10,
+                                    runSpacing: 8,
+                                    children: [
+                                      if ((o.eventName ?? '').trim().isNotEmpty)
+                                        _DeskStatusBadge(o.eventName!.trim()),
+                                      if (o.paymentMethod.trim().isNotEmpty)
+                                        _DeskStatusBadge(
+                                          o.paymentMethod.toUpperCase(),
+                                        ),
+                                      if (o.cashReceivedAmount != null)
+                                        _DeskStatusBadge(
+                                          'Entregue €${formatEuroAmount(o.cashReceivedAmount!)}',
+                                        ),
+                                      if ((o.cashChangeAmount ?? 0) > 0)
+                                        _DeskStatusBadge(
+                                          'Troco €${formatEuroAmount(o.cashChangeAmount!)}',
+                                        ),
+                                      if ((o.cashDueAmount ?? 0) > 0)
+                                        _DeskStatusBadge(
+                                          'Falta €${formatEuroAmount(o.cashDueAmount!)}',
+                                          color: Colors.orangeAccent,
+                                        ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      _MobileActionChip(
+                                        label: 'Abrir',
+                                        color: kBrandRose,
+                                        onTap: () => Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) => StaffOrderDetailPage(
+                                              orderId: o.id,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      if (canUpdate &&
+                                          o.status != 'paid' &&
+                                          o.status != 'delivered')
+                                        _MobileActionChip(
+                                          label: 'Pagar',
+                                          color: Colors.lightGreenAccent,
+                                          onTap: () async {
+                                            CashSettlement? settlement;
+                                            if (o.paymentMethod != 'online') {
+                                              settlement =
+                                                  await promptCashSettlement(
+                                                    context,
+                                                    totalAmount:
+                                                        o.totalAmount ?? 0,
+                                                  );
+                                              if (settlement == null) return;
+                                            }
+                                            await ref
+                                                .read(apiProvider)
+                                                .markOrderPaid(
+                                                  widget.token,
+                                                  o.id,
+                                                  eventId: o.eventId,
+                                                  cashReceivedAmount:
+                                                      settlement?.receivedAmount,
+                                                  cashChangeAmount:
+                                                      settlement?.changeAmount,
+                                                  cashDueAmount:
+                                                      settlement?.dueAmount,
+                                                );
+                                            if (!context.mounted) return;
+                                            _reload();
+                                          },
+                                        ),
+                                      if (canUpdate &&
+                                          o.status == 'paid' &&
+                                          !isPhotographer)
+                                        _MobileActionChip(
+                                          label: 'Entregue',
+                                          color: Colors.lightBlueAccent,
+                                          onTap: () async {
+                                            await ref
+                                                .read(apiProvider)
+                                                .markOrderDelivered(
+                                                  widget.token,
+                                                  o.id,
+                                                  eventId: o.eventId,
+                                                );
+                                            if (!context.mounted) return;
+                                            _reload();
+                                          },
+                                        ),
+                                      if (canDownload)
+                                        _MobileActionChip(
+                                          label: 'Enviar link',
+                                          color: kBrandRose,
+                                          onTap: () async {
+                                            await ref
+                                                .read(apiProvider)
+                                                .staffSendDownloadLink(
+                                                  widget.token,
+                                                  o.id,
+                                                );
+                                            if (!context.mounted) return;
+                                            _reload();
+                                          },
+                                        ),
+                                      if (canDownload)
+                                        _MobileActionChip(
+                                          label: 'ZIP',
+                                          color: kDeskMuted,
+                                          onTap: () async {
+                                            final path = await ref
+                                                .read(apiProvider)
+                                                .staffDownloadAll(
+                                                  widget.token,
+                                                  o.id,
+                                                );
+                                            if (!context.mounted) return;
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                                  SnackBar(
+                                                    content: Text(
+                                                      'ZIP guardado: $path',
+                                                    ),
+                                                  ),
+                                                );
+                                          },
+                                        ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
                   );
                 },
               );
@@ -12491,32 +12773,57 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                 Text('Email: ${order.customerEmail}'),
               if ((order.customerPhone ?? '').isNotEmpty)
                 Text('Telefone: ${order.customerPhone}'),
-              if (isPhotographer && order.status == 'pending')
+              if (canWrite && order.status == 'pending')
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
-                  child: FilledButton(
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton(
+                        onPressed: () async {
+                          CashSettlement? settlement;
+                          if (order.paymentMethod != 'online') {
+                            settlement = await promptCashSettlement(
+                              context,
+                              totalAmount: order.totalAmount,
+                            );
+                            if (settlement == null) return;
+                          }
+                          await ref
+                              .read(apiProvider)
+                              .markOrderPaid(
+                                token,
+                                order.id,
+                                cashReceivedAmount: settlement?.receivedAmount,
+                                cashChangeAmount: settlement?.changeAmount,
+                                cashDueAmount: settlement?.dueAmount,
+                              );
+                          if (!context.mounted) return;
+                          setState(() => _loadDetail(token));
+                        },
+                        child: const Text('Pagar'),
+                      ),
+                      if (!isPhotographer && canEdit)
+                        OutlinedButton(
+                          onPressed: () => setState(() => editing = true),
+                          child: const Text('Editar'),
+                        ),
+                    ],
+                  ),
+                ),
+              if (canWrite && order.status == 'paid' && !isPhotographer)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: FilledButton.tonal(
                     onPressed: () async {
-                      CashSettlement? settlement;
-                      if (order.paymentMethod != 'online') {
-                        settlement = await promptCashSettlement(
-                          context,
-                          totalAmount: order.totalAmount,
-                        );
-                        if (settlement == null) return;
-                      }
                       await ref
                           .read(apiProvider)
-                          .markOrderPaid(
-                            token,
-                            order.id,
-                            cashReceivedAmount: settlement?.receivedAmount,
-                            cashChangeAmount: settlement?.changeAmount,
-                            cashDueAmount: settlement?.dueAmount,
-                          );
+                          .markOrderDelivered(token, order.id);
                       if (!context.mounted) return;
                       setState(() => _loadDetail(token));
                     },
-                    child: const Text('Pagar'),
+                    child: const Text('Marcar entregue'),
                   ),
                 ),
             ] else ...[
@@ -12621,7 +12928,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                   ),
                 ],
               ),
-            if (!editing && canEdit)
+            if (!editing && canEdit && order.status != 'pending')
               Padding(
                 padding: const EdgeInsets.only(top: 12),
                 child: OutlinedButton(
