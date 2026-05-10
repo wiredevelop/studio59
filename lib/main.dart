@@ -16727,10 +16727,11 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
         context,
       ).showSnackBar(const SnackBar(content: Text('Importação concluída.')));
       if (importedEvent != null) {
+        final targetEvent = importedEvent;
         await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => _StaffEventGalleryPage(event: importedEvent),
+            builder: (_) => _StaffEventGalleryPage(event: targetEvent),
           ),
         );
       }
