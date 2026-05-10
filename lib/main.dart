@@ -5186,12 +5186,14 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
   void initState() {
     super.initState();
     _selectedId = widget.initialId ?? 'dashboard';
-    readStaffLastRoute(userId: widget.user.id).then((value) {
-      if (!mounted) return;
-      if (value != null && value.trim().isNotEmpty) {
-        setState(() => _selectedId = value);
-      }
-    });
+    if (widget.initialId == null) {
+      readStaffLastRoute(userId: widget.user.id).then((value) {
+        if (!mounted) return;
+        if (value != null && value.trim().isNotEmpty) {
+          setState(() => _selectedId = value);
+        }
+      });
+    }
   }
 
   @override
@@ -5298,7 +5300,7 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
       (i) => i.id == _selectedId,
       orElse: () => items.first,
     );
-    if (current.id != _selectedId) {
+    if (current.id != _selectedId && widget.overrideContent == null) {
       _selectedId = current.id;
     }
     final isCompact = MediaQuery.of(context).size.width < 900;
@@ -5344,7 +5346,14 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
               (_) => false,
             );
           },
-          leading: isCompact
+          leading: widget.overrideContent != null &&
+                  Navigator.of(context).canPop()
+              ? IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  tooltip: 'Voltar',
+                  onPressed: () => Navigator.maybePop(context),
+                )
+              : isCompact
               ? Builder(
                   builder: (context) => IconButton(
                     tooltip: 'Menu',
