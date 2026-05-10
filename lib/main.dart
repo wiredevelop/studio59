@@ -5201,6 +5201,13 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
   final TextEditingController _searchCtrl = TextEditingController();
   final ValueNotifier<String> _searchValue = ValueNotifier('');
 
+  void _openBaseSection(String id) {
+    saveStaffLastRoute(id, userId: widget.user.id);
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => _pageForDesktopSection(id)),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -5324,8 +5331,8 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
     }
     final isCompact = MediaQuery.of(context).size.width < 900;
     final overrideKey = widget.initialId ?? 'dashboard';
-    final useOverride =
-        widget.overrideContent != null && _selectedId == overrideKey;
+    final isOverrideRoute = widget.overrideContent != null;
+    final useOverride = isOverrideRoute && _selectedId == overrideKey;
     final topTitle = useOverride
         ? (widget.overrideTitle ?? current.label)
         : current.label;
@@ -5365,12 +5372,12 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
               (_) => false,
             );
           },
-          leading: widget.overrideContent != null
+          leading: isOverrideRoute
               ? Builder(
                   builder: (ctx) => IconButton(
                     icon: const Icon(Icons.arrow_back),
                     tooltip: 'Voltar',
-                    onPressed: () => Navigator.maybePop(ctx),
+                    onPressed: () => _openBaseSection(overrideKey),
                   ),
                 )
               : isCompact
@@ -5410,14 +5417,10 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
               selectedId: _selectedId,
               user: widget.user,
               onSelect: (id) {
-                saveStaffLastRoute(id, userId: widget.user.id);
-                if (widget.overrideContent != null) {
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(
-                      builder: (_) => _pageForDesktopSection(id),
-                    ),
-                  );
+                if (isOverrideRoute) {
+                  _openBaseSection(id);
                 } else {
+                  saveStaffLastRoute(id, userId: widget.user.id);
                   setState(() {
                     _selectedId = id;
                     _searchCtrl.clear();
@@ -5443,14 +5446,10 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
               selectedId: _selectedId,
               user: widget.user,
               onSelect: (id) {
-                saveStaffLastRoute(id, userId: widget.user.id);
-                if (widget.overrideContent != null) {
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(
-                      builder: (_) => _pageForDesktopSection(id),
-                    ),
-                  );
+                if (isOverrideRoute) {
+                  _openBaseSection(id);
                 } else {
+                  saveStaffLastRoute(id, userId: widget.user.id);
                   setState(() {
                     _selectedId = id;
                     _searchCtrl.clear();
