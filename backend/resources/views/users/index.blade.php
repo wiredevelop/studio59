@@ -2,7 +2,9 @@
 @section('page_title', 'Utilizadores')
 @section('page_subtitle', 'Equipa e permissões')
 @section('page_actions')
-    <a href="{{ route('users.create') }}" class="desk-btn primary">Novo utilizador</a>
+    @if(auth()->user()?->hasPermission('users.create'))
+        <a href="{{ route('users.create') }}" class="desk-btn primary">Novo utilizador</a>
+    @endif
 @endsection
 @section('content')
 <div class="desk-card overflow-x-auto">
@@ -24,12 +26,19 @@
                 <td class="p-2">{{ $user->email }}</td>
                 <td class="p-2">{{ $user->role }}</td>
                 <td class="p-2 flex gap-3">
-                    <a class="desk-btn" href="{{ route('users.edit', $user) }}">Editar</a>
-                    <form method="post" action="{{ route('users.destroy', $user) }}" onsubmit="return confirm('Apagar utilizador?');">
-                        @csrf
-                        @method('DELETE')
-                        <button class="desk-btn">Apagar</button>
-                    </form>
+                    @if(auth()->user()?->hasPermission('users.update'))
+                        <a class="desk-btn" href="{{ route('users.edit', $user) }}">Editar</a>
+                    @endif
+                    @if(auth()->user()?->hasPermission('users.delete'))
+                        <form method="post" action="{{ route('users.destroy', $user) }}" onsubmit="return confirm('Apagar utilizador?');">
+                            @csrf
+                            @method('DELETE')
+                            <button class="desk-btn">Apagar</button>
+                        </form>
+                    @endif
+                    @unless(auth()->user()?->hasPermission('users.update') || auth()->user()?->hasPermission('users.delete'))
+                        <span class="text-sm text-gray-400">Sem ações</span>
+                    @endunless
                 </td>
             </tr>
         @endforeach

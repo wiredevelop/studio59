@@ -37,17 +37,19 @@
             <div>
                 <div class="desk-nav-section">Operação</div>
                 <nav class="desk-nav">
-                    <a href="{{ route('dashboard') }}" class="desk-nav-item {{ request()->routeIs('dashboard') ? 'is-active' : '' }}">
-                        <span class="desk-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                                <rect x="3" y="3" width="8" height="8" rx="2"></rect>
-                                <rect x="13" y="3" width="8" height="8" rx="2"></rect>
-                                <rect x="3" y="13" width="8" height="8" rx="2"></rect>
-                                <rect x="13" y="13" width="8" height="8" rx="2"></rect>
-                            </svg>
-                        </span>
-                        <span>Dashboard</span>
-                    </a>
+                    @if($user && $user->hasPermission('dashboard.view'))
+                        <a href="{{ route('dashboard') }}" class="desk-nav-item {{ request()->routeIs('dashboard') ? 'is-active' : '' }}">
+                            <span class="desk-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <rect x="3" y="3" width="8" height="8" rx="2"></rect>
+                                    <rect x="13" y="3" width="8" height="8" rx="2"></rect>
+                                    <rect x="3" y="13" width="8" height="8" rx="2"></rect>
+                                    <rect x="13" y="13" width="8" height="8" rx="2"></rect>
+                                </svg>
+                            </span>
+                            <span>Dashboard</span>
+                        </a>
+                    @endif
                     @if($user && $user->hasPermission('events.view'))
                         <a href="{{ route('events.index') }}" class="desk-nav-item {{ request()->routeIs('events.*') ? 'is-active' : '' }}">
                             <span class="desk-icon">

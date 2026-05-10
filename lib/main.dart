@@ -5214,6 +5214,7 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
           token: token,
           search: _searchValue,
         ),
+        visibleWhen: (u) => u.hasPermission('dashboard.view'),
       ),
       DesktopNavItem(
         id: 'events',
@@ -5242,16 +5243,6 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
             u.hasPermission('events.list') || u.hasPermission('events.view'),
       ),
       DesktopNavItem(
-        id: 'services',
-        label: 'Agenda',
-        icon: Icons.calendar_month,
-        subtitle: 'Agenda e atribuicoes',
-        builder: (context, user, token) =>
-            DesktopServicesView(user: user, token: token),
-        visibleWhen: (u) =>
-            u.hasPermission('events.list') || u.hasPermission('events.view'),
-      ),
-      DesktopNavItem(
         id: 'orders',
         label: 'Pedidos',
         icon: Icons.receipt_long,
@@ -5260,16 +5251,6 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         builder: (context, user, token) =>
             DesktopOrdersView(user: user, token: token, search: _searchValue),
         visibleWhen: (u) => u.hasPermission('orders.list'),
-      ),
-      DesktopNavItem(
-        id: 'photos',
-        label: 'Galerias / Fotos',
-        icon: Icons.photo_library_outlined,
-        subtitle: 'Conteudos e previews',
-        showSearch: true,
-        builder: (context, user, token) =>
-            DesktopPhotosView(user: user, token: token, search: _searchValue),
-        visibleWhen: (u) => u.hasPermission('photos.list'),
       ),
       DesktopNavItem(
         id: 'clients',
@@ -5282,14 +5263,6 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         visibleWhen: (u) => u.hasPermission('clients.list'),
       ),
       DesktopNavItem(
-        id: 'payments',
-        label: 'Pagamentos',
-        icon: Icons.payments_outlined,
-        subtitle: 'Transacoes e reconciliacao',
-        builder: (context, user, token) =>
-            DesktopPaymentsView(user: user, token: token),
-      ),
-      DesktopNavItem(
         id: 'sync',
         label: 'Sincronizacao',
         icon: Icons.sync,
@@ -5299,31 +5272,14 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         visibleWhen: (u) => u.hasPermission('offline.import'),
       ),
       DesktopNavItem(
-        id: 'reports',
-        label: 'Relatorios',
-        icon: Icons.bar_chart,
-        subtitle: 'Analise e metricas',
+        id: 'users',
+        label: 'Utilizadores',
+        icon: Icons.person_outline,
+        subtitle: 'Gestao de equipa',
         builder: (context, user, token) =>
-            DesktopReportsView(user: user, token: token),
+            DesktopUsersView(user: user, token: token),
+        visibleWhen: (u) => u.hasPermission('users.list'),
       ),
-      DesktopNavItem(
-        id: 'app-config',
-        label: 'Ligacoes',
-        icon: Icons.router_outlined,
-        subtitle: 'API e runtime config',
-        builder: (context, user, token) =>
-            DesktopAppConfigView(user: user, token: token),
-        visibleWhen: (u) => _isAdminRole(u.role),
-      ),
-      if (isDesktopPlatform())
-        DesktopNavItem(
-          id: 'offline-host',
-          label: 'Offline',
-          icon: Icons.wifi_tethering,
-          subtitle: 'Sessao local no PC',
-          builder: (context, user, token) =>
-              DesktopOfflineHostView(user: user, token: token),
-        ),
       DesktopNavItem(
         id: 'settings',
         label: 'Definicoes',
@@ -6850,7 +6806,7 @@ class DesktopPhotosView extends StatelessWidget {
   }
 }
 
-class DesktopClientsView extends StatelessWidget {
+class DesktopClientsView extends ConsumerStatefulWidget {
   const DesktopClientsView({
     super.key,
     required this.user,
@@ -6862,88 +6818,174 @@ class DesktopClientsView extends StatelessWidget {
   final ValueListenable<String> search;
 
   @override
-  Widget build(BuildContext context) {
-    final rows = [
-      [
-        const Text('Maria Costa'),
-        const Text('maria@email.com'),
-        const Text('+351 912 000 000'),
-        const _DeskStatusBadge('ATIVO', color: Colors.lightGreenAccent),
-      ],
-      [
-        const Text('Joao Silva'),
-        const Text('joao@email.com'),
-        const Text('+351 913 000 000'),
-        const _DeskStatusBadge('ATIVO', color: Colors.lightGreenAccent),
-      ],
-    ];
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(kDeskGutter),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _DeskSectionHeader('Clientes'),
-          const SizedBox(height: 12),
-          _DeskTable(
-            columns: const [
-              _DeskTableColumn('Cliente', flex: 2),
-              _DeskTableColumn('Email', flex: 2),
-              _DeskTableColumn('Telefone', flex: 2),
-              _DeskTableColumn('Estado', flex: 1),
+  ConsumerState<DesktopClientsView> createState() => _DesktopClientsViewState();
+}
+
+class _DesktopClientsViewState extends ConsumerState<DesktopClientsView> {
+  Future<List<StaffClient>>? _future;
+  String? _lastKey;
+
+  Future<List<StaffClient>> _loadClients(String query) =>
+      ref.read(apiProvider).staffClients(widget.token, q: query);
+
+  Future<void> _showClientDialog(StaffClient client) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(client.name),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Email: ${client.email?.trim().isNotEmpty == true ? client.email : '-'}',
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Telefone: ${client.phone?.trim().isNotEmpty == true ? client.phone : '-'}',
+              ),
+              const SizedBox(height: 8),
+              Text('Marketing: ${client.marketingConsent ? 'Sim' : 'Não'}'),
+              const SizedBox(height: 8),
+              Text(
+                'Notas: ${client.notes?.trim().isNotEmpty == true ? client.notes : '-'}',
+              ),
             ],
-            rows: rows,
+          ),
+        ),
+        actions: [
+          if (widget.user.hasPermission('clients.update'))
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(dialogContext);
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => StaffClientFormPage(client: client),
+                  ),
+                );
+                if (mounted) setState(() => _future = null);
+              },
+              child: const Text('Editar'),
+            ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Fechar'),
           ),
         ],
       ),
     );
   }
-}
-
-class DesktopPaymentsView extends StatelessWidget {
-  const DesktopPaymentsView({
-    super.key,
-    required this.user,
-    required this.token,
-  });
-  final StaffUser user;
-  final String token;
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(kDeskGutter),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _DeskSectionHeader('Pagamentos recentes'),
-          const SizedBox(height: 12),
-          _DeskTable(
-            columns: const [
-              _DeskTableColumn('Referencia', flex: 2),
-              _DeskTableColumn('Cliente', flex: 2),
-              _DeskTableColumn('Metodo'),
-              _DeskTableColumn('Estado'),
-              _DeskTableColumn('Valor', flex: 1, align: CrossAxisAlignment.end),
-            ],
-            rows: const [
-              [
-                Text('pi_3T...'),
-                Text('Maria Costa'),
-                Text('Cartao'),
-                _DeskStatusBadge('Pagar', color: Colors.lightGreenAccent),
-                Text('€85.00'),
-              ],
-              [
-                Text('pi_4A...'),
-                Text('Joao Silva'),
-                Text('MB WAY'),
-                _DeskStatusBadge('Pendente', color: Colors.orangeAccent),
-                Text('€50.00'),
-              ],
-            ],
-          ),
-        ],
-      ),
+    return ValueListenableBuilder<String>(
+      valueListenable: widget.search,
+      builder: (context, value, _) {
+        final query = value.trim();
+        final key = '${widget.token}|$query';
+        if (_future == null || _lastKey != key) {
+          _lastKey = key;
+          _future = _loadClients(query);
+        }
+        return FutureBuilder<List<StaffClient>>(
+          future: _future,
+          builder: (context, snap) {
+            if (!snap.hasData) {
+              if (snap.hasError) {
+                return Padding(
+                  padding: const EdgeInsets.all(kDeskGutter),
+                  child: _DeskCard(child: Text('Erro: ${snap.error}')),
+                );
+              }
+              return const Center(child: CircularProgressIndicator());
+            }
+            final clients = snap.data!;
+            final rows = clients
+                .map(
+                  (client) => <Widget>[
+                    Text(client.name),
+                    Text(
+                      client.email?.trim().isNotEmpty == true
+                          ? client.email!
+                          : '-',
+                    ),
+                    Text(
+                      client.phone?.trim().isNotEmpty == true
+                          ? client.phone!
+                          : '-',
+                    ),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        if (widget.user.hasPermission('clients.view') ||
+                            widget.user.hasPermission('clients.update'))
+                          TextButton(
+                            onPressed: () => _showClientDialog(client),
+                            child: const Text('Ver'),
+                          ),
+                        if (widget.user.hasPermission('clients.update'))
+                          TextButton(
+                            onPressed: () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      StaffClientFormPage(client: client),
+                                ),
+                              );
+                              if (mounted) setState(() => _future = null);
+                            },
+                            child: const Text('Editar'),
+                          ),
+                        if (widget.user.hasPermission('clients.delete'))
+                          TextButton(
+                            onPressed: () async {
+                              final ok = await _confirm(
+                                context,
+                                'Remover cliente?',
+                                client.name,
+                              );
+                              if (!ok) return;
+                              await ref
+                                  .read(apiProvider)
+                                  .deleteClient(widget.token, client.id);
+                              if (mounted) setState(() => _future = null);
+                            },
+                            child: const Text('Apagar'),
+                          ),
+                      ],
+                    ),
+                  ],
+                )
+                .toList();
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(kDeskGutter),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const _DeskSectionHeader('Clientes'),
+                  const SizedBox(height: 12),
+                  if (clients.isEmpty)
+                    const _DeskCard(child: Text('Sem clientes.'))
+                  else
+                    _DeskTable(
+                      columns: const [
+                        _DeskTableColumn('Cliente', flex: 2),
+                        _DeskTableColumn('Email', flex: 2),
+                        _DeskTableColumn('Telefone', flex: 2),
+                        _DeskTableColumn('Ações', flex: 2),
+                      ],
+                      rows: rows,
+                    ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -7029,7 +7071,133 @@ class DesktopReportsView extends StatelessWidget {
   }
 }
 
-class DesktopSettingsView extends StatelessWidget {
+class DesktopUsersView extends ConsumerStatefulWidget {
+  const DesktopUsersView({super.key, required this.user, required this.token});
+  final StaffUser user;
+  final String token;
+
+  @override
+  ConsumerState<DesktopUsersView> createState() => _DesktopUsersViewState();
+}
+
+class _DesktopUsersViewState extends ConsumerState<DesktopUsersView> {
+  Future<List<StaffUser>>? _future;
+
+  Future<List<StaffUser>> _loadUsers() =>
+      ref.read(apiProvider).staffUsers(widget.token);
+
+  @override
+  Widget build(BuildContext context) {
+    _future ??= _loadUsers();
+    return FutureBuilder<List<StaffUser>>(
+      future: _future,
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          if (snap.hasError) {
+            return Padding(
+              padding: const EdgeInsets.all(kDeskGutter),
+              child: _DeskCard(child: Text('Erro: ${snap.error}')),
+            );
+          }
+          return const Center(child: CircularProgressIndicator());
+        }
+        final users = snap.data!;
+        final rows = users
+            .map(
+              (staffUser) => <Widget>[
+                Text(staffUser.name),
+                Text(
+                  staffUser.username?.trim().isNotEmpty == true
+                      ? staffUser.username!
+                      : '-',
+                ),
+                Text(staffUser.email),
+                Text(staffUser.role),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    if (widget.user.hasPermission('users.update'))
+                      TextButton(
+                        onPressed: () async {
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  StaffUserFormPage(user: staffUser),
+                            ),
+                          );
+                          if (mounted) setState(() => _future = null);
+                        },
+                        child: const Text('Editar'),
+                      ),
+                    if (widget.user.hasPermission('users.delete'))
+                      TextButton(
+                        onPressed: () async {
+                          final ok = await _confirm(
+                            context,
+                            'Apagar utilizador?',
+                            staffUser.email,
+                          );
+                          if (!ok) return;
+                          await ref
+                              .read(apiProvider)
+                              .deleteUser(widget.token, staffUser.id);
+                          if (mounted) setState(() => _future = null);
+                        },
+                        child: const Text('Apagar'),
+                      ),
+                  ],
+                ),
+              ],
+            )
+            .toList();
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(kDeskGutter),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Expanded(child: _DeskSectionHeader('Utilizadores')),
+                  if (widget.user.hasPermission('users.create'))
+                    FilledButton.icon(
+                      onPressed: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const StaffUserFormPage(),
+                          ),
+                        );
+                        if (mounted) setState(() => _future = null);
+                      },
+                      icon: const Icon(Icons.add),
+                      label: const Text('Novo utilizador'),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (users.isEmpty)
+                const _DeskCard(child: Text('Sem utilizadores.'))
+              else
+                _DeskTable(
+                  columns: const [
+                    _DeskTableColumn('Nome', flex: 2),
+                    _DeskTableColumn('Username', flex: 2),
+                    _DeskTableColumn('Email', flex: 2),
+                    _DeskTableColumn('Role', flex: 1),
+                    _DeskTableColumn('Ações', flex: 2),
+                  ],
+                  rows: rows,
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class DesktopSettingsView extends ConsumerStatefulWidget {
   const DesktopSettingsView({
     super.key,
     required this.user,
@@ -7039,56 +7207,131 @@ class DesktopSettingsView extends StatelessWidget {
   final String token;
 
   @override
+  ConsumerState<DesktopSettingsView> createState() =>
+      _DesktopSettingsViewState();
+}
+
+class _DesktopSettingsViewState extends ConsumerState<DesktopSettingsView> {
+  late final TextEditingController nameCtrl;
+  late final TextEditingController usernameCtrl;
+  late final TextEditingController emailCtrl;
+  late final TextEditingController passwordCtrl;
+  bool saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    nameCtrl = TextEditingController(text: widget.user.name);
+    usernameCtrl = TextEditingController(text: widget.user.username ?? '');
+    emailCtrl = TextEditingController(text: widget.user.email);
+    passwordCtrl = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    nameCtrl.dispose();
+    usernameCtrl.dispose();
+    emailCtrl.dispose();
+    passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(kDeskGutter),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _DeskSectionHeader('Definicoes do perfil'),
+          const _DeskSectionHeader('Definicoes do perfil'),
           const SizedBox(height: 12),
           _DeskCard(
             child: Column(
               children: [
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(labelText: 'Nome'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: usernameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Username (opcional)',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: emailCtrl,
+                  decoration: const InputDecoration(labelText: 'Email'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: passwordCtrl,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Nova password (opcional)',
+                  ),
+                ),
+                const SizedBox(height: 16),
                 Row(
                   children: [
-                    Expanded(
-                      child: TextField(
-                        decoration: const InputDecoration(labelText: 'Nome'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        decoration: const InputDecoration(labelText: 'Email'),
-                      ),
+                    const Spacer(),
+                    FilledButton(
+                      onPressed: saving
+                          ? null
+                          : () async {
+                              final name = nameCtrl.text.trim();
+                              final email = emailCtrl.text.trim();
+                              if (name.isEmpty || email.isEmpty) return;
+                              setState(() => saving = true);
+                              try {
+                                final updated = await ref
+                                    .read(apiProvider)
+                                    .updateProfile(
+                                      widget.token,
+                                      name: name,
+                                      email: email,
+                                      username: usernameCtrl.text.trim(),
+                                      password: passwordCtrl.text.trim(),
+                                    );
+                                ref.read(staffUserProvider.notifier).state =
+                                    updated;
+                                passwordCtrl.clear();
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Definições atualizadas.'),
+                                  ),
+                                );
+                              } catch (e) {
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Erro: $e')),
+                                );
+                              } finally {
+                                if (mounted) setState(() => saving = false);
+                              }
+                            },
+                      child: Text(saving ? 'A guardar...' : 'Guardar'),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        decoration: const InputDecoration(
-                          labelText: 'Telefone',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        decoration: const InputDecoration(labelText: 'Funcao'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
                 Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    onPressed: () {},
-                    child: const Text('Guardar alteracoes'),
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      ref.read(staffTokenProvider.notifier).state = null;
+                      ref.read(staffUserProvider.notifier).state = null;
+                      clearStaffSession();
+                      Navigator.pushAndRemoveUntil(
+                        context,
+                        MaterialPageRoute(builder: (_) => const HomePage()),
+                        (_) => false,
+                      );
+                    },
+                    icon: const Icon(Icons.logout),
+                    label: const Text('Terminar sessão'),
                   ),
                 ),
               ],
@@ -13479,6 +13722,12 @@ class _StaffUsersPageState extends ConsumerState<StaffUsersPage> {
             itemCount: users.length,
             itemBuilder: (_, i) {
               final u = users[i];
+              final canUpdate =
+                  ref.read(staffUserProvider)?.hasPermission('users.update') ==
+                  true;
+              final canDelete =
+                  ref.read(staffUserProvider)?.hasPermission('users.delete') ==
+                  true;
               return Card(
                 child: ListTile(
                   title: Text(u.name),
@@ -13488,39 +13737,43 @@ class _StaffUsersPageState extends ConsumerState<StaffUsersPage> {
                   trailing: Wrap(
                     spacing: 6,
                     children: [
-                      IconButton(
-                        icon: const Icon(Icons.edit),
-                        onPressed: () async {
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => StaffUserFormPage(user: u),
-                            ),
-                          );
-                          _reload();
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        onPressed: () async {
-                          final ok = await _confirm(
-                            context,
-                            'Apagar utilizador?',
-                            u.email,
-                          );
-                          if (!ok) return;
-                          try {
-                            await ref.read(apiProvider).deleteUser(token, u.id);
-                            if (!context.mounted) return;
-                            _reload();
-                          } catch (e) {
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(
+                      if (canUpdate)
+                        IconButton(
+                          icon: const Icon(Icons.edit),
+                          onPressed: () async {
+                            await Navigator.push(
                               context,
-                            ).showSnackBar(SnackBar(content: Text('Erro: $e')));
-                          }
-                        },
-                      ),
+                              MaterialPageRoute(
+                                builder: (_) => StaffUserFormPage(user: u),
+                              ),
+                            );
+                            _reload();
+                          },
+                        ),
+                      if (canDelete)
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () async {
+                            final ok = await _confirm(
+                              context,
+                              'Apagar utilizador?',
+                              u.email,
+                            );
+                            if (!ok) return;
+                            try {
+                              await ref
+                                  .read(apiProvider)
+                                  .deleteUser(token, u.id);
+                              if (!context.mounted) return;
+                              _reload();
+                            } catch (e) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Erro: $e')),
+                              );
+                            }
+                          },
+                        ),
                     ],
                   ),
                 ),
@@ -13542,22 +13795,23 @@ class _StaffUsersPageState extends ConsumerState<StaffUsersPage> {
       return StaffDesktopShell(
         user: user,
         token: token,
-        initialId: 'settings',
+        initialId: 'users',
         overrideTitle: 'Utilizadores',
         overrideSubtitle: 'Gestao de equipa',
         overrideShowSearch: false,
         overrideActionsBuilder: (ctx, u, t) => [
           IconButton(onPressed: _reload, icon: const Icon(Icons.refresh)),
-          IconButton(
-            onPressed: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const StaffUserFormPage()),
-              );
-              _reload();
-            },
-            icon: const Icon(Icons.add),
-          ),
+          if (user.hasPermission('users.create'))
+            IconButton(
+              onPressed: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const StaffUserFormPage()),
+                );
+                _reload();
+              },
+              icon: const Icon(Icons.add),
+            ),
         ],
         overrideContent: (ctx, u, t) => _buildUsersBody(ctx, t),
       );
@@ -13579,16 +13833,18 @@ class _StaffUsersPageState extends ConsumerState<StaffUsersPage> {
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const StaffUserFormPage()),
-          );
-          _reload();
-        },
-        child: const Icon(Icons.add),
-      ),
+      floatingActionButton: user?.hasPermission('users.create') == true
+          ? FloatingActionButton(
+              onPressed: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const StaffUserFormPage()),
+                );
+                _reload();
+              },
+              child: const Icon(Icons.add),
+            )
+          : null,
       body: _buildUsersBody(context, token),
     );
   }
@@ -13785,7 +14041,7 @@ class _StaffUserFormPageState extends ConsumerState<StaffUserFormPage> {
       return StaffDesktopShell(
         user: user,
         token: token,
-        initialId: 'settings',
+        initialId: 'users',
         overrideTitle: widget.user == null
             ? 'Novo utilizador'
             : 'Editar utilizador',

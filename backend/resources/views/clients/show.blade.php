@@ -2,7 +2,9 @@
 @section('page_title', 'Cliente')
 @section('page_subtitle', $client->name)
 @section('page_actions')
-    <a href="{{ route('clients.edit', $client) }}" class="desk-btn">Editar</a>
+    @if(auth()->user()?->hasPermission('clients.update'))
+        <a href="{{ route('clients.edit', $client) }}" class="desk-btn">Editar</a>
+    @endif
     <a href="{{ route('clients.index') }}" class="desk-btn">Voltar</a>
 @endsection
 @section('content')

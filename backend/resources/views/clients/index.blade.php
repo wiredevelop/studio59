@@ -2,7 +2,9 @@
 @section('page_title', 'Clientes')
 @section('page_subtitle', 'Gestão de clientes e contactos')
 @section('page_actions')
-    <a href="{{ route('clients.create') }}" class="desk-btn primary">Novo cliente</a>
+    @if(auth()->user()?->hasPermission('clients.create'))
+        <a href="{{ route('clients.create') }}" class="desk-btn primary">Novo cliente</a>
+    @endif
 @endsection
 @section('content')
 <form class="desk-card desk-toolbar" method="get">
@@ -28,13 +30,22 @@
                 <td class="p-2">{{ $client->phone }}</td>
                 <td class="p-2 text-center">
                     <div class="flex items-center justify-center gap-2">
-                        <a class="desk-btn" href="{{ route('clients.show', $client) }}">Ver</a>
-                        <a class="desk-btn" href="{{ route('clients.edit', $client) }}">Editar</a>
-                        <form method="post" action="{{ route('clients.destroy', $client) }}" onsubmit="return confirm('Remover cliente?');">
-                            @csrf
-                            @method('DELETE')
-                            <button class="desk-btn">Apagar</button>
-                        </form>
+                        @if(auth()->user()?->hasPermission('clients.view'))
+                            <a class="desk-btn" href="{{ route('clients.show', $client) }}">Ver</a>
+                        @endif
+                        @if(auth()->user()?->hasPermission('clients.update'))
+                            <a class="desk-btn" href="{{ route('clients.edit', $client) }}">Editar</a>
+                        @endif
+                        @if(auth()->user()?->hasPermission('clients.delete'))
+                            <form method="post" action="{{ route('clients.destroy', $client) }}" onsubmit="return confirm('Remover cliente?');">
+                                @csrf
+                                @method('DELETE')
+                                <button class="desk-btn">Apagar</button>
+                            </form>
+                        @endif
+                        @unless(auth()->user()?->hasPermission('clients.view') || auth()->user()?->hasPermission('clients.update') || auth()->user()?->hasPermission('clients.delete'))
+                            <span class="text-sm text-gray-400">Sem ações</span>
+                        @endunless
                     </div>
                 </td>
             </tr>
