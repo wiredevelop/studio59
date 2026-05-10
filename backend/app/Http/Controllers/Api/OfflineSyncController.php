@@ -14,6 +14,7 @@ use App\Jobs\GeneratePhotoPreview;
 use App\Support\OrderDownloadService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Validation\ValidationException;
@@ -108,17 +109,19 @@ class OfflineSyncController extends Controller
         $checksum = hash('sha256', $raw);
 
         $existing = OfflineSync::query()->where('checksum', $checksum)->first();
-        if ($existing) {
+        if ($existing && $existing->status === 'completed') {
             return response()->json(['message' => 'Already imported', 'sync_id' => $existing->id]);
         }
-
-        $sync = OfflineSync::create([
+        $sync = $existing ?: new OfflineSync();
+        $sync->fill([
             'event_id' => $event->id,
             'device_id' => $validated['device_id'] ?? null,
             'status' => 'processing',
             'checksum' => $checksum,
             'payload' => $raw,
+            'error' => null,
         ]);
+        $sync->save();
 
         try {
             $data = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
@@ -128,8 +131,9 @@ class OfflineSyncController extends Controller
             $selections = $data['selections'] ?? [];
             $orderUpdates = $data['order_updates'] ?? [];
             $emailsToSend = [];
+            $supportsCashColumns = $this->supportsOrderCashColumns();
 
-            DB::transaction(function () use ($event, $orders, $clients, $selections, $orderUpdates, $photoMap, &$emailsToSend) {
+            DB::transaction(function () use ($event, $orders, $clients, $selections, $orderUpdates, $photoMap, &$emailsToSend, $supportsCashColumns) {
                 foreach ($clients as $clientPayload) {
                     $email = $clientPayload['email'] ?? null;
                     $phone = $clientPayload['phone'] ?? null;
@@ -158,30 +162,33 @@ class OfflineSyncController extends Controller
                 }
 
                 foreach ($orders as $orderPayload) {
+                    $attributes = [
+                        'event_id' => $event->id,
+                        'customer_name' => $orderPayload['customer_name'] ?? 'Cliente',
+                        'customer_phone' => $orderPayload['customer_phone'] ?? null,
+                        'customer_email' => $orderPayload['customer_email'] ?? null,
+                        'product_type' => $orderPayload['product_type'] ?? null,
+                        'delivery_type' => $orderPayload['delivery_type'] ?? null,
+                        'delivery_address' => $orderPayload['delivery_address'] ?? null,
+                        'wants_film' => $orderPayload['wants_film'] ?? false,
+                        'film_fee' => $orderPayload['film_fee'] ?? 0,
+                        'shipping_fee' => $orderPayload['shipping_fee'] ?? 0,
+                        'extras_total' => $orderPayload['extras_total'] ?? 0,
+                        'items_total' => $orderPayload['items_total'] ?? 0,
+                        'payment_method' => $orderPayload['payment_method'] ?? 'cash',
+                        'status' => $orderPayload['status'] ?? 'pending',
+                        'total_amount' => $orderPayload['total_amount'] ?? 0,
+                        'created_at' => $orderPayload['created_at'] ?? now(),
+                        'updated_at' => $orderPayload['updated_at'] ?? now(),
+                    ];
+                    if ($supportsCashColumns) {
+                        $attributes['cash_received_amount'] = $orderPayload['cash_received_amount'] ?? null;
+                        $attributes['cash_change_amount'] = $orderPayload['cash_change_amount'] ?? null;
+                        $attributes['cash_due_amount'] = $orderPayload['cash_due_amount'] ?? null;
+                    }
                     $order = Order::query()->firstOrCreate(
                         ['order_code' => $orderPayload['order_code']],
-                        [
-                            'event_id' => $event->id,
-                            'customer_name' => $orderPayload['customer_name'] ?? 'Cliente',
-                            'customer_phone' => $orderPayload['customer_phone'] ?? null,
-                            'customer_email' => $orderPayload['customer_email'] ?? null,
-                            'product_type' => $orderPayload['product_type'] ?? null,
-                            'delivery_type' => $orderPayload['delivery_type'] ?? null,
-                            'delivery_address' => $orderPayload['delivery_address'] ?? null,
-                            'wants_film' => $orderPayload['wants_film'] ?? false,
-                            'film_fee' => $orderPayload['film_fee'] ?? 0,
-                            'shipping_fee' => $orderPayload['shipping_fee'] ?? 0,
-                            'extras_total' => $orderPayload['extras_total'] ?? 0,
-                            'items_total' => $orderPayload['items_total'] ?? 0,
-                            'payment_method' => $orderPayload['payment_method'] ?? 'cash',
-                            'cash_received_amount' => $orderPayload['cash_received_amount'] ?? null,
-                            'cash_change_amount' => $orderPayload['cash_change_amount'] ?? null,
-                            'cash_due_amount' => $orderPayload['cash_due_amount'] ?? null,
-                            'status' => $orderPayload['status'] ?? 'pending',
-                            'total_amount' => $orderPayload['total_amount'] ?? 0,
-                            'created_at' => $orderPayload['created_at'] ?? now(),
-                            'updated_at' => $orderPayload['updated_at'] ?? now(),
-                        ]
+                        $attributes
                     );
 
                     if (! empty($orderPayload['items']) && is_array($orderPayload['items'])) {
@@ -226,12 +233,15 @@ class OfflineSyncController extends Controller
 
                 foreach ($orderUpdates as $update) {
                     if (empty($update['order_id']) || empty($update['status'])) continue;
-                    Order::where('id', $update['order_id'])->update([
+                    $updatePayload = [
                         'status' => $update['status'],
-                        'cash_received_amount' => $update['cash_received_amount'] ?? null,
-                        'cash_change_amount' => $update['cash_change_amount'] ?? null,
-                        'cash_due_amount' => $update['cash_due_amount'] ?? null,
-                    ]);
+                    ];
+                    if ($supportsCashColumns) {
+                        $updatePayload['cash_received_amount'] = $update['cash_received_amount'] ?? null;
+                        $updatePayload['cash_change_amount'] = $update['cash_change_amount'] ?? null;
+                        $updatePayload['cash_due_amount'] = $update['cash_due_amount'] ?? null;
+                    }
+                    Order::where('id', $update['order_id'])->update($updatePayload);
                 }
             });
 
@@ -495,5 +505,12 @@ class OfflineSyncController extends Controller
         }
 
         return null;
+    }
+
+    private function supportsOrderCashColumns(): bool
+    {
+        return Schema::hasColumn('orders', 'cash_received_amount')
+            && Schema::hasColumn('orders', 'cash_change_amount')
+            && Schema::hasColumn('orders', 'cash_due_amount');
     }
 }

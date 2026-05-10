@@ -15411,6 +15411,21 @@ class ApiService {
     }).toList();
   }
 
+  Future<int> staffEventPhotosTotal(
+    String token,
+    int eventId, {
+    String search = '',
+  }) async {
+    final r = await dio.get(
+      '/events/$eventId/photos',
+      queryParameters: {'search': search},
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    return (r.data['total'] as num?)?.toInt() ??
+        ((r.data['data'] as List?)?.length ?? 0);
+  }
+
   Future<void> staffDeletePhoto(String token, int eventId, int photoId) async {
     final r = await dio.delete(
       '/events/$eventId/photos/$photoId',
@@ -16584,12 +16599,9 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     }
     final results = await Future.wait([
       ref.read(apiProvider).staffOrdersTotal(token, eventId: eventId),
-      ref.read(apiProvider).staffEventPhotos(token, eventId, ''),
+      ref.read(apiProvider).staffEventPhotosTotal(token, eventId),
     ]);
-    return {
-      'orders': results[0] as int,
-      'photos': (results[1] as List<StaffPhoto>).length,
-    };
+    return {'orders': results[0] as int, 'photos': results[1] as int};
   }
 
   Future<Map<String, dynamic>> _loadOfflinePhotosMetaIndex(
@@ -16697,6 +16709,13 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
       await ref
           .read(apiProvider)
           .offlineImportFile(token, _eventId!, _jsonPath!, deviceId);
+      StaffEvent? importedEvent;
+      for (final event in _events) {
+        if (event.id == _eventId) {
+          importedEvent = event;
+          break;
+        }
+      }
       if (!mounted) return;
       setState(() {
         _statusMessage = 'Importação concluída.';
@@ -16707,6 +16726,14 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Importação concluída.')));
+      if (importedEvent != null) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => _StaffEventGalleryPage(event: importedEvent),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       final message = formatUiError(e);
