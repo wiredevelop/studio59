@@ -259,6 +259,24 @@ class OfflineSyncController extends Controller
     {
         $idMap = [];
         $numberMap = [];
+        $existingPhotos = Photo::query()
+            ->where('event_id', $event->id)
+            ->get(['id', 'number', 'checksum']);
+        $existingByNumber = [];
+        $existingByChecksum = [];
+        $nextNumber = 0;
+
+        foreach ($existingPhotos as $photo) {
+            $number = trim((string) $photo->number);
+            if ($number !== '') {
+                $existingByNumber[$number] = $photo;
+                $nextNumber = max($nextNumber, (int) $number);
+            }
+            $checksum = trim((string) ($photo->checksum ?? ''));
+            if ($checksum !== '') {
+                $existingByChecksum[$checksum] = $photo;
+            }
+        }
 
         $metaByName = collect($photosMeta)
             ->filter(fn ($photo) => is_array($photo))
@@ -293,7 +311,10 @@ class OfflineSyncController extends Controller
             $photo = $this->storeImportedPhoto(
                 $event,
                 $file,
-                is_array($meta) ? ($meta['number'] ?? null) : null
+                is_array($meta) ? $meta : [],
+                $existingByNumber,
+                $existingByChecksum,
+                $nextNumber,
             );
 
             if (is_array($meta) && ! empty($meta['id'])) {
@@ -303,11 +324,6 @@ class OfflineSyncController extends Controller
                 $numberMap[(string) $photo->number] = $photo->id;
             }
         }
-
-        $existingByNumber = Photo::query()
-            ->where('event_id', $event->id)
-            ->get(['id', 'number'])
-            ->keyBy('number');
 
         foreach ($photosMeta as $meta) {
             if (! is_array($meta)) {
@@ -386,8 +402,14 @@ class OfflineSyncController extends Controller
         return array_values($files);
     }
 
-    private function storeImportedPhoto(Event $event, UploadedFile $file, mixed $preferredNumber = null): Photo
-    {
+    private function storeImportedPhoto(
+        Event $event,
+        UploadedFile $file,
+        array $meta,
+        array &$existingByNumber,
+        array &$existingByChecksum,
+        int &$nextNumber
+    ): Photo {
         $imageType = @exif_imagetype($file->getRealPath());
         if ($imageType !== IMAGETYPE_JPEG) {
             throw ValidationException::withMessages([
@@ -395,53 +417,55 @@ class OfflineSyncController extends Controller
             ]);
         }
 
-        $checksum = hash_file('sha256', $file->getRealPath());
-        $existingByChecksum = Photo::query()
-            ->where('event_id', $event->id)
-            ->where('checksum', $checksum)
-            ->first();
-        if ($existingByChecksum) {
-            return $existingByChecksum;
+        $checksum = trim((string) ($meta['checksum'] ?? ''));
+        if ($checksum !== '' && isset($existingByChecksum[$checksum])) {
+            return $existingByChecksum[$checksum];
         }
 
-        $number = trim((string) ($preferredNumber ?? ''));
+        $number = trim((string) ($meta['number'] ?? ''));
         if ($number !== '') {
-            $conflict = Photo::query()
-                ->where('event_id', $event->id)
-                ->where('number', $number)
-                ->first();
-            if ($conflict) {
+            if (isset($existingByNumber[$number])) {
+                $existing = $existingByNumber[$number];
+                $existingChecksum = trim((string) ($existing->checksum ?? ''));
+                if ($checksum === '' || $existingChecksum === '' || $existingChecksum === $checksum) {
+                    return $existing;
+                }
                 throw ValidationException::withMessages([
                     'photos' => "Já existe uma foto #{$number} neste evento com ficheiro diferente.",
                 ]);
             }
         } else {
-            $number = str_pad(
-                (string) ((int) (Photo::query()->where('event_id', $event->id)->max('number') ?? 0) + 1),
-                4,
-                '0',
-                STR_PAD_LEFT
-            );
+            $nextNumber++;
+            $number = str_pad((string) $nextNumber, 4, '0', STR_PAD_LEFT);
         }
+        $nextNumber = max($nextNumber, (int) $number);
 
         $originalPath = 'events/'.$event->id.'/originals/'.$number.'.jpg';
         Storage::disk('local')->makeDirectory(dirname($originalPath));
-        Storage::disk('local')->put($originalPath, file_get_contents($file->getRealPath()));
-        [$width, $height] = getimagesize(Storage::disk('local')->path($originalPath)) ?: [null, null];
+        $stream = fopen($file->getRealPath(), 'rb');
+        Storage::disk('local')->put($originalPath, $stream);
+        if (is_resource($stream)) {
+            fclose($stream);
+        }
 
         $photo = Photo::query()->create([
             'event_id' => $event->id,
             'number' => $number,
             'original_path' => $originalPath,
             'mime' => 'image/jpeg',
-            'size' => Storage::disk('local')->size($originalPath),
-            'width' => $width,
-            'height' => $height,
+            'size' => (int) ($file->getSize() ?? 0),
+            'width' => null,
+            'height' => null,
             'status' => 'active',
             'preview_status' => 'pending',
             'preview_error' => null,
-            'checksum' => $checksum,
+            'checksum' => $checksum !== '' ? $checksum : null,
         ]);
+
+        $existingByNumber[$number] = $photo;
+        if ($checksum !== '') {
+            $existingByChecksum[$checksum] = $photo;
+        }
 
         GeneratePhotoPreview::dispatch($photo->id);
 

@@ -16474,6 +16474,7 @@ class OfflineSyncPanel extends ConsumerStatefulWidget {
 
 class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
   static const int _photoBatchSize = 20;
+  static const int _parallelPhotoUploads = 3;
 
   List<StaffEvent> _events = [];
   int? _eventId;
@@ -16642,6 +16643,40 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     }
   }
 
+  Future<void> _uploadPhotoBatches(
+    String token,
+    int eventId,
+    Map<String, dynamic> photoMetaIndex,
+  ) async {
+    final batches = _photoBatches(_photoPaths).toList();
+    var uploadedPhotos = 0;
+    for (var i = 0; i < batches.length; i += _parallelPhotoUploads) {
+      final window = batches.skip(i).take(_parallelPhotoUploads).toList();
+      final batchPhotoCount = window.fold<int>(
+        0,
+        (sum, batch) => sum + batch.length,
+      );
+      if (!mounted) return;
+      setState(() {
+        _statusMessage =
+            'A importar fotos ${uploadedPhotos + 1}-${min(uploadedPhotos + batchPhotoCount, _photoPaths.length)} de ${_photoPaths.length}...';
+      });
+      await Future.wait(
+        window.map(
+          (batch) => ref
+              .read(apiProvider)
+              .offlineImportPhotoBatch(
+                token,
+                eventId,
+                batch,
+                photosMeta: _matchPhotosMetaForBatch(photoMetaIndex, batch),
+              ),
+        ),
+      );
+      uploadedPhotos += batchPhotoCount;
+    }
+  }
+
   Future<void> _importPackage() async {
     final token = ref.read(staffTokenProvider);
     if (token == null || _eventId == null || _jsonPath == null) return;
@@ -16654,26 +16689,7 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
       }
       final photoMetaIndex = await _loadOfflinePhotosMetaIndex(_jsonPath!);
       if (_photoPaths.isNotEmpty) {
-        final batches = _photoBatches(_photoPaths).toList();
-        var uploadedPhotos = 0;
-        for (var i = 0; i < batches.length; i++) {
-          final batch = batches[i];
-          final batchMeta = _matchPhotosMetaForBatch(photoMetaIndex, batch);
-          if (!mounted) return;
-          setState(() {
-            _statusMessage =
-                'A importar fotos ${uploadedPhotos + 1}-${uploadedPhotos + batch.length} de ${_photoPaths.length}...';
-          });
-          await ref
-              .read(apiProvider)
-              .offlineImportPhotoBatch(
-                token,
-                _eventId!,
-                batch,
-                photosMeta: batchMeta,
-              );
-          uploadedPhotos += batch.length;
-        }
+        await _uploadPhotoBatches(token, _eventId!, photoMetaIndex);
       }
       if (!mounted) return;
       setState(() => _statusMessage = 'A importar JSON...');
