@@ -39,7 +39,7 @@ Route::prefix('/guest')->name('guest.')->group(function () {
 
 Route::get('/downloads/{token}', [DownloadAccessController::class, 'show'])->name('downloads.show');
 Route::get('/downloads/{token}/photo/{photoId}', [DownloadAccessController::class, 'download'])->name('downloads.photo');
-Route::post('/downloads/{token}/bulk', [DownloadAccessController::class, 'bulkDownload'])->name('downloads.bulk');
+Route::match(['get', 'post'], '/downloads/{token}/bulk', [DownloadAccessController::class, 'bulkDownload'])->name('downloads.bulk');
 
 Route::get('/preview/{photo}', function (Photo $photo) {
     abort_unless($photo->preview_path && Storage::disk('local')->exists($photo->preview_path), 404);

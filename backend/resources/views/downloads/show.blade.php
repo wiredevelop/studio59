@@ -18,8 +18,7 @@
         @endif
     </div>
 
-    <form method="post" action="{{ route('downloads.bulk', ['token' => $token]) }}" id="bulk-download-form">
-        @csrf
+    <form method="get" action="{{ route('downloads.bulk', ['token' => $token]) }}" id="bulk-download-form">
         <div class="mb-4 bg-white border rounded p-3 flex flex-wrap items-center gap-2">
             <button type="button" id="select-all" class="border rounded px-3 py-2 bg-white text-sm">Selecionar tudo</button>
             <button type="button" id="clear-all" class="border rounded px-3 py-2 bg-white text-sm">Limpar seleção</button>
