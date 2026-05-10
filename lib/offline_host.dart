@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:mime/mime.dart';
 import 'package:path_provider/path_provider.dart';
 
 const String kOfflineHostSessionFileName = 'studio59_offline_host_session.json';
@@ -64,6 +65,24 @@ String _mimeTypeForPath(String path) {
   if (ext.endsWith('.heic')) return 'image/heic';
   if (ext.endsWith('.heif')) return 'image/heif';
   return 'image/jpeg';
+}
+
+String? _multipartHeaderValue(String? header, String key) {
+  if (header == null || header.trim().isEmpty) return null;
+  final quoted = RegExp('$key="([^"]*)"').firstMatch(header);
+  if (quoted != null) return quoted.group(1)?.trim();
+  final plain = RegExp('$key=([^;]+)').firstMatch(header);
+  return plain?.group(1)?.trim().replaceAll('"', '');
+}
+
+String _imageExtensionForName(String? filename) {
+  final value = (filename ?? '').trim().toLowerCase();
+  if (value.endsWith('.png')) return '.png';
+  if (value.endsWith('.webp')) return '.webp';
+  if (value.endsWith('.gif')) return '.gif';
+  if (value.endsWith('.heic')) return '.heic';
+  if (value.endsWith('.heif')) return '.heif';
+  return '.jpg';
 }
 
 String generateOfflinePassword() {
@@ -817,6 +836,13 @@ class OfflineHostStartResult {
   final String lanApiBaseUrl;
 }
 
+class _OfflinePythonCommand {
+  const _OfflinePythonCommand(this.command, [this.prefixArgs = const []]);
+
+  final String command;
+  final List<String> prefixArgs;
+}
+
 class OfflineHostServer {
   OfflineHostServer._();
 
@@ -1023,6 +1049,12 @@ class OfflineHostServer {
           path.endsWith('/photos') &&
           request.method == 'GET') {
         await _handlePhotos(request);
+        return;
+      }
+      if (path.startsWith('/api/public/events/') &&
+          path.endsWith('/face-search') &&
+          request.method == 'POST') {
+        await _handleFaceSearch(request);
         return;
       }
       if (path == '/api/public/orders' && request.method == 'POST') {
@@ -1344,6 +1376,271 @@ class OfflineHostServer {
       'last_page': lastPage,
       'per_page': safePerPage,
     });
+  }
+
+  Future<void> _handleFaceSearch(HttpRequest request) async {
+    final session = _requireSession();
+    if (!_hasGuestToken(request, session)) {
+      await _json(request, HttpStatus.forbidden, {
+        'message': 'Sessão inválida.',
+      });
+      return;
+    }
+    final eventId = request.uri.pathSegments.length >= 4
+        ? int.tryParse(request.uri.pathSegments[3])
+        : null;
+    if (eventId == null || eventId != session.eventId) {
+      await _json(request, HttpStatus.notFound, {
+        'message': 'Event not available',
+      });
+      return;
+    }
+    final scriptPath = await _resolveFaceSearchScriptPath();
+    if (scriptPath == null) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Reconhecimento facial offline indisponível neste PC.',
+      });
+      return;
+    }
+    final python = await _resolveOfflinePythonCommand();
+    if (python == null) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Python não encontrado neste PC.',
+      });
+      return;
+    }
+    final faceRoot = await _offlineFaceSearchRootDirectory();
+    final tmpDir = Directory(_pathJoin(faceRoot.path, 'tmp'));
+    final indexDir = Directory(_pathJoin(faceRoot.path, 'face_index'));
+    final insightDir = Directory(_pathJoin(faceRoot.path, 'insightface'));
+    await tmpDir.create(recursive: true);
+    await indexDir.create(recursive: true);
+    await insightDir.create(recursive: true);
+    final selfieFile = await _saveMultipartSelfie(request, tmpDir);
+    if (selfieFile == null || !await selfieFile.exists()) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Selfie inválida.',
+      });
+      return;
+    }
+    if (await selfieFile.length() > (5 * 1024 * 1024)) {
+      try {
+        await selfieFile.delete();
+      } catch (_) {}
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'A selfie é demasiado grande.',
+      });
+      return;
+    }
+    final photosPayload = <Map<String, dynamic>>[];
+    for (final photo in session.photos) {
+      final file = File(photo.path);
+      if (!await file.exists()) continue;
+      DateTime? modified;
+      try {
+        modified = await file.lastModified();
+      } catch (_) {}
+      photosPayload.add({
+        'id': photo.id,
+        'path': photo.path,
+        'mtime': modified?.millisecondsSinceEpoch,
+      });
+    }
+    if (photosPayload.isEmpty) {
+      try {
+        await selfieFile.delete();
+      } catch (_) {}
+      await _json(request, HttpStatus.ok, {'suggested': const []});
+      return;
+    }
+    final token = DateTime.now().microsecondsSinceEpoch;
+    final photosJson = File(
+      _pathJoin(tmpDir.path, 'face-photos-${session.eventId}-$token.json'),
+    );
+    await photosJson.writeAsString(jsonEncode(photosPayload), flush: true);
+    final indexPath = _pathJoin(
+      indexDir.path,
+      'event_${session.eventId}.pkl',
+    );
+    final args = [
+      ...python.prefixArgs,
+      scriptPath,
+      '--event',
+      session.eventId.toString(),
+      '--selfie',
+      selfieFile.path,
+      '--photos',
+      photosJson.path,
+      '--index',
+      indexPath,
+    ];
+    ProcessResult? result;
+    try {
+      result = await Process.run(
+        python.command,
+        args,
+        runInShell: Platform.isWindows,
+        environment: {
+          ...Platform.environment,
+          'INSIGHTFACE_HOME': insightDir.path,
+          'HOME': insightDir.path,
+        },
+      );
+    } catch (_) {}
+    try {
+      await selfieFile.delete();
+    } catch (_) {}
+    try {
+      await photosJson.delete();
+    } catch (_) {}
+    if (result == null) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Falha ao iniciar face search offline.',
+      });
+      return;
+    }
+    final stdout = result.stdout?.toString().trim() ?? '';
+    final stderr = result.stderr?.toString().trim() ?? '';
+    Map<String, dynamic>? payload;
+    if (stdout.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(stdout);
+        if (decoded is Map) {
+          payload = Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {}
+    }
+    final errorCode = payload?['error']?.toString().trim() ?? '';
+    if (errorCode == 'no_face_detected') {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Nenhum rosto detetado.',
+      });
+      return;
+    }
+    if (errorCode.isNotEmpty) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Erro no reconhecimento facial.',
+      });
+      return;
+    }
+    if (payload == null) {
+      await _json(request, HttpStatus.unprocessableEntity, {
+        'message': 'Resposta inválida do reconhecimento facial.',
+        if (stderr.isNotEmpty) 'detail': stderr,
+      });
+      return;
+    }
+    final suggestedIds = ((payload['suggested'] as List?) ?? const [])
+        .map((item) {
+          if (item is Map) {
+            return int.tryParse(item['id']?.toString() ?? '');
+          }
+          return null;
+        })
+        .whereType<int>()
+        .toList();
+    final byId = {for (final photo in session.photos) photo.id: photo};
+    final requested = request.requestedUri;
+    final responsePayload = <Map<String, dynamic>>[];
+    for (final id in suggestedIds) {
+      final photo = byId[id];
+      if (photo == null) continue;
+      responsePayload.add({
+        'id': photo.id,
+        'number': photo.number,
+        'preview_url': requested
+            .replace(
+              path: '/offline/photos/${photo.id}',
+              query: null,
+              fragment: null,
+            )
+            .toString(),
+      });
+    }
+    await _json(request, HttpStatus.ok, {'suggested': responsePayload});
+  }
+
+  Future<Directory> _offlineFaceSearchRootDirectory() async {
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory(_pathJoin(docs.path, 'studio59_face'));
+    await dir.create(recursive: true);
+    return dir;
+  }
+
+  Future<String?> _resolveFaceSearchScriptPath() async {
+    final candidates = <String>{
+      _pathJoin(Directory.current.path, 'backend/scripts/face_search.py'),
+      _pathJoin(Directory.current.path, 'scripts/face_search.py'),
+      _pathJoin(
+        Directory.current.parent.path,
+        'backend/scripts/face_search.py',
+      ),
+    };
+    for (final candidate in candidates) {
+      if (await File(candidate).exists()) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  Future<_OfflinePythonCommand?> _resolveOfflinePythonCommand() async {
+    final attempts = <_OfflinePythonCommand>[
+      if (Platform.isWindows) const _OfflinePythonCommand('py', ['-3']),
+      const _OfflinePythonCommand('python3'),
+      const _OfflinePythonCommand('python'),
+    ];
+    for (final attempt in attempts) {
+      try {
+        final result = await Process.run(
+          attempt.command,
+          [...attempt.prefixArgs, '--version'],
+          runInShell: Platform.isWindows,
+        );
+        if (result.exitCode == 0) return attempt;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  Future<File?> _saveMultipartSelfie(
+    HttpRequest request,
+    Directory directory,
+  ) async {
+    final contentType = request.headers.contentType;
+    final boundary = contentType?.parameters['boundary'];
+    if (contentType == null ||
+        contentType.mimeType != 'multipart/form-data' ||
+        boundary == null ||
+        boundary.trim().isEmpty) {
+      return null;
+    }
+    final parts = MimeMultipartTransformer(boundary).bind(request);
+    await for (final part in parts) {
+      final disposition = part.headers['content-disposition'];
+      final name = _multipartHeaderValue(disposition, 'name');
+      if (name != 'selfie') {
+        await part.drain<void>();
+        continue;
+      }
+      final ext = _imageExtensionForName(
+        _multipartHeaderValue(disposition, 'filename'),
+      );
+      final file = File(
+        _pathJoin(
+          directory.path,
+          'face-selfie-${DateTime.now().microsecondsSinceEpoch}$ext',
+        ),
+      );
+      final sink = file.openWrite();
+      try {
+        await sink.addStream(part);
+      } finally {
+        await sink.close();
+      }
+      return file;
+    }
+    return null;
   }
 
   Future<void> _handleCreateOrder(HttpRequest request) async {
