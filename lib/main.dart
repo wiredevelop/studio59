@@ -5346,12 +5346,13 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
               (_) => false,
             );
           },
-          leading: widget.overrideContent != null &&
-                  Navigator.of(context).canPop()
-              ? IconButton(
-                  icon: const Icon(Icons.arrow_back),
-                  tooltip: 'Voltar',
-                  onPressed: () => Navigator.maybePop(context),
+          leading: widget.overrideContent != null
+              ? Builder(
+                  builder: (ctx) => IconButton(
+                    icon: const Icon(Icons.arrow_back),
+                    tooltip: 'Voltar',
+                    onPressed: () => Navigator.maybePop(ctx),
+                  ),
                 )
               : isCompact
               ? Builder(
