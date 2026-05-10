@@ -6842,13 +6842,17 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                         child: _DeskCard(
                           child: InkWell(
                             borderRadius: BorderRadius.circular(kDeskRadius),
-                            onTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    StaffOrderDetailPage(orderId: o.id),
-                              ),
-                            ),
+                            onTap: () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      StaffOrderDetailPage(orderId: o.id),
+                                ),
+                              );
+                              if (!context.mounted) return;
+                              setState(_reload);
+                            },
                             child: Padding(
                               padding: const EdgeInsets.all(2),
                               child: Column(
@@ -6934,14 +6938,19 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                                       _MobileActionChip(
                                         label: 'Abrir',
                                         color: kBrandRose,
-                                        onTap: () => Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (_) => StaffOrderDetailPage(
-                                              orderId: o.id,
+                                        onTap: () async {
+                                          await Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  StaffOrderDetailPage(
+                                                    orderId: o.id,
+                                                  ),
                                             ),
-                                          ),
-                                        ),
+                                          );
+                                          if (!context.mounted) return;
+                                          setState(_reload);
+                                        },
                                       ),
                                       if (canUpdate &&
                                           o.status != 'paid' &&
@@ -6950,16 +6959,13 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                                           label: 'Pagar',
                                           color: Colors.lightGreenAccent,
                                           onTap: () async {
-                                            CashSettlement? settlement;
-                                            if (o.paymentMethod != 'online') {
-                                              settlement =
-                                                  await promptCashSettlement(
-                                                    context,
-                                                    totalAmount:
-                                                        o.totalAmount ?? 0,
-                                                  );
-                                              if (settlement == null) return;
-                                            }
+                                            final settlement =
+                                                await promptCashSettlement(
+                                                  context,
+                                                  totalAmount:
+                                                      o.totalAmount ?? 0,
+                                                );
+                                            if (settlement == null) return;
                                             await ref
                                                 .read(apiProvider)
                                                 .markOrderPaid(
@@ -6967,14 +6973,14 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                                                   o.id,
                                                   eventId: o.eventId,
                                                   cashReceivedAmount:
-                                                      settlement?.receivedAmount,
+                                                      settlement.receivedAmount,
                                                   cashChangeAmount:
-                                                      settlement?.changeAmount,
+                                                      settlement.changeAmount,
                                                   cashDueAmount:
-                                                      settlement?.dueAmount,
+                                                      settlement.dueAmount,
                                                 );
                                             if (!context.mounted) return;
-                                            _reload();
+                                            setState(_reload);
                                           },
                                         ),
                                       if (canUpdate &&
@@ -6992,7 +6998,7 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                                                   eventId: o.eventId,
                                                 );
                                             if (!context.mounted) return;
-                                            _reload();
+                                            setState(_reload);
                                           },
                                         ),
                                       if (canDownload)
@@ -7007,7 +7013,7 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                                                   o.id,
                                                 );
                                             if (!context.mounted) return;
-                                            _reload();
+                                            setState(_reload);
                                           },
                                         ),
                                       if (canDownload)
@@ -12397,7 +12403,10 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                     ),
                                   );
                                   if (!mounted) return;
-                                  setState(() {});
+                                  setState(() {
+                                    _ordersFuture = null;
+                                    _lastOrdersKey = null;
+                                  });
                                 },
                                 child: Padding(
                                   padding: const EdgeInsets.all(14),
@@ -12532,19 +12541,14 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                 label: 'Pagar',
                                                 color: Colors.lightGreenAccent,
                                                 onTap: () async {
-                                                  CashSettlement? settlement;
-                                                  if (o.paymentMethod !=
-                                                      'online') {
-                                                    settlement =
-                                                        await promptCashSettlement(
-                                                          context,
-                                                          totalAmount:
-                                                              o.totalAmount ??
-                                                              0,
-                                                        );
-                                                    if (settlement == null) {
-                                                      return;
-                                                    }
+                                                  final settlement =
+                                                      await promptCashSettlement(
+                                                        context,
+                                                        totalAmount:
+                                                            o.totalAmount ?? 0,
+                                                      );
+                                                  if (settlement == null) {
+                                                    return;
                                                   }
                                                   final emailed = await ref
                                                       .read(apiProvider)
@@ -12554,13 +12558,12 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                         eventId: o.eventId,
                                                         cashReceivedAmount:
                                                             settlement
-                                                                ?.receivedAmount,
+                                                                .receivedAmount,
                                                         cashChangeAmount:
                                                             settlement
-                                                                ?.changeAmount,
+                                                                .changeAmount,
                                                         cashDueAmount:
-                                                            settlement
-                                                                ?.dueAmount,
+                                                            settlement.dueAmount,
                                                       );
                                                   if (!context.mounted) return;
                                                   ScaffoldMessenger.of(
@@ -12568,14 +12571,10 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                   ).showSnackBar(
                                                     SnackBar(
                                                       content: Text(
-                                                        settlement != null &&
-                                                                settlement
-                                                                        .dueAmount >
+                                                        settlement.dueAmount >
                                                                     0
                                                             ? 'Registado. Falta ${formatEuroAmount(settlement.dueAmount)}€.'
-                                                            : settlement !=
-                                                                      null &&
-                                                                  settlement
+                                                            : settlement
                                                                           .changeAmount >
                                                                       0
                                                             ? 'Registado. Troco ${formatEuroAmount(settlement.changeAmount)}€.'
@@ -12585,7 +12584,11 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                       ),
                                                     ),
                                                   );
-                                                  setState(() {});
+                                                  setState(() {
+                                                    selected.remove(o.id);
+                                                    _ordersFuture = null;
+                                                    _lastOrdersKey = null;
+                                                  });
                                                 },
                                               ),
                                             if (canUpdate &&
@@ -12603,7 +12606,11 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                         eventId: o.eventId,
                                                       );
                                                   if (!context.mounted) return;
-                                                  setState(() {});
+                                                  setState(() {
+                                                    selected.remove(o.id);
+                                                    _ordersFuture = null;
+                                                    _lastOrdersKey = null;
+                                                  });
                                                 },
                                               ),
                                             if (canDownload)
@@ -12830,22 +12837,19 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                     children: [
                       FilledButton(
                         onPressed: () async {
-                          CashSettlement? settlement;
-                          if (order.paymentMethod != 'online') {
-                            settlement = await promptCashSettlement(
-                              context,
-                              totalAmount: order.totalAmount,
-                            );
-                            if (settlement == null) return;
-                          }
+                          final settlement = await promptCashSettlement(
+                            context,
+                            totalAmount: order.totalAmount,
+                          );
+                          if (settlement == null) return;
                           await ref
                               .read(apiProvider)
                               .markOrderPaid(
                                 token,
                                 order.id,
-                                cashReceivedAmount: settlement?.receivedAmount,
-                                cashChangeAmount: settlement?.changeAmount,
-                                cashDueAmount: settlement?.dueAmount,
+                                cashReceivedAmount: settlement.receivedAmount,
+                                cashChangeAmount: settlement.changeAmount,
+                                cashDueAmount: settlement.dueAmount,
                               );
                           if (!context.mounted) return;
                           setState(() => _loadDetail(token));
