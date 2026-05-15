@@ -37,7 +37,7 @@ function check(string $label, bool $ok, string $detail = ''): string
 
 $basePath = dirname(__DIR__);
 $storagePath = $basePath.'/storage/app/private';
-$eventsPath = $storagePath.'/EVENTOS';
+$eventsPath = $storagePath.'/events';
 
 $phpVersion = PHP_VERSION;
 $uploadMax = ini_get('upload_max_filesize') ?: '';
@@ -83,7 +83,7 @@ $needsMem = 512 * 1024 * 1024;
 
     <div class="box">
         <div><strong>Storage</strong>: <?php echo htmlspecialchars($storagePath, ENT_QUOTES, 'UTF-8'); ?></div>
-        <div><strong>EVENTOS</strong>: <?php echo htmlspecialchars($eventsPath, ENT_QUOTES, 'UTF-8'); ?></div>
+        <div><strong>events</strong>: <?php echo htmlspecialchars($eventsPath, ENT_QUOTES, 'UTF-8'); ?></div>
         <div><strong>Espaço livre</strong>: <?php echo $diskFree !== false ? bytesToHuman((int) $diskFree) : '— (sem permissões)'; ?></div>
         <div><strong>Espaço total</strong>: <?php echo $diskTotal !== false ? bytesToHuman((int) $diskTotal) : '— (sem permissões)'; ?></div>
     </div>
@@ -95,8 +95,8 @@ $needsMem = 512 * 1024 * 1024;
         <?php echo check('mbstring', $mb); ?>
         <?php echo check('pdo_mysql', $pdo); ?>
         <?php echo check('Storage legível', $storageReadable); ?>
-        <?php echo check('EVENTOS legível', $eventsReadable); ?>
-        <?php echo check('Pasta EVENTOS gravável', $eventsWritable); ?>
+        <?php echo check('events legível', $eventsReadable); ?>
+        <?php echo check('Pasta events gravável', $eventsWritable); ?>
         <?php echo check('upload_max_filesize >= 200MB', iniToBytes($uploadMax) >= $needsUpload, $uploadMax); ?>
         <?php echo check('post_max_size >= 200MB', iniToBytes($postMax) >= $needsPost, $postMax); ?>
         <?php echo check('memory_limit >= 512MB', iniToBytes($memoryLimit) >= $needsMem, $memoryLimit); ?>

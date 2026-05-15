@@ -5080,7 +5080,8 @@ class _StaffDashboardPageState extends ConsumerState<StaffDashboardPage> {
                 MaterialPageRoute(builder: (_) => const StaffClientsPage()),
               ),
             ),
-          if (user.hasPermission('offline.import'))
+          if (user.hasPermission('offline.import') ||
+              ref.watch(offlineHostSessionProvider)?.isActive == true)
             _StaffMenuTile(
               title: 'Sincronizar',
               subtitle: 'Importar fotos e JSON offline',
@@ -5235,6 +5236,8 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
 
   List<DesktopNavItem> _navItems() {
     final user = widget.user;
+    final hasOfflineSession =
+        ref.read(offlineHostSessionProvider)?.isActive == true;
     return [
       DesktopNavItem(
         id: 'dashboard',
@@ -5312,7 +5315,8 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         subtitle: 'Offline e importacao',
         builder: (context, user, token) =>
             DesktopSyncView(user: user, token: token),
-        visibleWhen: (u) => u.hasPermission('offline.import'),
+        visibleWhen: (u) =>
+            u.hasPermission('offline.import') || hasOfflineSession,
       ),
       DesktopNavItem(
         id: 'users',
@@ -13537,6 +13541,7 @@ class _OfflineHostFormState extends ConsumerState<OfflineHostForm> {
       'orders.view',
       'orders.update',
       'offline.export',
+      'offline.import',
     ],
     username: session.staffUsername,
   );
@@ -17162,7 +17167,11 @@ class _StaffSyncPageState extends ConsumerState<StaffSyncPage> {
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(staffUserProvider);
-    if (user != null && !user.hasPermission('offline.import')) {
+    final hasOfflineSession =
+        ref.watch(offlineHostSessionProvider)?.isActive == true;
+    if (user != null &&
+        !user.hasPermission('offline.import') &&
+        !hasOfflineSession) {
       return Scaffold(
         appBar: buildNavAppBar(context, 'Sincronizar'),
         body: const Center(child: Text('Sem acesso.')),
