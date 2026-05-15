@@ -186,7 +186,7 @@ class UploadController extends Controller
         $photo = DB::transaction(function () use ($event, $assembledFullPath, $checksum) {
             $nextNumber = str_pad((string) ((int) (Photo::where('event_id', $event->id)->lockForUpdate()->max('number') ?? 0) + 1), 4, '0', STR_PAD_LEFT);
             $baseDir = $this->eventPhotoBaseDir($event);
-            $originalPath = $baseDir.'/originais/'.$nextNumber.'.jpg';
+            $originalPath = $baseDir.'/originals/'.$nextNumber.'.jpg';
             Storage::disk('local')->makeDirectory(dirname($originalPath));
             Storage::disk('local')->put($originalPath, file_get_contents($assembledFullPath));
 
@@ -206,7 +206,6 @@ class UploadController extends Controller
                 'checksum' => $checksum,
             ]);
 
-            GeneratePhotoPreview::dispatch($photo->id);
             Audit::log('photo.uploaded', Photo::class, $photo->id, [
                 'event_id' => $event->id,
                 'number' => $photo->number,
@@ -215,9 +214,26 @@ class UploadController extends Controller
             return $photo;
         }, 5);
 
+        $photo = $this->ensurePreviewGenerated($photo);
+
         Storage::disk('local')->deleteDirectory($tmpDir);
 
         return $photo;
+    }
+
+    private function ensurePreviewGenerated(Photo $photo): Photo
+    {
+        if (
+            $photo->preview_path &&
+            $photo->preview_status === 'ready' &&
+            Storage::disk('local')->exists($photo->preview_path)
+        ) {
+            return $photo;
+        }
+
+        GeneratePhotoPreview::dispatchSync($photo->id);
+
+        return $photo->fresh() ?? $photo;
     }
 
     private function sanitizeFileName(string $fileName): string
@@ -229,10 +245,7 @@ class UploadController extends Controller
 
     private function eventPhotoBaseDir(Event $event): string
     {
-        $report = $event->internal_code ?: 'EVENTO_'.$event->id;
-        $safe = Str::of($report)->replaceMatches('/[^A-Za-z0-9._-]/', '_')->toString();
-
-        return 'EVENTOS/'.$safe;
+        return 'events/'.$event->id;
     }
 
     private function ensureEventAccess(Event $event): void

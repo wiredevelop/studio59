@@ -836,7 +836,6 @@ class StaffEventController extends Controller
                     'checksum' => $checksum,
                 ]);
 
-                GeneratePhotoPreview::dispatch($photo->id);
                 Audit::log('api.photo.uploaded', Photo::class, $photo->id, [
                     'event_id' => $event->id,
                     'number' => $photo->number,
@@ -851,9 +850,26 @@ class StaffEventController extends Controller
                 ->firstOrFail();
         }
 
+        $photo = $this->ensurePreviewGenerated($photo);
+
         Storage::disk('local')->deleteDirectory($tmpDir);
 
         return $photo;
+    }
+
+    private function ensurePreviewGenerated(Photo $photo): Photo
+    {
+        if (
+            $photo->preview_path &&
+            $photo->preview_status === 'ready' &&
+            Storage::disk('local')->exists($photo->preview_path)
+        ) {
+            return $photo;
+        }
+
+        GeneratePhotoPreview::dispatchSync($photo->id);
+
+        return $photo->fresh() ?? $photo;
     }
 
     private function sanitizeFileName(string $fileName): string

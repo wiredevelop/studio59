@@ -36,9 +36,23 @@ class GeneratePhotoPreview implements ShouldQueue
         try {
             $sourcePath = Storage::disk('local')->path($photo->original_path);
             $src = @imagecreatefromjpeg($sourcePath);
+            $previewPath = $photo->preview_path ?: $this->defaultPreviewPath($photo);
+            Storage::disk('local')->makeDirectory(dirname($previewPath));
+            $targetPath = Storage::disk('local')->path($previewPath);
 
             if (! $src) {
-                throw new \RuntimeException('Could not read JPEG source.');
+                if (! @copy($sourcePath, $targetPath)) {
+                    throw new \RuntimeException('Could not create preview copy.');
+                }
+
+                $photo->update([
+                    'preview_path' => $previewPath,
+                    'preview_status' => 'ready',
+                    'preview_error' => null,
+                    'status' => 'active',
+                ]);
+
+                return;
             }
 
             $srcWidth = imagesx($src);
@@ -80,10 +94,6 @@ class GeneratePhotoPreview implements ShouldQueue
                 imagestring($canvas, 5, 20, $targetHeight - 30, $wmText, $color);
             }
 
-            $previewPath = $photo->preview_path ?: $this->defaultPreviewPath($photo);
-            Storage::disk('local')->makeDirectory(dirname($previewPath));
-
-            $targetPath = Storage::disk('local')->path($previewPath);
             imageinterlace($canvas, true);
             imagejpeg($canvas, $targetPath, 82);
             imagedestroy($canvas);

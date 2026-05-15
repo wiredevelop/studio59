@@ -429,7 +429,7 @@ class OfflineSyncController extends Controller
 
         $checksum = trim((string) ($meta['checksum'] ?? ''));
         if ($checksum !== '' && isset($existingByChecksum[$checksum])) {
-            return $existingByChecksum[$checksum];
+            return $this->ensurePreviewGenerated($existingByChecksum[$checksum]);
         }
 
         $number = trim((string) ($meta['number'] ?? ''));
@@ -438,7 +438,7 @@ class OfflineSyncController extends Controller
                 $existing = $existingByNumber[$number];
                 $existingChecksum = trim((string) ($existing->checksum ?? ''));
                 if ($checksum === '' || $existingChecksum === '' || $existingChecksum === $checksum) {
-                    return $existing;
+                    return $this->ensurePreviewGenerated($existing);
                 }
                 throw ValidationException::withMessages([
                     'photos' => "Já existe uma foto #{$number} neste evento com ficheiro diferente.",
@@ -477,9 +477,22 @@ class OfflineSyncController extends Controller
             $existingByChecksum[$checksum] = $photo;
         }
 
-        GeneratePhotoPreview::dispatch($photo->id);
+        return $this->ensurePreviewGenerated($photo);
+    }
 
-        return $photo;
+    private function ensurePreviewGenerated(Photo $photo): Photo
+    {
+        if (
+            $photo->preview_path &&
+            $photo->preview_status === 'ready' &&
+            Storage::disk('local')->exists($photo->preview_path)
+        ) {
+            return $photo;
+        }
+
+        GeneratePhotoPreview::dispatchSync($photo->id);
+
+        return $photo->fresh() ?? $photo;
     }
 
     private function resolveImportedPhotoId(Event $event, array $payload, array $photoMap): ?int

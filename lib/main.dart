@@ -5285,6 +5285,17 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         visibleWhen: (u) => u.hasPermission('orders.list'),
       ),
       DesktopNavItem(
+        id: 'photos',
+        label: 'Galeria',
+        icon: Icons.photo_library_outlined,
+        subtitle: 'Eventos com fotos',
+        showSearch: true,
+        builder: (context, user, token) =>
+            DesktopPhotosView(user: user, token: token, search: _searchValue),
+        visibleWhen: (u) =>
+            u.hasPermission('photos.list') || u.hasPermission('uploads.list'),
+      ),
+      DesktopNavItem(
         id: 'clients',
         label: 'Clientes',
         icon: Icons.people_outline,
@@ -6605,9 +6616,7 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
                                     const SizedBox(height: 10),
                                     Text(
                                       e.location!.trim(),
-                                      style: const TextStyle(
-                                        color: kDeskMuted,
-                                      ),
+                                      style: const TextStyle(color: kDeskMuted),
                                     ),
                                   ],
                                   const SizedBox(height: 12),
@@ -6622,9 +6631,10 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
                                           onTap: () => Navigator.push(
                                             context,
                                             MaterialPageRoute(
-                                              builder: (_) => StaffEventDetailPage(
-                                                event: e,
-                                              ),
+                                              builder: (_) =>
+                                                  StaffEventDetailPage(
+                                                    event: e,
+                                                  ),
                                             ),
                                           ),
                                         ),
@@ -6821,7 +6831,9 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                             .where(
                               (o) =>
                                   o.orderCode.toLowerCase().contains(query) ||
-                                  o.customerName.toLowerCase().contains(query) ||
+                                  o.customerName.toLowerCase().contains(
+                                    query,
+                                  ) ||
                                   (o.eventName ?? '').toLowerCase().contains(
                                     query,
                                   ),
@@ -7028,14 +7040,15 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                                                   o.id,
                                                 );
                                             if (!context.mounted) return;
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                                  SnackBar(
-                                                    content: Text(
-                                                      'ZIP guardado: $path',
-                                                    ),
-                                                  ),
-                                                );
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              SnackBar(
+                                                content: Text(
+                                                  'ZIP guardado: $path',
+                                                ),
+                                              ),
+                                            );
                                           },
                                         ),
                                     ],
@@ -7058,7 +7071,7 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
   }
 }
 
-class DesktopPhotosView extends StatelessWidget {
+class DesktopPhotosView extends ConsumerStatefulWidget {
   const DesktopPhotosView({
     super.key,
     required this.user,
@@ -7070,74 +7083,151 @@ class DesktopPhotosView extends StatelessWidget {
   final ValueListenable<String> search;
 
   @override
+  ConsumerState<DesktopPhotosView> createState() => _DesktopPhotosViewState();
+}
+
+class _DesktopPhotosViewState extends ConsumerState<DesktopPhotosView> {
+  Future<List<StaffEvent>>? _future;
+
+  Future<List<StaffEvent>> _loadEvents() => ref
+      .read(apiProvider)
+      .staffEvents(widget.token, assignedOnly: !_canSeeAllEvents(widget.user));
+
+  @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(kDeskGutter),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _DeskSectionHeader('Galerias recentes'),
-          const SizedBox(height: 12),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final width = constraints.maxWidth;
-              final columns = width > 1200
-                  ? 4
-                  : width > 900
-                  ? 3
-                  : 2;
-              return GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: columns,
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
-                  childAspectRatio: 1.4,
-                ),
-                itemCount: 8,
-                itemBuilder: (context, index) {
-                  return _DeskCard(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          height: 90,
-                          decoration: BoxDecoration(
-                            color: kDeskCardAlt,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Center(
-                            child: Icon(
-                              Icons.photo,
-                              size: 32,
-                              color: kDeskMuted,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          'Evento ${index + 1}',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '250 fotos • 14/04/2026',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.6),
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+    _future ??= _loadEvents();
+    return ValueListenableBuilder<String>(
+      valueListenable: widget.search,
+      builder: (context, value, _) {
+        return FutureBuilder<List<StaffEvent>>(
+          future: _future,
+          builder: (context, snap) {
+            if (!snap.hasData) {
+              if (snap.hasError) {
+                return Padding(
+                  padding: const EdgeInsets.all(kDeskGutter),
+                  child: _DeskCard(child: Text('Erro: ${snap.error}')),
+                );
+              }
+              return const Center(child: CircularProgressIndicator());
+            }
+            final query = value.trim().toLowerCase();
+            final events = _filterEventsForUser(snap.data!, widget.user);
+            final visible = query.isEmpty
+                ? events
+                : events
+                      .where((event) => _eventSearchBlob(event).contains(query))
+                      .toList();
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(kDeskGutter),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const _DeskSectionHeader('Galeria'),
+                  const SizedBox(height: 12),
+                  if (visible.isEmpty)
+                    const _DeskCard(child: Text('Sem eventos com fotos.'))
+                  else
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final width = constraints.maxWidth;
+                        final columns = width > 1200
+                            ? 4
+                            : width > 900
+                            ? 3
+                            : 2;
+                        return GridView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: columns,
+                                crossAxisSpacing: 16,
+                                mainAxisSpacing: 16,
+                                childAspectRatio: 1.28,
+                              ),
+                          itemCount: visible.length,
+                          itemBuilder: (context, index) {
+                            final event = visible[index];
+                            final typeLabel = event.eventType == 'casamento'
+                                ? 'Casamento'
+                                : event.eventType == 'batizado'
+                                ? 'Batizado'
+                                : event.eventType ?? '';
+                            final dateLabel = event.eventDate.trim().isNotEmpty
+                                ? event.eventDate.trim()
+                                : 'Sem data';
+                            return _DeskCard(
+                              padding: const EdgeInsets.all(12),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(
+                                  kDeskRadius,
+                                ),
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        _StaffEventGalleryPage(event: event),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Container(
+                                      height: 96,
+                                      decoration: BoxDecoration(
+                                        color: kDeskCardAlt,
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Center(
+                                        child: Icon(
+                                          Icons.photo_library_outlined,
+                                          size: 34,
+                                          color: kBrandRose.withOpacity(0.55),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Text(
+                                      event.name,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      dateLabel,
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.6),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    if (typeLabel.isNotEmpty) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        typeLabel,
+                                        style: const TextStyle(
+                                          color: kBrandRose,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        );
+                      },
                     ),
-                  );
-                },
-              );
-            },
-          ),
-        ],
-      ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -12563,7 +12653,8 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                             settlement
                                                                 .changeAmount,
                                                         cashDueAmount:
-                                                            settlement.dueAmount,
+                                                            settlement
+                                                                .dueAmount,
                                                       );
                                                   if (!context.mounted) return;
                                                   ScaffoldMessenger.of(
@@ -12571,12 +12662,11 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                   ).showSnackBar(
                                                     SnackBar(
                                                       content: Text(
-                                                        settlement.dueAmount >
-                                                                    0
+                                                        settlement.dueAmount > 0
                                                             ? 'Registado. Falta ${formatEuroAmount(settlement.dueAmount)}€.'
                                                             : settlement
-                                                                          .changeAmount >
-                                                                      0
+                                                                      .changeAmount >
+                                                                  0
                                                             ? 'Registado. Troco ${formatEuroAmount(settlement.changeAmount)}€.'
                                                             : emailed
                                                             ? 'Marcado pago e link enviado.'
