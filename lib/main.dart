@@ -5163,6 +5163,8 @@ Widget _pageForDesktopSection(String id) {
       return const StaffUsersPage();
     case 'sync':
       return const StaffSyncPage();
+    case 'offline-host':
+      return const StaffOfflineHostPage();
     case 'settings':
       return const StaffSettingsPage();
     default:
@@ -5317,6 +5319,15 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
             DesktopSyncView(user: user, token: token),
         visibleWhen: (u) =>
             u.hasPermission('offline.import') || hasOfflineSession,
+      ),
+      DesktopNavItem(
+        id: 'offline-host',
+        label: 'Sessao Offline',
+        icon: Icons.wifi_tethering,
+        subtitle: 'Criar e gerir sessao local',
+        builder: (context, user, token) =>
+            DesktopOfflineHostView(user: user, token: token),
+        visibleWhen: (u) => isDesktopPlatform(),
       ),
       DesktopNavItem(
         id: 'users',
