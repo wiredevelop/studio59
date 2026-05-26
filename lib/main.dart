@@ -277,6 +277,8 @@ class AppRuntimeConfig {
     required this.applePayMerchantId,
     required this.enablePlatformPay,
     required this.stripeUrlScheme,
+    required this.stripePercentFee,
+    required this.stripeFixedFee,
   });
 
   final String apiBaseUrl;
@@ -285,6 +287,8 @@ class AppRuntimeConfig {
   final String applePayMerchantId;
   final bool enablePlatformPay;
   final String stripeUrlScheme;
+  final double stripePercentFee;
+  final double stripeFixedFee;
 
   static const defaults = AppRuntimeConfig(
     apiBaseUrl: kApiBaseUrl,
@@ -293,6 +297,8 @@ class AppRuntimeConfig {
     applePayMerchantId: kApplePayMerchantId,
     enablePlatformPay: kEnablePlatformPay,
     stripeUrlScheme: kStripeUrlScheme,
+    stripePercentFee: 1.5,
+    stripeFixedFee: 0.25,
   );
 
   Map<String, dynamic> toJson() => {
@@ -302,6 +308,8 @@ class AppRuntimeConfig {
     'apple_pay_merchant_id': applePayMerchantId,
     'enable_platform_pay': enablePlatformPay,
     'stripe_url_scheme': stripeUrlScheme,
+    'stripe_percent_fee': stripePercentFee,
+    'stripe_fixed_fee': stripeFixedFee,
   };
 
   factory AppRuntimeConfig.fromJson(
@@ -325,6 +333,10 @@ class AppRuntimeConfig {
     stripeUrlScheme:
         (json['stripe_url_scheme'] as String? ?? defaults.stripeUrlScheme)
             .trim(),
+    stripePercentFee: (json['stripe_percent_fee'] as num?)?.toDouble() ??
+        defaults.stripePercentFee,
+    stripeFixedFee:
+        (json['stripe_fixed_fee'] as num?)?.toDouble() ?? defaults.stripeFixedFee,
   );
 
   AppRuntimeConfig copyWith({
@@ -334,6 +346,8 @@ class AppRuntimeConfig {
     String? applePayMerchantId,
     bool? enablePlatformPay,
     String? stripeUrlScheme,
+    double? stripePercentFee,
+    double? stripeFixedFee,
   }) => AppRuntimeConfig(
     apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
     apiFallbackIp: apiFallbackIp ?? this.apiFallbackIp,
@@ -341,6 +355,8 @@ class AppRuntimeConfig {
     applePayMerchantId: applePayMerchantId ?? this.applePayMerchantId,
     enablePlatformPay: enablePlatformPay ?? this.enablePlatformPay,
     stripeUrlScheme: stripeUrlScheme ?? this.stripeUrlScheme,
+    stripePercentFee: stripePercentFee ?? this.stripePercentFee,
+    stripeFixedFee: stripeFixedFee ?? this.stripeFixedFee,
   );
 }
 
@@ -2535,7 +2551,16 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
     final appConfig = ref.watch(appRuntimeConfigProvider);
     final offlineCheckout = looksLikeLocalApiBaseUrl(appConfig.apiBaseUrl);
     final requiresEmail =
-        !offlineCheckout || productType == 'digital' || productType == 'both';
+        offlineCheckout && (productType == 'digital' || productType == 'both');
+    final isOnlinePayment = paymentMethod == 'online';
+    final processingFee = isOnlinePayment
+        ? double.parse(
+            (total * (appConfig.stripePercentFee / 100) +
+                    appConfig.stripeFixedFee)
+                .toStringAsFixed(2),
+          )
+        : 0.0;
+    final totalWithFee = total + processingFee;
     final supportsApplePay = appConfig.enablePlatformPay && Platform.isIOS;
     final supportsGooglePay = appConfig.enablePlatformPay && Platform.isAndroid;
     if (offlineCheckout && paymentMethod != 'cash') {
@@ -2581,17 +2606,15 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                 border: OutlineInputBorder(),
               ),
             ),
-            if (!offlineCheckout) ...[
-              const SizedBox(height: 8),
-              TextField(
-                controller: emailCtrl,
-                keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  border: OutlineInputBorder(),
-                ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: emailCtrl,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: 'Email (opcional)',
+                border: OutlineInputBorder(),
               ),
-            ],
+            ),
             const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerLeft,
@@ -2624,17 +2647,6 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
               }),
               title: const Text('Ambos'),
             ),
-            if (offlineCheckout && requiresEmail) ...[
-              const SizedBox(height: 8),
-              TextField(
-                controller: emailCtrl,
-                keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
             if (productType != 'digital') ...[
               Align(
                 alignment: Alignment.centerLeft,
@@ -2760,13 +2772,67 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
               ],
             ],
             const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Total: €${total.toStringAsFixed(2)} (Extras: €${extrasTotal.toStringAsFixed(2)})',
-                style: const TextStyle(fontWeight: FontWeight.bold),
+            if (isOnlinePayment) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: kBrandRose.withOpacity(0.07),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: kBrandRose.withOpacity(0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Subtotal'),
+                        Text('€${total.toStringAsFixed(2)}'),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Taxa Stripe (${appConfig.stripePercentFee.toStringAsFixed(1)}% + €${appConfig.stripeFixedFee.toStringAsFixed(2)})',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.white60,
+                          ),
+                        ),
+                        Text(
+                          '+€${processingFee.toStringAsFixed(2)}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                    const Divider(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Total',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          '€${totalWithFee.toStringAsFixed(2)}',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
+            ] else ...[
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Total: €${total.toStringAsFixed(2)}',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             FilledButton(
               onPressed: items.isEmpty || isSubmitting
@@ -2790,16 +2856,6 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                           return;
                         }
                         final email = emailCtrl.text.trim();
-                        if (requiresEmail && email.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Email obrigatório para entrega digital.',
-                              ),
-                            ),
-                          );
-                          return;
-                        }
                         if (email.isNotEmpty &&
                             !RegExp(
                               r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
@@ -2874,6 +2930,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                                   deliveryAddress: addressCtrl.text.trim(),
                                   wantsFilm: wantsFilm,
                                   paymentMethodType: onlineMethod,
+                                  processingFee: processingFee,
                                 );
                             if (checkout.checkoutUrl.isEmpty) {
                               throw Exception(
@@ -2927,6 +2984,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                                 deliveryType: deliveryType,
                                 deliveryAddress: addressCtrl.text.trim(),
                                 wantsFilm: wantsFilm,
+                                processingFee: processingFee,
                               );
                           stripe.Stripe.publishableKey = intent.publishableKey;
                           if (appConfig.enablePlatformPay && Platform.isIOS) {
@@ -13973,6 +14031,8 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
   late final TextEditingController merchantCountryCodeCtrl;
   late final TextEditingController applePayMerchantIdCtrl;
   late final TextEditingController stripeUrlSchemeCtrl;
+  late final TextEditingController stripePercentFeeCtrl;
+  late final TextEditingController stripeFixedFeeCtrl;
   bool enablePlatformPay = true;
   bool saving = false;
   bool testing = false;
@@ -13990,6 +14050,12 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
       text: config.applePayMerchantId,
     );
     stripeUrlSchemeCtrl = TextEditingController(text: config.stripeUrlScheme);
+    stripePercentFeeCtrl = TextEditingController(
+      text: config.stripePercentFee.toString(),
+    );
+    stripeFixedFeeCtrl = TextEditingController(
+      text: config.stripeFixedFee.toString(),
+    );
     enablePlatformPay = config.enablePlatformPay;
   }
 
@@ -14000,6 +14066,8 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
     merchantCountryCodeCtrl.dispose();
     applePayMerchantIdCtrl.dispose();
     stripeUrlSchemeCtrl.dispose();
+    stripePercentFeeCtrl.dispose();
+    stripeFixedFeeCtrl.dispose();
     super.dispose();
   }
 
@@ -14010,6 +14078,14 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
     applePayMerchantId: applePayMerchantIdCtrl.text.trim(),
     enablePlatformPay: enablePlatformPay,
     stripeUrlScheme: stripeUrlSchemeCtrl.text.trim(),
+    stripePercentFee: double.tryParse(
+          stripePercentFeeCtrl.text.trim().replaceAll(',', '.'),
+        ) ??
+        AppRuntimeConfig.defaults.stripePercentFee,
+    stripeFixedFee: double.tryParse(
+          stripeFixedFeeCtrl.text.trim().replaceAll(',', '.'),
+        ) ??
+        AppRuntimeConfig.defaults.stripeFixedFee,
   );
 
   Future<void> _goHomeClearingSessions() async {
@@ -14096,6 +14172,8 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
     merchantCountryCodeCtrl.text = config.merchantCountryCode;
     applePayMerchantIdCtrl.text = config.applePayMerchantId;
     stripeUrlSchemeCtrl.text = config.stripeUrlScheme;
+    stripePercentFeeCtrl.text = config.stripePercentFee.toString();
+    stripeFixedFeeCtrl.text = config.stripeFixedFee.toString();
     setState(() => enablePlatformPay = config.enablePlatformPay);
     await clearAppRuntimeConfig();
     ref.read(appRuntimeConfigProvider.notifier).state = config;
@@ -14163,6 +14241,48 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
           value: enablePlatformPay,
           onChanged: (value) => setState(() => enablePlatformPay = value),
           title: const Text('Ativar Platform Pay'),
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          'Taxas Stripe (pagamento online)',
+          style: TextStyle(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Adicionadas automaticamente ao total quando o cliente escolhe pagamento online.',
+          style: TextStyle(fontSize: 12, color: Colors.white60),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: stripePercentFeeCtrl,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Taxa % (ex: 1.5)',
+                  suffixText: '%',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: stripeFixedFeeCtrl,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Taxa fixa (ex: 0.25)',
+                  suffixText: '€',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 12),
         Wrap(
@@ -15641,6 +15761,7 @@ class ApiService {
     required String? deliveryType,
     required String deliveryAddress,
     required bool wantsFilm,
+    double processingFee = 0.0,
   }) async {
     final payload = {
       'event_id': eventId,
@@ -15652,6 +15773,7 @@ class ApiService {
       'delivery_type': deliveryType,
       'delivery_address': deliveryAddress.isEmpty ? null : deliveryAddress,
       'wants_film': wantsFilm,
+      'processing_fee': processingFee,
       'photo_items': photoItems
           .map((i) => {'photo_id': i.photoId, 'quantity': i.quantity})
           .toList(),
@@ -15680,6 +15802,7 @@ class ApiService {
     required String deliveryAddress,
     required bool wantsFilm,
     required String paymentMethodType,
+    double processingFee = 0.0,
   }) async {
     final payload = {
       'event_id': eventId,
@@ -15691,6 +15814,7 @@ class ApiService {
       'delivery_type': deliveryType,
       'delivery_address': deliveryAddress.isEmpty ? null : deliveryAddress,
       'wants_film': wantsFilm,
+      'processing_fee': processingFee,
       'photo_items': photoItems
           .map((i) => {'photo_id': i.photoId, 'quantity': i.quantity})
           .toList(),
