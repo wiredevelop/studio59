@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:image/image.dart' as img;
 import 'package:mime/mime.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -14,6 +15,20 @@ const int kOfflineDiscoveryPort = 40059;
 const String kOfflineDiscoveryType = 'studio59_offline_discovery';
 const String kOfflineDiscoveryResponseType =
     'studio59_offline_discovery_response';
+
+Uint8List? _generateThumbnailBytes(Uint8List srcBytes) {
+  final decoded = img.decodeImage(srcBytes);
+  if (decoded == null) return null;
+  const maxWidth = 400;
+  final resized = decoded.width > maxWidth
+      ? img.copyResize(
+          decoded,
+          width: maxWidth,
+          interpolation: img.Interpolation.linear,
+        )
+      : decoded;
+  return Uint8List.fromList(img.encodeJpg(resized, quality: 80));
+}
 
 bool looksLikeLocalApiBaseUrl(String url) {
   final uri = Uri.tryParse(url.trim());
@@ -1022,6 +1037,10 @@ class OfflineHostServer {
         return;
       }
       final path = request.uri.path;
+      if (path.startsWith('/offline/previews/')) {
+        await _servePreview(request);
+        return;
+      }
       if (path.startsWith('/offline/photos/')) {
         await _servePhoto(request);
         return;
@@ -1263,6 +1282,63 @@ class OfflineHostServer {
     await request.response.close();
   }
 
+  Future<void> _servePreview(HttpRequest request) async {
+    final session = _requireSession();
+    final idText = request.uri.pathSegments.isNotEmpty
+        ? request.uri.pathSegments.last
+        : '';
+    final photoId = int.tryParse(idText);
+    final photo = session.photos.cast<OfflineHostPhoto?>().firstWhere(
+      (item) => item?.id == photoId,
+      orElse: () => null,
+    );
+    if (photo == null || !await File(photo.path).exists()) {
+      await _json(request, HttpStatus.notFound, {
+        'message': 'Foto não encontrada.',
+      });
+      return;
+    }
+    final p = photo.path.toLowerCase();
+    final isUnsupported = p.endsWith('.heic') || p.endsWith('.heif');
+    if (!isUnsupported) {
+      try {
+        final cacheDir = await getTemporaryDirectory();
+        final cacheFile = File('${cacheDir.path}/s59_thumb_${photo.id}.jpg');
+        Uint8List thumbBytes;
+        if (await cacheFile.exists()) {
+          thumbBytes = await cacheFile.readAsBytes();
+        } else {
+          final srcBytes = await File(photo.path).readAsBytes();
+          final generated = await compute(_generateThumbnailBytes, srcBytes);
+          if (generated != null) {
+            thumbBytes = generated;
+            try {
+              await cacheFile.writeAsBytes(thumbBytes);
+            } catch (_) {}
+          } else {
+            thumbBytes = srcBytes;
+          }
+        }
+        _writeCors(request.response);
+        request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.parse('image/jpeg');
+        request.response.contentLength = thumbBytes.length;
+        request.response.add(thumbBytes);
+        await request.response.close();
+        return;
+      } catch (_) {
+        // Fall through to serve original on any error
+      }
+    }
+    _writeCors(request.response);
+    request.response.statusCode = HttpStatus.ok;
+    request.response.headers.contentType = ContentType.parse(
+      _mimeTypeForPath(photo.path),
+    );
+    await request.response.addStream(File(photo.path).openRead());
+    await request.response.close();
+  }
+
   bool _hasGuestToken(HttpRequest request, OfflineHostSession session) {
     final header = request.headers.value(HttpHeaders.authorizationHeader) ?? '';
     return header == 'Bearer ${session.guestToken}';
@@ -1364,7 +1440,7 @@ class OfflineHostServer {
             'number': photo.number,
             'preview_url': requested
                 .replace(
-                  path: '/offline/photos/${photo.id}',
+                  path: '/offline/previews/${photo.id}',
                   query: null,
                   fragment: null,
                 )
@@ -1550,7 +1626,7 @@ class OfflineHostServer {
         'number': photo.number,
         'preview_url': requested
             .replace(
-              path: '/offline/photos/${photo.id}',
+              path: '/offline/previews/${photo.id}',
               query: null,
               fragment: null,
             )

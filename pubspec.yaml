@@ -51,6 +51,7 @@ dependencies:
   url_launcher: ^6.3.2
   uuid: ^4.4.2
   app_links: ^7.0.0
+  image: ^4.5.0
 
 dev_dependencies:
   flutter_test:

@@ -2069,52 +2069,68 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
 
                   Widget pager() {
                     if (pageData.lastPage <= 1) return const SizedBox.shrink();
-                    return SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          IconButton(
-                            onPressed: page > 1
-                                ? () => goToPage(page - 1)
-                                : null,
-                            icon: const Icon(Icons.chevron_left),
+                    final last = pageData.lastPage;
+                    final visiblePages = <Object>{};
+                    visiblePages.add(1);
+                    visiblePages.add(last);
+                    for (var d = -2; d <= 2; d++) {
+                      final p = page + d;
+                      if (p >= 1 && p <= last) visiblePages.add(p);
+                    }
+                    final sorted = visiblePages.cast<int>().toList()..sort();
+                    final items = <Widget>[];
+                    for (var i = 0; i < sorted.length; i++) {
+                      if (i > 0 && sorted[i] - sorted[i - 1] > 1) {
+                        items.add(
+                          const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 4),
+                            child: Text(
+                              '…',
+                              style: TextStyle(color: kBrandRose),
+                            ),
                           ),
-                          ...List.generate(pageData.lastPage, (i) {
-                            final p = i + 1;
-                            final selected = p == page;
-                            return Padding(
+                        );
+                      }
+                      final p = sorted[i];
+                      final isCurrent = p == page;
+                      items.add(
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 2),
+                          child: OutlinedButton(
+                            onPressed: () => goToPage(p),
+                            style: OutlinedButton.styleFrom(
+                              backgroundColor: isCurrent ? kBrandRose : null,
+                              foregroundColor: isCurrent ? kBrandBlack : null,
+                              side: BorderSide(
+                                color: isCurrent
+                                    ? kBrandRose
+                                    : kBrandRose.withOpacity(0.6),
+                              ),
+                              minimumSize: const Size(40, 36),
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 2,
+                                horizontal: 10,
                               ),
-                              child: OutlinedButton(
-                                onPressed: () => goToPage(p),
-                                style: OutlinedButton.styleFrom(
-                                  backgroundColor: selected ? kBrandRose : null,
-                                  foregroundColor: selected
-                                      ? kBrandBlack
-                                      : null,
-                                  side: BorderSide(
-                                    color: selected
-                                        ? kBrandRose
-                                        : kBrandRose.withOpacity(0.6),
-                                  ),
-                                  minimumSize: const Size(40, 36),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                  ),
-                                ),
-                                child: Text('$p'),
-                              ),
-                            );
-                          }),
-                          IconButton(
-                            onPressed: page < pageData.lastPage
-                                ? () => goToPage(page + 1)
-                                : null,
-                            icon: const Icon(Icons.chevron_right),
+                            ),
+                            child: Text('$p'),
                           ),
-                        ],
-                      ),
+                        ),
+                      );
+                    }
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          onPressed: page > 1 ? () => goToPage(page - 1) : null,
+                          icon: const Icon(Icons.chevron_left),
+                        ),
+                        ...items,
+                        IconButton(
+                          onPressed: page < last
+                              ? () => goToPage(page + 1)
+                              : null,
+                          icon: const Icon(Icons.chevron_right),
+                        ),
+                      ],
                     );
                   }
 
@@ -3209,11 +3225,9 @@ class _TicketPageState extends ConsumerState<TicketPage> {
   static const String _galleryPermissionDeniedMessage =
       'Permissão para guardar fotos negada.';
   Timer? timer;
-  Timer? resetTimer;
   int? downloadingPhotoId;
   bool downloadingAll = false;
   late Future<OrderDetail> _orderFuture;
-  String? _resetScheduledOrderCode;
 
   Future<void> _showPermissionDialog() async {
     if (!mounted) return;
@@ -3359,33 +3373,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
   @override
   void dispose() {
     timer?.cancel();
-    resetTimer?.cancel();
     super.dispose();
-  }
-
-  void _scheduleCatalogReset(OrderDetail order) {
-    if (!order.isOffline || order.status == 'paid') {
-      resetTimer?.cancel();
-      _resetScheduledOrderCode = null;
-      return;
-    }
-    if (_resetScheduledOrderCode == order.orderCode) {
-      return;
-    }
-    final session = ref.read(guestSessionProvider);
-    if (session == null) return;
-    _resetScheduledOrderCode = order.orderCode;
-    resetTimer?.cancel();
-    resetTimer = Timer(const Duration(seconds: 5), () {
-      if (!mounted) return;
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(
-          builder: (_) => GuestCatalogPage(eventId: session.eventId),
-        ),
-        (route) => false,
-      );
-    });
   }
 
   @override
@@ -3409,7 +3397,6 @@ class _TicketPageState extends ConsumerState<TicketPage> {
             final isPaid = order.status == 'paid';
             final isOnlinePayment = order.paymentMethod == 'online';
             final isOfflineOrder = order.isOffline;
-            _scheduleCatalogReset(order);
 
             return ListView(
               padding: const EdgeInsets.all(16),
@@ -5918,6 +5905,57 @@ class _DeskKpiCard extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProductTypeBadge extends StatelessWidget {
+  const _ProductTypeBadge(this.productType);
+  final String productType;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color;
+    final String label;
+    final IconData icon;
+    switch (productType) {
+      case 'paper':
+        color = Colors.orangeAccent;
+        label = 'Papel';
+        icon = Icons.print;
+        break;
+      case 'both':
+        color = Colors.deepOrangeAccent;
+        label = 'Digital + Papel';
+        icon = Icons.print;
+        break;
+      default:
+        color = Colors.lightBlueAccent;
+        label = 'Digital';
+        icon = Icons.cloud_download_outlined;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withOpacity(0.5)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -12557,13 +12595,21 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                         ],
                                       ),
                                       const SizedBox(height: 5),
-                                      Text(
-                                        o.customerName,
-                                        style: const TextStyle(
-                                          color: kBrandRose,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
-                                        ),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              o.customerName,
+                                              style: const TextStyle(
+                                                color: kBrandRose,
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                          if (o.productType != null)
+                                            _ProductTypeBadge(o.productType!),
+                                        ],
                                       ),
                                       if (eventName.isNotEmpty ||
                                           eventDate.isNotEmpty ||
@@ -12927,6 +12973,44 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                 Text('Troco: ${formatEuroAmount(order.cashChangeAmount!)}€'),
               if ((order.cashDueAmount ?? 0) > 0)
                 Text('Em falta: ${formatEuroAmount(order.cashDueAmount!)}€'),
+              if (order.productType != null) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Text(
+                      'Produto: ',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    _ProductTypeBadge(order.productType!),
+                  ],
+                ),
+                if (order.productType == 'paper' ||
+                    order.productType == 'both') ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    children: const [
+                      Icon(
+                        Icons.print,
+                        size: 16,
+                        color: Colors.orangeAccent,
+                      ),
+                      SizedBox(width: 6),
+                      Text(
+                        'Impressão necessária',
+                        style: TextStyle(
+                          color: Colors.orangeAccent,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+              if (order.deliveryType != null)
+                Text('Entrega: ${order.deliveryType}'),
+              if ((order.deliveryAddress ?? '').isNotEmpty)
+                Text('Morada: ${order.deliveryAddress}'),
               const SizedBox(height: 12),
               Text('Cliente: ${order.customerName}'),
               if ((order.customerEmail ?? '').isNotEmpty)
@@ -17050,6 +17134,7 @@ class OrderListItem {
     this.cashReceivedAmount,
     this.cashChangeAmount,
     this.cashDueAmount,
+    this.productType,
   });
   final int id;
   final String orderCode;
@@ -17062,6 +17147,7 @@ class OrderListItem {
   final num? cashReceivedAmount;
   final num? cashChangeAmount;
   final num? cashDueAmount;
+  final String? productType;
 
   factory OrderListItem.fromJson(Map<String, dynamic> j) => OrderListItem(
     id: j['id'] as int,
@@ -17081,6 +17167,7 @@ class OrderListItem {
     cashReceivedAmount: OrderDetail._toNullableNum(j['cash_received_amount']),
     cashChangeAmount: OrderDetail._toNullableNum(j['cash_change_amount']),
     cashDueAmount: OrderDetail._toNullableNum(j['cash_due_amount']),
+    productType: j['product_type'] as String?,
   );
 }
 
@@ -17099,6 +17186,9 @@ class StaffOrderDetail {
     this.cashReceivedAmount,
     this.cashChangeAmount,
     this.cashDueAmount,
+    this.productType,
+    this.deliveryType,
+    this.deliveryAddress,
   });
   final int id;
   final String orderCode;
@@ -17113,6 +17203,9 @@ class StaffOrderDetail {
   final num? cashReceivedAmount;
   final num? cashChangeAmount;
   final num? cashDueAmount;
+  final String? productType;
+  final String? deliveryType;
+  final String? deliveryAddress;
 
   factory StaffOrderDetail.fromJson(Map<String, dynamic> j) => StaffOrderDetail(
     id: j['id'] as int,
@@ -17135,6 +17228,9 @@ class StaffOrderDetail {
     cashReceivedAmount: OrderDetail._toNullableNum(j['cash_received_amount']),
     cashChangeAmount: OrderDetail._toNullableNum(j['cash_change_amount']),
     cashDueAmount: OrderDetail._toNullableNum(j['cash_due_amount']),
+    productType: j['product_type'] as String?,
+    deliveryType: j['delivery_type'] as String?,
+    deliveryAddress: j['delivery_address'] as String?,
   );
 }
 
