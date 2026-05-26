@@ -209,7 +209,8 @@ class PublicOrderController extends Controller
             $shippingFee = $deliveryType === 'shipping' ? 5.00 : 0.00;
             $filmFee = $wantsFilm ? 30.00 : 0.00;
             $extrasTotal = $shippingFee + $filmFee;
-            $total = $itemsTotal + $extrasTotal;
+            $processingFee = max(0, round((float) $request->input('processing_fee', 0), 2));
+            $total = $itemsTotal + $extrasTotal + $processingFee;
 
             $order = Order::create([
                 'event_id' => $request->integer('event_id'),
@@ -224,6 +225,7 @@ class PublicOrderController extends Controller
                 'film_fee' => $filmFee,
                 'shipping_fee' => $shippingFee,
                 'extras_total' => $extrasTotal,
+                'processing_fee' => $processingFee,
                 'items_total' => $itemsTotal,
                 'payment_method' => 'online',
                 'status' => 'pending',
@@ -398,7 +400,8 @@ class PublicOrderController extends Controller
             $shippingFee = $deliveryType === 'shipping' ? 5.00 : 0.00;
             $filmFee = $wantsFilm ? 30.00 : 0.00;
             $extrasTotal = $shippingFee + $filmFee;
-            $total = $itemsTotal + $extrasTotal;
+            $processingFee = max(0, round((float) $request->input('processing_fee', 0), 2));
+            $total = $itemsTotal + $extrasTotal + $processingFee;
 
             $order = Order::create([
                 'event_id' => $request->integer('event_id'),
@@ -413,6 +416,7 @@ class PublicOrderController extends Controller
                 'film_fee' => $filmFee,
                 'shipping_fee' => $shippingFee,
                 'extras_total' => $extrasTotal,
+                'processing_fee' => $processingFee,
                 'items_total' => $itemsTotal,
                 'payment_method' => 'online',
                 'status' => 'pending',
