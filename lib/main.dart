@@ -275,6 +275,8 @@ const Map<String, String> kStaffPermissions = {
 
   'offline.export': 'Exportar dados offline',
   'offline.import': 'Importar dados offline',
+
+  'dossie.view': 'Ver Dossiê (arquivo por ano/mês/evento)',
 };
 const Set<String> kStaffDefaultPermissions = {
   'dashboard.view',
@@ -5402,6 +5404,15 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
         visibleWhen: (u) => isDesktopPlatform(),
       ),
       DesktopNavItem(
+        id: 'dossie',
+        label: 'Dossiê',
+        icon: Icons.folder_copy_outlined,
+        subtitle: 'Arquivo por ano e mês',
+        builder: (context, user, token) =>
+            DesktopDossieView(user: user, token: token),
+        visibleWhen: (u) => u.hasPermission('dossie.view'),
+      ),
+      DesktopNavItem(
         id: 'users',
         label: 'Utilizadores',
         icon: Icons.person_outline,
@@ -7636,6 +7647,501 @@ class DesktopReportsView extends StatelessWidget {
   }
 }
 
+// ─── Dossiê ────────────────────────────────────────────────────────────────
+
+class DesktopDossieView extends ConsumerStatefulWidget {
+  const DesktopDossieView({
+    super.key,
+    required this.user,
+    required this.token,
+  });
+  final StaffUser user;
+  final String token;
+
+  @override
+  ConsumerState<DesktopDossieView> createState() => _DesktopDossieViewState();
+}
+
+class _DesktopDossieViewState extends ConsumerState<DesktopDossieView> {
+  Future<List<StaffEvent>>? _future;
+  int? _selectedYear;
+  int? _selectedMonth;
+
+  static const List<String> _monthNames = [
+    '', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+    'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _future = ref.read(apiProvider).staffEvents(widget.token);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<StaffEvent>>(
+      future: _future,
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          if (snap.hasError) {
+            return Padding(
+              padding: const EdgeInsets.all(kDeskGutter),
+              child: _DeskCard(child: Text('Erro: ${snap.error}')),
+            );
+          }
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final allEvents = snap.data!
+          ..sort((a, b) => b.eventDate.compareTo(a.eventDate));
+
+        final Map<int, Map<int, List<StaffEvent>>> byYearMonth = {};
+        for (final e in allEvents) {
+          if (e.eventDate.isEmpty) continue;
+          final parts = e.eventDate.split('-');
+          if (parts.length < 2) continue;
+          final year = int.tryParse(parts[0]) ?? 0;
+          final month = int.tryParse(parts[1]) ?? 0;
+          byYearMonth.putIfAbsent(year, () => {});
+          byYearMonth[year]!.putIfAbsent(month, () => []);
+          byYearMonth[year]![month]!.add(e);
+        }
+
+        final years = byYearMonth.keys.toList()..sort((a, b) => b.compareTo(a));
+
+        return Padding(
+          padding: const EdgeInsets.all(kDeskGutter),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Year column
+              SizedBox(
+                width: 100,
+                child: _DeskCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const _DeskSectionHeader('Ano'),
+                      const SizedBox(height: 8),
+                      ...years.map((y) => _DossieYearTile(
+                        year: y,
+                        selected: _selectedYear == y,
+                        onTap: () => setState(() {
+                          _selectedYear = y;
+                          _selectedMonth = null;
+                        }),
+                      )),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Month column
+              if (_selectedYear != null) ...[
+                SizedBox(
+                  width: 140,
+                  child: _DeskCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _DeskSectionHeader('$_selectedYear'),
+                        const SizedBox(height: 8),
+                        ...(byYearMonth[_selectedYear]?.keys.toList()
+                              ?..sort((a, b) => b.compareTo(a)))
+                            ?.map((m) {
+                              final count =
+                                  byYearMonth[_selectedYear]![m]!.length;
+                              return _DossieMonthTile(
+                                label: _monthNames[m],
+                                count: count,
+                                selected: _selectedMonth == m,
+                                onTap: () =>
+                                    setState(() => _selectedMonth = m),
+                              );
+                            }) ??
+                            [],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
+              // Events column
+              if (_selectedYear != null && _selectedMonth != null)
+                Expanded(
+                  child: _DeskCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _DeskSectionHeader(
+                          '${_monthNames[_selectedMonth!]} $_selectedYear',
+                        ),
+                        const SizedBox(height: 8),
+                        ...(byYearMonth[_selectedYear]![_selectedMonth]! )
+                            .map((e) => _DossieEventRow(
+                              event: e,
+                              token: widget.token,
+                              commissionRate: ref
+                                  .read(appRuntimeConfigProvider)
+                                  .commissionRate,
+                            )),
+                      ],
+                    ),
+                  ),
+                )
+              else if (_selectedYear != null)
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 40),
+                    child: Center(
+                      child: Text(
+                        'Seleciona um mês',
+                        style: TextStyle(color: kDeskMuted),
+                      ),
+                    ),
+                  ),
+                )
+              else
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 40),
+                    child: Center(
+                      child: Text(
+                        'Seleciona um ano',
+                        style: TextStyle(color: kDeskMuted),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _DossieYearTile extends StatelessWidget {
+  const _DossieYearTile({
+    required this.year,
+    required this.selected,
+    required this.onTap,
+  });
+  final int year;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+        decoration: selected
+            ? BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+              )
+            : null,
+        child: Text(
+          '$year',
+          style: TextStyle(
+            fontWeight: selected ? FontWeight.w700 : FontWeight.normal,
+            color: selected ? Colors.white : kDeskMuted,
+            fontSize: 14,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DossieMonthTile extends StatelessWidget {
+  const _DossieMonthTile({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+  });
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 10),
+        decoration: selected
+            ? BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+              )
+            : null,
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.normal,
+                  color: selected ? Colors.white : kDeskMuted,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '$count',
+                style: TextStyle(fontSize: 10, color: kDeskMuted),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DossieEventRow extends ConsumerStatefulWidget {
+  const _DossieEventRow({
+    required this.event,
+    required this.token,
+    required this.commissionRate,
+  });
+  final StaffEvent event;
+  final String token;
+  final double commissionRate;
+
+  @override
+  ConsumerState<_DossieEventRow> createState() => _DossieEventRowState();
+}
+
+class _DossieEventRowState extends ConsumerState<_DossieEventRow> {
+  bool _busy = false;
+
+  Future<void> _download(
+    Future<String> Function() action,
+    String label,
+  ) async {
+    setState(() => _busy = true);
+    try {
+      final path = await action();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$label guardado: $path')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final e = widget.event;
+    final api = ref.read(apiProvider);
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0x15FFFFFF))),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  e.name,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                Text(
+                  '${e.eventDate}${e.location != null ? ' · ${e.location}' : ''}',
+                  style: TextStyle(fontSize: 11, color: kDeskMuted),
+                ),
+              ],
+            ),
+          ),
+          if (_busy)
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            Wrap(
+              spacing: 6,
+              children: [
+                _DossieActionButton(
+                  icon: Icons.photo_library_outlined,
+                  label: 'Galeria',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => StaffEventPhotosPage(
+                        eventId: e.id,
+                        eventName: e.name,
+                      ),
+                    ),
+                  ),
+                ),
+                _DossieActionButton(
+                  icon: Icons.picture_as_pdf_outlined,
+                  label: 'PDF Pedidos',
+                  onTap: () => _download(
+                    () => api.staffExportOrdersPdf(widget.token, e.id),
+                    'PDF pedidos',
+                  ),
+                ),
+                _DossieActionButton(
+                  icon: Icons.bar_chart,
+                  label: 'PDF Vendas',
+                  onTap: () => _download(
+                    () => api.staffExportSalesPdf(
+                      widget.token,
+                      e.id,
+                      commissionRate: widget.commissionRate,
+                    ),
+                    'PDF vendas',
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DossieActionButton extends StatelessWidget {
+  const _DossieActionButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: kDeskMuted),
+            const SizedBox(width: 4),
+            Text(label, style: TextStyle(fontSize: 11, color: kDeskMuted)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── StaffEventPhotosPage (used from Dossiê) ──────────────────────────────
+
+class StaffEventPhotosPage extends ConsumerStatefulWidget {
+  const StaffEventPhotosPage({
+    super.key,
+    required this.eventId,
+    required this.eventName,
+  });
+  final int eventId;
+  final String eventName;
+
+  @override
+  ConsumerState<StaffEventPhotosPage> createState() =>
+      _StaffEventPhotosPageState();
+}
+
+class _StaffEventPhotosPageState extends ConsumerState<StaffEventPhotosPage> {
+  Future<List<StaffPhoto>>? _future;
+
+  @override
+  void initState() {
+    super.initState();
+    final token = ref.read(staffTokenProvider);
+    if (token != null) {
+      _future = ref
+          .read(apiProvider)
+          .staffEventPhotos(token, widget.eventId, '');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.eventName)),
+      body: FutureBuilder<List<StaffPhoto>>(
+        future: _future,
+        builder: (context, snap) {
+          if (!snap.hasData) {
+            if (snap.hasError) {
+              return Center(child: Text('Erro: ${snap.error}'));
+            }
+            return const Center(child: CircularProgressIndicator());
+          }
+          final photos = snap.data!;
+          if (photos.isEmpty) {
+            return const Center(child: Text('Sem fotos neste evento.'));
+          }
+          return GridView.builder(
+            padding: const EdgeInsets.all(12),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 180,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
+            ),
+            itemCount: photos.length,
+            itemBuilder: (context, i) {
+              final photo = photos[i];
+              return Column(
+                children: [
+                  Expanded(
+                    child: photo.previewUrl != null
+                        ? Image.network(photo.previewUrl!, fit: BoxFit.cover)
+                        : Container(
+                            color: kDeskCard,
+                            child: const Icon(Icons.image_not_supported),
+                          ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(photo.number, style: const TextStyle(fontSize: 10)),
+                ],
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ─── Users view ─────────────────────────────────────────────────────────────
 class DesktopUsersView extends ConsumerStatefulWidget {
   const DesktopUsersView({super.key, required this.user, required this.token});
   final StaffUser user;
@@ -16682,6 +17188,18 @@ class ApiService {
     final savePath = '${tempDir.path}/orders-event-$eventId.txt';
     final r = await dio.download(
       '/events/$eventId/orders/export-txt',
+      savePath,
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    return savePath;
+  }
+
+  Future<String> staffExportOrdersPdf(String token, int eventId) async {
+    final tempDir = await getTemporaryDirectory();
+    final savePath = '${tempDir.path}/pedidos-evento-$eventId.pdf';
+    final r = await dio.download(
+      '/events/$eventId/orders/export-orders-pdf',
       savePath,
       options: Options(headers: {'Authorization': 'Bearer $token'}),
     );

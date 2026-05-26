@@ -112,6 +112,7 @@ Route::middleware(['auth:sanctum', 'role:admin,staff,photographer'])->group(func
     Route::middleware('permission:orders.export')->group(function () {
         Route::get('/events/{event}/orders/export', [StaffOrderController::class, 'exportCsv']);
         Route::get('/events/{event}/orders/export-txt', [StaffOrderController::class, 'exportTxt']);
+        Route::get('/events/{event}/orders/export-orders-pdf', [StaffOrderController::class, 'exportOrdersPdf']);
         Route::get('/events/{event}/orders/export-sales-pdf', [StaffOrderController::class, 'exportSalesPdf']);
     });
 

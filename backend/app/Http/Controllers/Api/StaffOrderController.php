@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Support\Audit;
 use App\Support\OrderDownloadService;
+use App\Support\OrdersPdf;
 use App\Support\SalesPdf;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -377,6 +378,18 @@ class StaffOrderController extends Controller
                 echo 'TOTAL TROCOS A DEVOLVER: '.number_format($changeOwed, 2, ',', '.')." €\n";
             }
         }, $filename, ['Content-Type' => 'text/plain; charset=utf-8']);
+    }
+
+    public function exportOrdersPdf(Event $event)
+    {
+        $this->ensureEventAccess($event);
+        $pdf = OrdersPdf::generate($event);
+        $filename = 'pedidos-evento-'.$event->id.'.pdf';
+
+        return response($pdf, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="'.$filename.'"',
+        ]);
     }
 
     public function exportSalesPdf(Request $request, Event $event)
