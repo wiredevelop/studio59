@@ -12465,6 +12465,30 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                             child: const Text('Exportar TXT do evento'),
                           ),
                         ),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: FilledButton.tonal(
+                            onPressed: () async {
+                              final appConfig =
+                                  ref.read(appRuntimeConfigProvider);
+                              final path = await ref
+                                  .read(apiProvider)
+                                  .staffExportSalesPdf(
+                                    token,
+                                    eventIds.first,
+                                    commissionRate:
+                                        appConfig.commissionRate,
+                                  );
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('PDF vendas guardado em: $path'),
+                                ),
+                              );
+                            },
+                            child: const Text('PDF Vendas'),
+                          ),
+                        ),
                       ],
                       if (selected.isNotEmpty && canBulk)
                         Padding(
@@ -16659,6 +16683,23 @@ class ApiService {
     final r = await dio.download(
       '/events/$eventId/orders/export-txt',
       savePath,
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    return savePath;
+  }
+
+  Future<String> staffExportSalesPdf(
+    String token,
+    int eventId, {
+    double commissionRate = 15.0,
+  }) async {
+    final tempDir = await getTemporaryDirectory();
+    final savePath = '${tempDir.path}/vendas-evento-$eventId.pdf';
+    final r = await dio.download(
+      '/events/$eventId/orders/export-sales-pdf',
+      savePath,
+      queryParameters: {'commission_rate': commissionRate},
       options: Options(headers: {'Authorization': 'Bearer $token'}),
     );
     if (r.statusCode != 200) throw _errorFromResponse(r);
