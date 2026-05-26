@@ -70,15 +70,7 @@ class PublicEventController extends Controller
             ->where('access_pin', $validated['pin'])
             ->firstOrFail();
 
-        if (! $event->access_pin) {
-            return response()->json(['message' => 'Event not available'], 403);
-        }
-
-        $today = Carbon::today('Europe/Lisbon');
-        $start = $event->event_date?->copy() ?? $today;
-        $end = $start->copy()->addDay();
-
-        if ($today->lt($start) || $today->gt($end) || $event->is_locked) {
+        if (! $event->access_pin || $event->is_locked) {
             return response()->json(['message' => 'Event not available'], 403);
         }
 
