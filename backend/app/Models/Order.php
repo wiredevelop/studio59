@@ -37,6 +37,7 @@ class Order extends Model
         'download_token_hash',
         'download_token',
         'download_link_sent_at',
+        'notes',
     ];
 
     protected $casts = [

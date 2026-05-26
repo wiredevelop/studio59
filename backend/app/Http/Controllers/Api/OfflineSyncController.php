@@ -241,6 +241,9 @@ class OfflineSyncController extends Controller
                         $updatePayload['cash_change_amount'] = $update['cash_change_amount'] ?? null;
                         $updatePayload['cash_due_amount'] = $update['cash_due_amount'] ?? null;
                     }
+                    if (array_key_exists('notes', $update)) {
+                        $updatePayload['notes'] = $update['notes'];
+                    }
                     Order::where('id', $update['order_id'])->update($updatePayload);
                 }
             });

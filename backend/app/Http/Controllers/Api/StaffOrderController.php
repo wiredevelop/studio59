@@ -111,6 +111,10 @@ class StaffOrderController extends Controller
             'cash_due_amount' => $order->cash_due_amount,
             'status' => $order->status,
             'total_amount' => $order->total_amount,
+            'product_type' => $order->product_type,
+            'delivery_type' => $order->delivery_type,
+            'delivery_address' => $order->delivery_address,
+            'notes' => $order->notes,
             'event' => $order->event ? [
                 'id' => $order->event->id,
                 'name' => $order->event->name,
@@ -120,6 +124,7 @@ class StaffOrderController extends Controller
                 return [
                     'id' => $item->photo->id,
                     'number' => $item->photo->number,
+                    'quantity' => $item->quantity ?? 1,
                 ];
             })->values(),
         ]);
@@ -138,6 +143,7 @@ class StaffOrderController extends Controller
             'customer_phone' => ['nullable', 'string', 'max:50'],
             'payment_method' => ['nullable', 'string', 'max:50'],
             'status' => ['required', Rule::in(['pending', 'paid'])],
+            'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
         $order->update($validated);
@@ -186,6 +192,7 @@ class StaffOrderController extends Controller
             'cash_received_amount' => ['nullable', 'numeric', 'min:0'],
             'cash_change_amount' => ['nullable', 'numeric', 'min:0'],
             'cash_due_amount' => ['nullable', 'numeric', 'min:0'],
+            'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
         $update = ['status' => 'paid'];
@@ -193,6 +200,9 @@ class StaffOrderController extends Controller
             $update['cash_received_amount'] = $validated['cash_received_amount'] ?? null;
             $update['cash_change_amount'] = $validated['cash_change_amount'] ?? null;
             $update['cash_due_amount'] = $validated['cash_due_amount'] ?? null;
+        }
+        if (array_key_exists('notes', $validated)) {
+            $update['notes'] = $validated['notes'];
         }
 
         $order->update($update);
@@ -299,6 +309,73 @@ class StaffOrderController extends Controller
             }
             fclose($out);
         }, $filename, ['Content-Type' => 'text/csv']);
+    }
+
+    public function exportTxt(Event $event): StreamedResponse
+    {
+        $this->ensureEventAccess($event);
+        $orders = Order::with('items.photo')->where('event_id', $event->id)->orderBy('id')->get();
+
+        $filename = 'event-'.$event->id.'-orders.txt';
+
+        return response()->streamDownload(function () use ($event, $orders) {
+            $cashTotal = 0;
+            $digitalTotal = 0;
+            $photosOwed = 0;
+            $changeOwed = 0;
+
+            echo "EVENTO: {$event->name}\n";
+            echo "DATA: ".optional($event->event_date)->format('d/m/Y')."\n";
+            echo str_repeat('=', 50)."\n\n";
+
+            foreach ($orders as $o) {
+                echo "PEDIDO #{$o->id} | {$o->order_code}\n";
+                echo "CLIENTE: {$o->customer_name}".($o->customer_phone ? " | {$o->customer_phone}" : '')."\n";
+                echo 'ESTADO: '.strtoupper($o->status).' | PAGAMENTO: '.strtoupper($o->payment_method ?? '-')."\n";
+
+                foreach ($o->items as $item) {
+                    if ($item->photo) {
+                        $qty = $item->quantity ?? 1;
+                        echo "  FOTO {$item->photo->number} x{$qty}\n";
+                    }
+                }
+
+                echo 'TOTAL: '.number_format((float) $o->total_amount, 2, ',', '.').' €'."\n";
+
+                if ($o->payment_method === 'cash') {
+                    if ($o->cash_due_amount > 0) {
+                        $photosOwed++;
+                        echo 'FOTOS EM DÍVIDA: '.number_format((float) $o->cash_due_amount, 2, ',', '.')." €\n";
+                    }
+                    if ($o->cash_change_amount > 0) {
+                        $changeOwed += (float) $o->cash_change_amount;
+                        echo 'TROCO A DEVOLVER: '.number_format((float) $o->cash_change_amount, 2, ',', '.')." €\n";
+                    }
+                    $cashTotal += (float) $o->total_amount;
+                } else {
+                    $digitalTotal += (float) $o->total_amount;
+                }
+
+                if (! empty($o->notes)) {
+                    echo "NOTAS: {$o->notes}\n";
+                }
+
+                echo str_repeat('-', 50)."\n";
+            }
+
+            echo "\n".str_repeat('=', 50)."\n";
+            echo "RESUMO\n";
+            echo str_repeat('=', 50)."\n";
+            echo 'TOTAL DINHEIRO FÍSICO: '.number_format($cashTotal, 2, ',', '.')." €\n";
+            echo 'TOTAL DIGITAL/ONLINE: '.number_format($digitalTotal, 2, ',', '.')." €\n";
+            echo 'TOTAL GERAL: '.number_format($cashTotal + $digitalTotal, 2, ',', '.')." €\n";
+            if ($photosOwed > 0) {
+                echo "PEDIDOS COM FOTOS EM DÍVIDA: {$photosOwed}\n";
+            }
+            if ($changeOwed > 0) {
+                echo 'TOTAL TROCOS A DEVOLVER: '.number_format($changeOwed, 2, ',', '.')." €\n";
+            }
+        }, $filename, ['Content-Type' => 'text/plain; charset=utf-8']);
     }
 
     private function ensureEventAccess(Event $event): void

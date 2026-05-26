@@ -107,18 +107,22 @@ class CashSettlement {
     required this.receivedAmount,
     required this.changeAmount,
     required this.dueAmount,
+    this.notes,
   });
 
   final num receivedAmount;
   final num changeAmount;
   final num dueAmount;
+  final String? notes;
 }
 
 Future<CashSettlement?> promptCashSettlement(
   BuildContext context, {
   required num totalAmount,
+  String? initialNotes,
 }) async {
   final ctrl = TextEditingController(text: formatEuroAmount(totalAmount));
+  final notesCtrl = TextEditingController(text: initialNotes ?? '');
   try {
     return await showDialog<CashSettlement>(
       context: context,
@@ -157,6 +161,15 @@ Future<CashSettlement?> promptCashSettlement(
                   const SizedBox(height: 12),
                   Text('Troco: €${formatEuroAmount(change)}'),
                   Text('Falta: €${formatEuroAmount(due)}'),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: notesCtrl,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Notas (opcional)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
                 ],
               ),
               actions: [
@@ -171,6 +184,9 @@ Future<CashSettlement?> promptCashSettlement(
                       receivedAmount: received,
                       changeAmount: change,
                       dueAmount: due,
+                      notes: notesCtrl.text.trim().isEmpty
+                          ? null
+                          : notesCtrl.text.trim(),
                     ),
                   ),
                   child: const Text('Confirmar'),
@@ -183,6 +199,7 @@ Future<CashSettlement?> promptCashSettlement(
     );
   } finally {
     ctrl.dispose();
+    notesCtrl.dispose();
   }
 }
 
@@ -279,6 +296,7 @@ class AppRuntimeConfig {
     required this.stripeUrlScheme,
     required this.stripePercentFee,
     required this.stripeFixedFee,
+    required this.commissionRate,
   });
 
   final String apiBaseUrl;
@@ -289,6 +307,7 @@ class AppRuntimeConfig {
   final String stripeUrlScheme;
   final double stripePercentFee;
   final double stripeFixedFee;
+  final double commissionRate;
 
   static const defaults = AppRuntimeConfig(
     apiBaseUrl: kApiBaseUrl,
@@ -299,6 +318,7 @@ class AppRuntimeConfig {
     stripeUrlScheme: kStripeUrlScheme,
     stripePercentFee: 1.5,
     stripeFixedFee: 0.25,
+    commissionRate: 15.0,
   );
 
   Map<String, dynamic> toJson() => {
@@ -310,6 +330,7 @@ class AppRuntimeConfig {
     'stripe_url_scheme': stripeUrlScheme,
     'stripe_percent_fee': stripePercentFee,
     'stripe_fixed_fee': stripeFixedFee,
+    'commission_rate': commissionRate,
   };
 
   factory AppRuntimeConfig.fromJson(
@@ -337,6 +358,8 @@ class AppRuntimeConfig {
         defaults.stripePercentFee,
     stripeFixedFee:
         (json['stripe_fixed_fee'] as num?)?.toDouble() ?? defaults.stripeFixedFee,
+    commissionRate:
+        (json['commission_rate'] as num?)?.toDouble() ?? defaults.commissionRate,
   );
 
   AppRuntimeConfig copyWith({
@@ -348,6 +371,7 @@ class AppRuntimeConfig {
     String? stripeUrlScheme,
     double? stripePercentFee,
     double? stripeFixedFee,
+    double? commissionRate,
   }) => AppRuntimeConfig(
     apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
     apiFallbackIp: apiFallbackIp ?? this.apiFallbackIp,
@@ -357,6 +381,7 @@ class AppRuntimeConfig {
     stripeUrlScheme: stripeUrlScheme ?? this.stripeUrlScheme,
     stripePercentFee: stripePercentFee ?? this.stripePercentFee,
     stripeFixedFee: stripeFixedFee ?? this.stripeFixedFee,
+    commissionRate: commissionRate ?? this.commissionRate,
   );
 }
 
@@ -1567,6 +1592,7 @@ Future<void> enqueueOrderUpdate(
   num? cashReceivedAmount,
   num? cashChangeAmount,
   num? cashDueAmount,
+  String? notes,
 }) async {
   final payload = await _readOfflinePayload(eventId);
   final updates = (payload['order_updates'] as List? ?? [])
@@ -1579,6 +1605,7 @@ Future<void> enqueueOrderUpdate(
     'cash_received_amount': cashReceivedAmount,
     'cash_change_amount': cashChangeAmount,
     'cash_due_amount': cashDueAmount,
+    'notes': notes,
     'updated_at': DateTime.now().toIso8601String(),
   });
   payload['order_updates'] = updates;
@@ -7101,6 +7128,7 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                                                       settlement.changeAmount,
                                                   cashDueAmount:
                                                       settlement.dueAmount,
+                                                  notes: settlement.notes,
                                                 );
                                             if (!context.mounted) return;
                                             setState(_reload);
@@ -12402,7 +12430,7 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                         ),
                         onSubmitted: (_) => setState(() => selected.clear()),
                       ),
-                      if (canExport && eventIds.length == 1)
+                      if (canExport && eventIds.length == 1) ...[
                         Padding(
                           padding: const EdgeInsets.only(top: 8),
                           child: FilledButton.tonal(
@@ -12420,6 +12448,24 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                             child: const Text('Exportar CSV do evento'),
                           ),
                         ),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: FilledButton.tonal(
+                            onPressed: () async {
+                              final path = await ref
+                                  .read(apiProvider)
+                                  .staffExportOrdersTxt(token, eventIds.first);
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('TXT guardado em: $path'),
+                                ),
+                              );
+                            },
+                            child: const Text('Exportar TXT do evento'),
+                          ),
+                        ),
+                      ],
                       if (selected.isNotEmpty && canBulk)
                         Padding(
                           padding: const EdgeInsets.only(top: 8),
@@ -12774,6 +12820,7 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                         cashDueAmount:
                                                             settlement
                                                                 .dueAmount,
+                                                        notes: settlement.notes,
                                                       );
                                                   if (!context.mounted) return;
                                                   ScaffoldMessenger.of(
@@ -12911,6 +12958,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
   late final TextEditingController emailCtrl;
   late final TextEditingController phoneCtrl;
   late final TextEditingController paymentCtrl;
+  late final TextEditingController notesCtrl;
   String status = 'pending';
 
   @override
@@ -12920,6 +12968,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
     emailCtrl = TextEditingController();
     phoneCtrl = TextEditingController();
     paymentCtrl = TextEditingController();
+    notesCtrl = TextEditingController();
     final token = ref.read(staffTokenProvider);
     if (token != null) {
       _future = ref.read(apiProvider).staffOrderDetail(token, widget.orderId);
@@ -12932,6 +12981,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
     emailCtrl.dispose();
     phoneCtrl.dispose();
     paymentCtrl.dispose();
+    notesCtrl.dispose();
     super.dispose();
   }
 
@@ -12953,6 +13003,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
           ? null
           : paymentCtrl.text.trim(),
       status: status,
+      notes: notesCtrl.text.trim().isEmpty ? null : notesCtrl.text.trim(),
     );
     if (payload.customerName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -13005,6 +13056,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
           emailCtrl.text = order.customerEmail ?? '';
           phoneCtrl.text = order.customerPhone ?? '';
           paymentCtrl.text = order.paymentMethod;
+          notesCtrl.text = order.notes ?? '';
           status = order.status;
         }
 
@@ -13069,6 +13121,13 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                 Text('Entrega: ${order.deliveryType}'),
               if ((order.deliveryAddress ?? '').isNotEmpty)
                 Text('Morada: ${order.deliveryAddress}'),
+              if ((order.notes ?? '').isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Notas: ${order.notes}',
+                  style: const TextStyle(fontStyle: FontStyle.italic),
+                ),
+              ],
               const SizedBox(height: 12),
               Text('Cliente: ${order.customerName}'),
               if ((order.customerEmail ?? '').isNotEmpty)
@@ -13087,6 +13146,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                           final settlement = await promptCashSettlement(
                             context,
                             totalAmount: order.totalAmount,
+                            initialNotes: order.notes,
                           );
                           if (settlement == null) return;
                           await ref
@@ -13097,6 +13157,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                                 cashReceivedAmount: settlement.receivedAmount,
                                 cashChangeAmount: settlement.changeAmount,
                                 cashDueAmount: settlement.dueAmount,
+                                notes: settlement.notes,
                               );
                           if (!context.mounted) return;
                           setState(() => _loadDetail(token));
@@ -13154,6 +13215,15 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                 controller: paymentCtrl,
                 decoration: const InputDecoration(
                   labelText: 'Pagamento',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: notesCtrl,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Notas',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -14033,6 +14103,7 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
   late final TextEditingController stripeUrlSchemeCtrl;
   late final TextEditingController stripePercentFeeCtrl;
   late final TextEditingController stripeFixedFeeCtrl;
+  late final TextEditingController commissionRateCtrl;
   bool enablePlatformPay = true;
   bool saving = false;
   bool testing = false;
@@ -14056,6 +14127,9 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
     stripeFixedFeeCtrl = TextEditingController(
       text: config.stripeFixedFee.toString(),
     );
+    commissionRateCtrl = TextEditingController(
+      text: config.commissionRate.toString(),
+    );
     enablePlatformPay = config.enablePlatformPay;
   }
 
@@ -14068,6 +14142,7 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
     stripeUrlSchemeCtrl.dispose();
     stripePercentFeeCtrl.dispose();
     stripeFixedFeeCtrl.dispose();
+    commissionRateCtrl.dispose();
     super.dispose();
   }
 
@@ -14086,6 +14161,10 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
           stripeFixedFeeCtrl.text.trim().replaceAll(',', '.'),
         ) ??
         AppRuntimeConfig.defaults.stripeFixedFee,
+    commissionRate: double.tryParse(
+          commissionRateCtrl.text.trim().replaceAll(',', '.'),
+        ) ??
+        AppRuntimeConfig.defaults.commissionRate,
   );
 
   Future<void> _goHomeClearingSessions() async {
@@ -14174,6 +14253,7 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
     stripeUrlSchemeCtrl.text = config.stripeUrlScheme;
     stripePercentFeeCtrl.text = config.stripePercentFee.toString();
     stripeFixedFeeCtrl.text = config.stripeFixedFee.toString();
+    commissionRateCtrl.text = config.commissionRate.toString();
     setState(() => enablePlatformPay = config.enablePlatformPay);
     await clearAppRuntimeConfig();
     ref.read(appRuntimeConfigProvider.notifier).state = config;
@@ -14283,6 +14363,26 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
               ),
             ),
           ],
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          'Comissão de equipa',
+          style: TextStyle(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Percentagem aplicada ao valor por membro da equipa no final do evento.',
+          style: TextStyle(fontSize: 12, color: Colors.white60),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: commissionRateCtrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(
+            labelText: 'Taxa de comissão (ex: 15)',
+            suffixText: '%',
+            border: OutlineInputBorder(),
+          ),
         ),
         const SizedBox(height: 12),
         Wrap(
@@ -16091,6 +16191,7 @@ class ApiService {
     num? cashReceivedAmount,
     num? cashChangeAmount,
     num? cashDueAmount,
+    String? notes,
   }) async {
     try {
       final r = await dio.post(
@@ -16099,6 +16200,7 @@ class ApiService {
           'cash_received_amount': cashReceivedAmount,
           'cash_change_amount': cashChangeAmount,
           'cash_due_amount': cashDueAmount,
+          'notes': notes,
         },
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
@@ -16118,6 +16220,7 @@ class ApiService {
           cashReceivedAmount: cashReceivedAmount,
           cashChangeAmount: cashChangeAmount,
           cashDueAmount: cashDueAmount,
+          notes: notes,
         );
         return false;
       }
@@ -16543,6 +16646,18 @@ class ApiService {
     final savePath = '${tempDir.path}/orders-event-$eventId.csv';
     final r = await dio.download(
       '/events/$eventId/orders/export',
+      savePath,
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    return savePath;
+  }
+
+  Future<String> staffExportOrdersTxt(String token, int eventId) async {
+    final tempDir = await getTemporaryDirectory();
+    final savePath = '${tempDir.path}/orders-event-$eventId.txt';
+    final r = await dio.download(
+      '/events/$eventId/orders/export-txt',
       savePath,
       options: Options(headers: {'Authorization': 'Bearer $token'}),
     );
@@ -17313,6 +17428,7 @@ class StaffOrderDetail {
     this.productType,
     this.deliveryType,
     this.deliveryAddress,
+    this.notes,
   });
   final int id;
   final String orderCode;
@@ -17330,6 +17446,7 @@ class StaffOrderDetail {
   final String? productType;
   final String? deliveryType;
   final String? deliveryAddress;
+  final String? notes;
 
   factory StaffOrderDetail.fromJson(Map<String, dynamic> j) => StaffOrderDetail(
     id: j['id'] as int,
@@ -17355,6 +17472,7 @@ class StaffOrderDetail {
     productType: j['product_type'] as String?,
     deliveryType: j['delivery_type'] as String?,
     deliveryAddress: j['delivery_address'] as String?,
+    notes: j['notes'] as String?,
   );
 }
 
@@ -17365,12 +17483,14 @@ class StaffOrderUpdatePayload {
     this.customerEmail,
     this.customerPhone,
     this.paymentMethod,
+    this.notes,
   });
   final String customerName;
   final String status;
   final String? customerEmail;
   final String? customerPhone;
   final String? paymentMethod;
+  final String? notes;
 
   Map<String, dynamic> toJson() => {
     'customer_name': customerName,
@@ -17378,6 +17498,7 @@ class StaffOrderUpdatePayload {
     'customer_phone': customerPhone,
     'payment_method': paymentMethod,
     'status': status,
+    'notes': notes,
   };
 }
 
