@@ -197,7 +197,7 @@ class StaffOrderController extends Controller
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
-        $update = ['status' => 'paid'];
+        $update = ['status' => 'delivered'];
         if ($order->payment_method === 'cash') {
             $update['cash_received_amount'] = $validated['cash_received_amount'] ?? null;
             $update['cash_change_amount'] = $validated['cash_change_amount'] ?? null;

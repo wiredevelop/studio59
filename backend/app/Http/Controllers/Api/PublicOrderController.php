@@ -132,7 +132,7 @@ class PublicOrderController extends Controller
             'event_id' => ['required', 'exists:events,id'],
             'customer_name' => ['required', 'string', 'max:255'],
             'customer_phone' => ['required', 'string', 'max:50'],
-            'customer_email' => ['required', 'email', 'max:255'],
+            'customer_email' => ['nullable', 'email', 'max:255'],
             'payment_method' => ['required', 'in:online'],
             'product_type' => ['required', 'in:digital,paper,both'],
             'delivery_type' => ['nullable', 'in:pickup,shipping'],
@@ -315,7 +315,7 @@ class PublicOrderController extends Controller
             'event_id' => ['required', 'exists:events,id'],
             'customer_name' => ['required', 'string', 'max:255'],
             'customer_phone' => ['required', 'string', 'max:50'],
-            'customer_email' => ['required', 'email', 'max:255'],
+            'customer_email' => ['nullable', 'email', 'max:255'],
             'payment_method_type' => ['required', Rule::in([
                 'mb_way',
                 'paypal',

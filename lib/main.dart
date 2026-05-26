@@ -2579,8 +2579,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
     final total = itemsTotal + extrasTotal;
     final appConfig = ref.watch(appRuntimeConfigProvider);
     final offlineCheckout = looksLikeLocalApiBaseUrl(appConfig.apiBaseUrl);
-    final requiresEmail =
-        offlineCheckout && (productType == 'digital' || productType == 'both');
+    const requiresEmail = false;
     final isOnlinePayment = paymentMethod == 'online';
     final processingFee = isOnlinePayment
         ? double.parse(
@@ -7145,24 +7144,6 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                                             setState(_reload);
                                           },
                                         ),
-                                      if (canUpdate &&
-                                          o.status == 'paid' &&
-                                          !isPhotographer)
-                                        _MobileActionChip(
-                                          label: 'Entregue',
-                                          color: Colors.lightBlueAccent,
-                                          onTap: () async {
-                                            await ref
-                                                .read(apiProvider)
-                                                .markOrderDelivered(
-                                                  widget.token,
-                                                  o.id,
-                                                  eventId: o.eventId,
-                                                );
-                                            if (!context.mounted) return;
-                                            setState(_reload);
-                                          },
-                                        ),
                                       if (canDownload)
                                         _MobileActionChip(
                                           label: 'Enviar link',
@@ -7937,9 +7918,12 @@ class _DossieEventRowState extends ConsumerState<_DossieEventRow> {
     try {
       final path = await action();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$label guardado: $path')),
-      );
+      final result = await OpenFilex.open(path);
+      if (result.type != ResultType.done && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$label guardado: $path')),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -8309,6 +8293,7 @@ class _DesktopSettingsViewState extends ConsumerState<DesktopSettingsView> {
 
   @override
   Widget build(BuildContext context) {
+    final isAdmin = _isAdminRole(widget.user.role);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(kDeskGutter),
       child: Column(
@@ -8408,6 +8393,10 @@ class _DesktopSettingsViewState extends ConsumerState<DesktopSettingsView> {
               ],
             ),
           ),
+          if (isAdmin) ...[
+            const SizedBox(height: 24),
+            const AppRuntimeConfigForm(embedded: true),
+          ],
         ],
       ),
     );
@@ -13377,28 +13366,6 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                   });
                                                 },
                                               ),
-                                            if (canUpdate &&
-                                                o.status == 'paid' &&
-                                                !isPhotographer)
-                                              _MobileActionChip(
-                                                label: 'Entregue',
-                                                color: Colors.lightBlueAccent,
-                                                onTap: () async {
-                                                  await ref
-                                                      .read(apiProvider)
-                                                      .markOrderDelivered(
-                                                        token,
-                                                        o.id,
-                                                        eventId: o.eventId,
-                                                      );
-                                                  if (!context.mounted) return;
-                                                  setState(() {
-                                                    selected.remove(o.id);
-                                                    _ordersFuture = null;
-                                                    _lastOrdersKey = null;
-                                                  });
-                                                },
-                                              ),
                                             if (canDownload)
                                               _MobileActionChip(
                                                 label: 'Enviar link',
@@ -13700,20 +13667,6 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                           child: const Text('Editar'),
                         ),
                     ],
-                  ),
-                ),
-              if (canWrite && order.status == 'paid' && !isPhotographer)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: FilledButton.tonal(
-                    onPressed: () async {
-                      await ref
-                          .read(apiProvider)
-                          .markOrderDelivered(token, order.id);
-                      if (!context.mounted) return;
-                      setState(() => _loadDetail(token));
-                    },
-                    child: const Text('Marcar entregue'),
                   ),
                 ),
             ] else ...[
