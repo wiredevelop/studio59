@@ -203,6 +203,123 @@ Future<CashSettlement?> promptCashSettlement(
   }
 }
 
+class CashOrderEdit {
+  const CashOrderEdit({
+    required this.receivedAmount,
+    required this.changeAmount,
+    required this.dueAmount,
+    required this.status,
+    this.notes,
+  });
+  final num receivedAmount;
+  final num changeAmount;
+  final num dueAmount;
+  final String status;
+  final String? notes;
+}
+
+Future<CashOrderEdit?> promptCashOrderEdit(
+  BuildContext context, {
+  required num totalAmount,
+  required String currentStatus,
+  num? currentReceived,
+  String? currentNotes,
+}) async {
+  final ctrl = TextEditingController(
+    text: currentReceived != null ? formatEuroAmount(currentReceived) : formatEuroAmount(totalAmount),
+  );
+  final notesCtrl = TextEditingController(text: currentNotes ?? '');
+  String status = currentStatus;
+  try {
+    return await showDialog<CashOrderEdit>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            final normalized = ctrl.text.trim().replaceAll(',', '.');
+            final received = num.tryParse(normalized) ?? 0;
+            final change = received > totalAmount ? received - totalAmount : 0;
+            final due = received < totalAmount ? totalAmount - received : 0;
+            return AlertDialog(
+              title: const Text('Editar pagamento em dinheiro'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Total: €${formatEuroAmount(totalAmount)}'),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: ctrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Dinheiro recebido',
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  const SizedBox(height: 8),
+                  if (change > 0)
+                    Text(
+                      'Troco a devolver ao cliente: €${formatEuroAmount(change)}',
+                      style: const TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.w600),
+                    ),
+                  if (due > 0)
+                    Text('Falta receber: €${formatEuroAmount(due)}'),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: notesCtrl,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Notas (opcional)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: status,
+                    items: const [
+                      DropdownMenuItem(value: 'pending', child: Text('Pendente')),
+                      DropdownMenuItem(value: 'paid', child: Text('Pago')),
+                      DropdownMenuItem(value: 'delivered', child: Text('Entregue')),
+                    ],
+                    onChanged: (v) => setState(() => status = v ?? status),
+                    decoration: const InputDecoration(
+                      labelText: 'Estado',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(
+                    dialogContext,
+                    CashOrderEdit(
+                      receivedAmount: received,
+                      changeAmount: change,
+                      dueAmount: due,
+                      status: status,
+                      notes: notesCtrl.text.trim().isEmpty ? null : notesCtrl.text.trim(),
+                    ),
+                  ),
+                  child: const Text('Guardar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  } finally {
+    ctrl.dispose();
+    notesCtrl.dispose();
+  }
+}
+
 const Color kDeskBg = Color(0xFF0B0A0A);
 const Color kDeskSurface = Color(0xFF111010);
 const Color kDeskCard = Color(0xFF151313);
@@ -2635,15 +2752,17 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
               ),
             ),
             const SizedBox(height: 8),
-            TextField(
-              controller: emailCtrl,
-              keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(
-                labelText: 'Email (opcional)',
-                border: OutlineInputBorder(),
+            if (productType != 'paper') ...[
+              TextField(
+                controller: emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
+              const SizedBox(height: 8),
+            ],
             Align(
               alignment: Alignment.centerLeft,
               child: Text(
@@ -2884,6 +3003,14 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                           return;
                         }
                         final email = emailCtrl.text.trim();
+                        if (productType != 'paper' && email.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Email é obrigatório para produto digital.'),
+                            ),
+                          );
+                          return;
+                        }
                         if (email.isNotEmpty &&
                             !RegExp(
                               r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
@@ -2986,7 +3113,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                               context,
                               MaterialPageRoute(
                                 builder: (_) =>
-                                    TicketPage(orderCode: checkout.orderCode),
+                                    TicketPage(orderCode: checkout.orderCode, autoClose: true),
                               ),
                               (route) => route.isFirst,
                             );
@@ -3153,7 +3280,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                           Navigator.pushReplacement(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => TicketPage(orderCode: code),
+                              builder: (_) => TicketPage(orderCode: code, autoClose: true),
                             ),
                           );
                           return;
@@ -3198,7 +3325,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                         Navigator.pushReplacement(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => TicketPage(orderCode: code),
+                            builder: (_) => TicketPage(orderCode: code, autoClose: true),
                           ),
                         );
                       } on stripe.StripeException catch (e) {
@@ -3298,7 +3425,8 @@ class MyOrdersPage extends ConsumerWidget {
 
 class TicketPage extends ConsumerStatefulWidget {
   final String orderCode;
-  const TicketPage({super.key, required this.orderCode});
+  final bool autoClose;
+  const TicketPage({super.key, required this.orderCode, this.autoClose = false});
 
   @override
   ConsumerState<TicketPage> createState() => _TicketPageState();
@@ -3311,6 +3439,7 @@ class _TicketPageState extends ConsumerState<TicketPage> {
   static const String _galleryPermissionDeniedMessage =
       'Permissão para guardar fotos negada.';
   Timer? timer;
+  Timer? _autoCloseTimer;
   int? downloadingPhotoId;
   bool downloadingAll = false;
   late Future<OrderDetail> _orderFuture;
@@ -3454,11 +3583,17 @@ class _TicketPageState extends ConsumerState<TicketPage> {
         });
       }
     });
+    if (widget.autoClose) {
+      _autoCloseTimer = Timer(const Duration(seconds: 5), () {
+        if (mounted) Navigator.pop(context);
+      });
+    }
   }
 
   @override
   void dispose() {
     timer?.cancel();
+    _autoCloseTimer?.cancel();
     super.dispose();
   }
 
@@ -3550,11 +3685,16 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                           ),
                         if ((order.cashChangeAmount ?? 0) > 0)
                           Text(
-                            'Troco: ${formatEuroAmount(order.cashChangeAmount!)}€',
+                            'Troco a devolver: ${formatEuroAmount(order.cashChangeAmount!)}€ (Studio deve ao cliente)',
+                            style: const TextStyle(
+                              color: Colors.orangeAccent,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         if ((order.cashDueAmount ?? 0) > 0)
                           Text(
                             'Em falta: ${formatEuroAmount(order.cashDueAmount!)}€',
+                            style: const TextStyle(color: Colors.redAccent),
                           ),
                         if (order.productType != null)
                           Text('Produto: ${order.productType}'),
@@ -3709,7 +3849,10 @@ class OrderDetailPage extends ConsumerWidget {
                 if (o.cashReceivedAmount != null)
                   Text('Entregue: ${formatEuroAmount(o.cashReceivedAmount!)}€'),
                 if ((o.cashChangeAmount ?? 0) > 0)
-                  Text('Troco: ${formatEuroAmount(o.cashChangeAmount!)}€'),
+                  Text(
+                    'Troco a devolver: ${formatEuroAmount(o.cashChangeAmount!)}€ (Studio deve ao cliente)',
+                    style: const TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.w600),
+                  ),
                 if ((o.cashDueAmount ?? 0) > 0)
                   Text('Em falta: ${formatEuroAmount(o.cashDueAmount!)}€'),
                 if (o.productType != null) Text('Produto: ${o.productType}'),
@@ -7140,6 +7283,35 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                                                       settlement.dueAmount,
                                                   notes: settlement.notes,
                                                 );
+                                            if (!context.mounted) return;
+                                            setState(_reload);
+                                          },
+                                        ),
+                                      if (canUpdate && o.paymentMethod == 'cash')
+                                        _MobileActionChip(
+                                          label: 'Editar €',
+                                          color: Colors.amberAccent,
+                                          onTap: () async {
+                                            final edit = await promptCashOrderEdit(
+                                              context,
+                                              totalAmount: o.totalAmount ?? 0,
+                                              currentStatus: o.status,
+                                              currentReceived: o.cashReceivedAmount,
+                                            );
+                                            if (edit == null || !context.mounted) return;
+                                            await ref.read(apiProvider).updateOrder(
+                                              widget.token,
+                                              o.id,
+                                              StaffOrderUpdatePayload(
+                                                customerName: o.customerName,
+                                                status: edit.status,
+                                                paymentMethod: o.paymentMethod,
+                                                notes: edit.notes,
+                                                cashReceivedAmount: edit.receivedAmount,
+                                                cashChangeAmount: edit.changeAmount,
+                                                cashDueAmount: edit.dueAmount,
+                                              ),
+                                            );
                                             if (!context.mounted) return;
                                             setState(_reload);
                                           },
@@ -13366,6 +13538,39 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                   });
                                                 },
                                               ),
+                                            if (canUpdate && o.paymentMethod == 'cash')
+                                              _MobileActionChip(
+                                                label: 'Editar €',
+                                                color: Colors.amberAccent,
+                                                onTap: () async {
+                                                  final edit = await promptCashOrderEdit(
+                                                    context,
+                                                    totalAmount: o.totalAmount ?? 0,
+                                                    currentStatus: o.status,
+                                                    currentReceived: o.cashReceivedAmount,
+                                                  );
+                                                  if (edit == null || !context.mounted) return;
+                                                  await ref.read(apiProvider).updateOrder(
+                                                    token,
+                                                    o.id,
+                                                    StaffOrderUpdatePayload(
+                                                      customerName: o.customerName,
+                                                      status: edit.status,
+                                                      paymentMethod: o.paymentMethod,
+                                                      notes: edit.notes,
+                                                      cashReceivedAmount: edit.receivedAmount,
+                                                      cashChangeAmount: edit.changeAmount,
+                                                      cashDueAmount: edit.dueAmount,
+                                                    ),
+                                                  );
+                                                  if (!context.mounted) return;
+                                                  setState(() {
+                                                    selected.remove(o.id);
+                                                    _ordersFuture = null;
+                                                    _lastOrdersKey = null;
+                                                  });
+                                                },
+                                              ),
                                             if (canDownload)
                                               _MobileActionChip(
                                                 label: 'Enviar link',
@@ -13456,7 +13661,9 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
   late final TextEditingController phoneCtrl;
   late final TextEditingController paymentCtrl;
   late final TextEditingController notesCtrl;
+  late final TextEditingController cashReceivedCtrl;
   String status = 'pending';
+  num _orderTotal = 0;
 
   @override
   void initState() {
@@ -13466,6 +13673,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
     phoneCtrl = TextEditingController();
     paymentCtrl = TextEditingController();
     notesCtrl = TextEditingController();
+    cashReceivedCtrl = TextEditingController();
     final token = ref.read(staffTokenProvider);
     if (token != null) {
       _future = ref.read(apiProvider).staffOrderDetail(token, widget.orderId);
@@ -13479,6 +13687,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
     phoneCtrl.dispose();
     paymentCtrl.dispose();
     notesCtrl.dispose();
+    cashReceivedCtrl.dispose();
     super.dispose();
   }
 
@@ -13488,6 +13697,11 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
   }
 
   Future<void> _save(String token) async {
+    final isCash = paymentCtrl.text.trim() == 'cash';
+    final rawReceived = cashReceivedCtrl.text.trim().replaceAll(',', '.');
+    final received = isCash && rawReceived.isNotEmpty ? num.tryParse(rawReceived) : null;
+    final change = (received != null && received > _orderTotal) ? received - _orderTotal : (received != null ? 0 : null);
+    final due = (received != null && received < _orderTotal) ? _orderTotal - received : (received != null ? 0 : null);
     final payload = StaffOrderUpdatePayload(
       customerName: nameCtrl.text.trim(),
       customerEmail: emailCtrl.text.trim().isEmpty
@@ -13501,6 +13715,9 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
           : paymentCtrl.text.trim(),
       status: status,
       notes: notesCtrl.text.trim().isEmpty ? null : notesCtrl.text.trim(),
+      cashReceivedAmount: received,
+      cashChangeAmount: change,
+      cashDueAmount: due,
     );
     if (payload.customerName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -13554,7 +13771,11 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
           phoneCtrl.text = order.customerPhone ?? '';
           paymentCtrl.text = order.paymentMethod;
           notesCtrl.text = order.notes ?? '';
+          cashReceivedCtrl.text = order.cashReceivedAmount != null
+              ? formatEuroAmount(order.cashReceivedAmount!)
+              : '';
           status = order.status;
+          _orderTotal = order.totalAmount;
         }
 
         return ListView(
@@ -13577,7 +13798,10 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                   'Entregue: ${formatEuroAmount(order.cashReceivedAmount!)}€',
                 ),
               if ((order.cashChangeAmount ?? 0) > 0)
-                Text('Troco: ${formatEuroAmount(order.cashChangeAmount!)}€'),
+                Text(
+                  'Troco a devolver: ${formatEuroAmount(order.cashChangeAmount!)}€ (Studio deve ao cliente)',
+                  style: const TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.w600),
+                ),
               if ((order.cashDueAmount ?? 0) > 0)
                 Text('Em falta: ${formatEuroAmount(order.cashDueAmount!)}€'),
               if (order.productType != null) ...[
@@ -13669,6 +13893,39 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                     ],
                   ),
                 ),
+              if (canWrite && order.paymentMethod == 'cash' && order.status != 'pending')
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      final edit = await promptCashOrderEdit(
+                        context,
+                        totalAmount: order.totalAmount,
+                        currentStatus: order.status,
+                        currentReceived: order.cashReceivedAmount,
+                        currentNotes: order.notes,
+                      );
+                      if (edit == null || !context.mounted) return;
+                      await ref.read(apiProvider).updateOrder(
+                        token,
+                        order.id,
+                        StaffOrderUpdatePayload(
+                          customerName: order.customerName,
+                          status: edit.status,
+                          paymentMethod: order.paymentMethod,
+                          notes: edit.notes,
+                          cashReceivedAmount: edit.receivedAmount,
+                          cashChangeAmount: edit.changeAmount,
+                          cashDueAmount: edit.dueAmount,
+                        ),
+                      );
+                      if (!context.mounted) return;
+                      setState(() => _loadDetail(token));
+                    },
+                    icon: const Icon(Icons.edit, size: 16),
+                    label: const Text('Editar pagamento'),
+                  ),
+                ),
             ] else ...[
               TextField(
                 controller: nameCtrl,
@@ -13723,10 +13980,55 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                 ],
                 onChanged: (v) => setState(() => status = v ?? status),
                 decoration: const InputDecoration(
-                  labelText: 'Status',
+                  labelText: 'Estado',
                   border: OutlineInputBorder(),
                 ),
               ),
+              if (order.paymentMethod == 'cash') ...[
+                const SizedBox(height: 8),
+                StatefulBuilder(
+                  builder: (_, setInner) {
+                    final raw = cashReceivedCtrl.text.trim().replaceAll(',', '.');
+                    final received = num.tryParse(raw);
+                    final change = received != null && received > order.totalAmount
+                        ? received - order.totalAmount
+                        : 0;
+                    final due = received != null && received < order.totalAmount
+                        ? order.totalAmount - received
+                        : 0;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextField(
+                          controller: cashReceivedCtrl,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          onChanged: (_) => setInner(() {}),
+                          decoration: const InputDecoration(
+                            labelText: 'Dinheiro recebido (€)',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        if (received != null) ...[
+                          Text('Total: €${formatEuroAmount(order.totalAmount)}'),
+                          if (change > 0)
+                            Text(
+                              'Troco a devolver ao cliente: €${formatEuroAmount(change)}',
+                              style: const TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.w600),
+                            ),
+                          if (due > 0)
+                            Text(
+                              'Falta receber: €${formatEuroAmount(due)}',
+                              style: const TextStyle(color: Colors.redAccent),
+                            ),
+                          if (change == 0 && due == 0)
+                            const Text('Pagamento exato.', style: TextStyle(color: Colors.lightGreenAccent)),
+                        ],
+                      ],
+                    );
+                  },
+                ),
+              ],
               const SizedBox(height: 12),
               FilledButton(
                 onPressed: saving ? null : () => _save(token),
@@ -17996,6 +18298,9 @@ class StaffOrderUpdatePayload {
     this.customerPhone,
     this.paymentMethod,
     this.notes,
+    this.cashReceivedAmount,
+    this.cashChangeAmount,
+    this.cashDueAmount,
   });
   final String customerName;
   final String status;
@@ -18003,6 +18308,9 @@ class StaffOrderUpdatePayload {
   final String? customerPhone;
   final String? paymentMethod;
   final String? notes;
+  final num? cashReceivedAmount;
+  final num? cashChangeAmount;
+  final num? cashDueAmount;
 
   Map<String, dynamic> toJson() => {
     'customer_name': customerName,
@@ -18011,6 +18319,9 @@ class StaffOrderUpdatePayload {
     'payment_method': paymentMethod,
     'status': status,
     'notes': notes,
+    if (cashReceivedAmount != null) 'cash_received_amount': cashReceivedAmount,
+    if (cashChangeAmount != null) 'cash_change_amount': cashChangeAmount,
+    if (cashDueAmount != null) 'cash_due_amount': cashDueAmount,
   };
 }
 

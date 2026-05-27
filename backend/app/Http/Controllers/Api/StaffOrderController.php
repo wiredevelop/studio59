@@ -144,11 +144,26 @@ class StaffOrderController extends Controller
             'customer_email' => ['nullable', 'email', 'max:255'],
             'customer_phone' => ['nullable', 'string', 'max:50'],
             'payment_method' => ['nullable', 'string', 'max:50'],
-            'status' => ['required', Rule::in(['pending', 'paid'])],
+            'status' => ['required', Rule::in(['pending', 'paid', 'delivered'])],
             'notes' => ['nullable', 'string', 'max:2000'],
+            'cash_received_amount' => ['nullable', 'numeric', 'min:0'],
+            'cash_change_amount' => ['nullable', 'numeric', 'min:0'],
+            'cash_due_amount' => ['nullable', 'numeric', 'min:0'],
         ]);
 
-        $order->update($validated);
+        $updateData = collect($validated)->except(['cash_received_amount', 'cash_change_amount', 'cash_due_amount'])->toArray();
+        if (($order->payment_method === 'cash' || ($validated['payment_method'] ?? null) === 'cash')) {
+            if (array_key_exists('cash_received_amount', $validated)) {
+                $updateData['cash_received_amount'] = $validated['cash_received_amount'];
+            }
+            if (array_key_exists('cash_change_amount', $validated)) {
+                $updateData['cash_change_amount'] = $validated['cash_change_amount'];
+            }
+            if (array_key_exists('cash_due_amount', $validated)) {
+                $updateData['cash_due_amount'] = $validated['cash_due_amount'];
+            }
+        }
+        $order->update($updateData);
         Audit::log('api.order.updated', Order::class, $order->id, ['status' => $order->status]);
 
         return $this->show($order->fresh());
