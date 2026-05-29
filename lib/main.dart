@@ -226,7 +226,9 @@ Future<CashOrderEdit?> promptCashOrderEdit(
   String? currentNotes,
 }) async {
   final ctrl = TextEditingController(
-    text: currentReceived != null ? formatEuroAmount(currentReceived) : formatEuroAmount(totalAmount),
+    text: currentReceived != null
+        ? formatEuroAmount(currentReceived)
+        : formatEuroAmount(totalAmount),
   );
   final notesCtrl = TextEditingController(text: currentNotes ?? '');
   String status = currentStatus;
@@ -250,7 +252,9 @@ Future<CashOrderEdit?> promptCashOrderEdit(
                   const SizedBox(height: 12),
                   TextField(
                     controller: ctrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(
                       labelText: 'Dinheiro recebido',
                       border: OutlineInputBorder(),
@@ -261,10 +265,12 @@ Future<CashOrderEdit?> promptCashOrderEdit(
                   if (change > 0)
                     Text(
                       'Troco a devolver ao cliente: €${formatEuroAmount(change)}',
-                      style: const TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.w600),
+                      style: const TextStyle(
+                        color: Colors.orangeAccent,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  if (due > 0)
-                    Text('Falta receber: €${formatEuroAmount(due)}'),
+                  if (due > 0) Text('Falta receber: €${formatEuroAmount(due)}'),
                   const SizedBox(height: 12),
                   TextField(
                     controller: notesCtrl,
@@ -278,9 +284,15 @@ Future<CashOrderEdit?> promptCashOrderEdit(
                   DropdownButtonFormField<String>(
                     value: status,
                     items: const [
-                      DropdownMenuItem(value: 'pending', child: Text('Pendente')),
+                      DropdownMenuItem(
+                        value: 'pending',
+                        child: Text('Pendente'),
+                      ),
                       DropdownMenuItem(value: 'paid', child: Text('Pago')),
-                      DropdownMenuItem(value: 'delivered', child: Text('Entregue')),
+                      DropdownMenuItem(
+                        value: 'delivered',
+                        child: Text('Entregue'),
+                      ),
                     ],
                     onChanged: (v) => setState(() => status = v ?? status),
                     decoration: const InputDecoration(
@@ -303,7 +315,9 @@ Future<CashOrderEdit?> promptCashOrderEdit(
                       changeAmount: change,
                       dueAmount: due,
                       status: status,
-                      notes: notesCtrl.text.trim().isEmpty ? null : notesCtrl.text.trim(),
+                      notes: notesCtrl.text.trim().isEmpty
+                          ? null
+                          : notesCtrl.text.trim(),
                     ),
                   ),
                   child: const Text('Guardar'),
@@ -473,12 +487,15 @@ class AppRuntimeConfig {
     stripeUrlScheme:
         (json['stripe_url_scheme'] as String? ?? defaults.stripeUrlScheme)
             .trim(),
-    stripePercentFee: (json['stripe_percent_fee'] as num?)?.toDouble() ??
+    stripePercentFee:
+        (json['stripe_percent_fee'] as num?)?.toDouble() ??
         defaults.stripePercentFee,
     stripeFixedFee:
-        (json['stripe_fixed_fee'] as num?)?.toDouble() ?? defaults.stripeFixedFee,
+        (json['stripe_fixed_fee'] as num?)?.toDouble() ??
+        defaults.stripeFixedFee,
     commissionRate:
-        (json['commission_rate'] as num?)?.toDouble() ?? defaults.commissionRate,
+        (json['commission_rate'] as num?)?.toDouble() ??
+        defaults.commissionRate,
   );
 
   AppRuntimeConfig copyWith({
@@ -2677,6 +2694,137 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
     }
   }
 
+  Widget _checkoutSection({
+    required String title,
+    String? subtitle,
+    required Widget child,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: kDeskCard,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: kBrandRose.withOpacity(0.18)),
+        boxShadow: [
+          BoxShadow(
+            color: kBrandRose.withOpacity(0.08),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          ),
+          if (subtitle != null && subtitle.trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: const TextStyle(color: kDeskMuted, fontSize: 12),
+            ),
+          ],
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _checkoutChoiceTile({
+    required String title,
+    String? subtitle,
+    required bool selected,
+    required VoidCallback onTap,
+    Widget? leading,
+    Widget? trailing,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: selected ? kBrandRose.withOpacity(0.12) : kDeskCardAlt,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: selected
+                  ? kBrandRose.withOpacity(0.7)
+                  : kBrandRose.withOpacity(0.16),
+            ),
+          ),
+          child: Row(
+            children: [
+              if (leading != null) ...[leading, const SizedBox(width: 12)],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: selected ? Colors.white : Colors.white70,
+                      ),
+                    ),
+                    if (subtitle != null && subtitle.trim().isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          color: kDeskMuted,
+                          fontSize: 12,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              trailing ??
+                  Icon(
+                    selected
+                        ? Icons.check_circle
+                        : Icons.radio_button_unchecked,
+                    color: selected ? kBrandRose : kDeskMuted,
+                  ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _checkoutSummaryRow(
+    String label,
+    String value, {
+    bool strong = false,
+    Color? valueColor,
+  }) {
+    final textStyle = TextStyle(
+      fontSize: strong ? 15 : 13,
+      fontWeight: strong ? FontWeight.w700 : FontWeight.w500,
+      color: strong ? Colors.white : Colors.white70,
+    );
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: textStyle),
+        Text(
+          value,
+          style: textStyle.copyWith(color: valueColor ?? textStyle.color),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final cart = ref.watch(cartProvider);
@@ -2696,7 +2844,6 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
     final total = itemsTotal + extrasTotal;
     final appConfig = ref.watch(appRuntimeConfigProvider);
     final offlineCheckout = looksLikeLocalApiBaseUrl(appConfig.apiBaseUrl);
-    const requiresEmail = false;
     final isOnlinePayment = paymentMethod == 'online';
     final processingFee = isOnlinePayment
         ? double.parse(
@@ -2727,664 +2874,862 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
     }
     return Scaffold(
       appBar: buildNavAppBar(context, 'Checkout'),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text('Fotos selecionadas: ${items.length}'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: nameCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Nome',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: phoneCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Telemóvel',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 8),
-            if (productType != 'paper') ...[
-              TextField(
-                controller: emailCtrl,
-                keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 8),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              kBrandRose.withOpacity(0.06),
+              Colors.transparent,
+              Colors.transparent,
             ],
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Produto',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-            CheckboxListTile(
-              value: productType == 'digital',
-              onChanged: (_) => setState(() {
-                productType = 'digital';
-                deliveryType = null;
-              }),
-              title: const Text('Digital'),
-            ),
-            CheckboxListTile(
-              value: productType == 'paper',
-              onChanged: (_) => setState(() {
-                productType = 'paper';
-                deliveryType = deliveryType ?? 'pickup';
-              }),
-              title: const Text('Papel'),
-            ),
-            CheckboxListTile(
-              value: productType == 'both',
-              onChanged: (_) => setState(() {
-                productType = 'both';
-                deliveryType = deliveryType ?? 'pickup';
-              }),
-              title: const Text('Ambos'),
-            ),
-            if (productType != 'digital') ...[
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Entrega',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-              CheckboxListTile(
-                value: deliveryType == 'pickup',
-                onChanged: (_) => setState(() => deliveryType = 'pickup'),
-                title: Text(
-                  eventType == 'batizado'
-                      ? 'Entregar aos pais do bebé'
-                      : 'Entregar aos noivos',
-                ),
-              ),
-              CheckboxListTile(
-                value: deliveryType == 'shipping',
-                onChanged: (_) => setState(() => deliveryType = 'shipping'),
-                title: const Text('Enviar por correio (+5€)'),
-              ),
-              if (deliveryType == 'shipping') ...[
-                const SizedBox(height: 8),
-                TextField(
-                  controller: addressCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Morada para envio',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ],
-            ],
-            if (filmEligible) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(wantsFilm ? 'Filme: Sim (+30€)' : 'Filme: Não'),
-              ),
-            ],
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Pagamento',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-            CheckboxListTile(
-              value: paymentMethod == 'cash',
-              onChanged: (_) => setState(() => paymentMethod = 'cash'),
-              title: const Text('Dinheiro (com fotógrafo)'),
-            ),
-            if (!offlineCheckout)
-              CheckboxListTile(
-                value: paymentMethod == 'online',
-                onChanged: (_) => setState(() => paymentMethod = 'online'),
-                title: const Text('Pagamento online (Stripe)'),
-                subtitle: _paymentBadges(),
-              ),
-            if (paymentMethod == 'online') ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Método online',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-              const SizedBox(height: 6),
-              ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: onlineOptions.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final option = onlineOptions[index];
-                  return ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                    leading: _paymentMethodIcon(option.id),
-                    title: Text(option.label),
-                    subtitle: option.opensWeb
-                        ? const Text('Abre no navegador')
-                        : null,
-                    trailing: Radio<String>(
-                      value: option.id,
-                      groupValue: onlineMethod,
-                      onChanged: (value) =>
-                          setState(() => onlineMethod = value ?? option.id),
-                    ),
-                    onTap: () => setState(() => onlineMethod = option.id),
-                  );
-                },
-              ),
-              if (onlineMethod == 'card' && Platform.isIOS) ...[
-                const SizedBox(height: 12),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Dados do cartão',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                stripe.CardFormField(
-                  controller: _cardFormController,
-                  style: stripe.CardFormStyle(
-                    backgroundColor: const Color(0xFF1C1C1C),
-                    textColor: Colors.white,
-                    placeholderColor: Colors.white38,
-                    fontSize: 16,
-                    borderColor: kBrandRose,
-                    borderWidth: 1,
-                    borderRadius: 12,
-                  ),
-                  onCardChanged: (details) {
-                    final complete = details?.complete ?? false;
-                    if (_cardComplete != complete) {
-                      setState(() => _cardComplete = complete);
-                    }
-                  },
-                ),
-              ],
-            ],
-            const SizedBox(height: 16),
-            if (isOnlinePayment) ...[
+          ),
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          child: Column(
+            children: [
               Container(
-                padding: const EdgeInsets.all(12),
+                width: double.infinity,
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
-                  color: kBrandRose.withOpacity(0.07),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: kBrandRose.withOpacity(0.3)),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: kBrandRose.withOpacity(0.2)),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [kDeskCardAlt, kDeskCard],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: kBrandRose.withOpacity(0.1),
+                      blurRadius: 26,
+                      offset: const Offset(0, 14),
+                    ),
+                  ],
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Subtotal'),
-                        Text('€${total.toStringAsFixed(2)}'),
-                      ],
+                    Text(
+                      session?.eventName ?? 'Resumo do pedido',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                    const SizedBox(height: 4),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
                       children: [
-                        Text(
-                          'Taxa Stripe (${appConfig.stripePercentFee.toStringAsFixed(1)}% + €${appConfig.stripeFixedFee.toStringAsFixed(2)})',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.white60,
+                        _DeskStatusBadge(
+                          '${items.length} foto${items.length == 1 ? '' : 's'}',
+                        ),
+                        _DeskStatusBadge(
+                          '€${pricePerPhoto.toStringAsFixed(2)}/foto',
+                          color: Colors.lightBlueAccent,
+                        ),
+                        if (filmEligible && wantsFilm)
+                          _DeskStatusBadge(
+                            'Filme +€30',
+                            color: Colors.orangeAccent,
                           ),
-                        ),
-                        Text(
-                          '+€${processingFee.toStringAsFixed(2)}',
-                          style: const TextStyle(fontSize: 12),
-                        ),
+                        if (deliveryType == 'shipping')
+                          _DeskStatusBadge(
+                            'Envio +€5',
+                            color: Colors.amberAccent,
+                          ),
                       ],
                     ),
-                    const Divider(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Total',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        Text(
-                          '€${totalWithFee.toStringAsFixed(2)}',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ],
+                    const SizedBox(height: 16),
+                    _checkoutSummaryRow(
+                      'Total atual',
+                      '€${(isOnlinePayment ? totalWithFee : total).toStringAsFixed(2)}',
+                      strong: true,
+                      valueColor: kBrandRose,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      isOnlinePayment
+                          ? 'Inclui taxa Stripe.'
+                          : 'Pagamento simples e rápido no local.',
+                      style: const TextStyle(color: kDeskMuted, fontSize: 12),
                     ),
                   ],
                 ),
               ),
-            ] else ...[
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Total: €${total.toStringAsFixed(2)}',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
+              const SizedBox(height: 16),
+              _checkoutSection(
+                title: 'Dados do cliente',
+                subtitle: 'Preenche os dados para associar o pedido.',
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Nome',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: phoneCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Telemóvel',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    if (productType != 'paper') ...[
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: emailCtrl,
+                        keyboardType: TextInputType.emailAddress,
+                        decoration: const InputDecoration(
+                          labelText: 'Email',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              _checkoutSection(
+                title: 'Produto',
+                subtitle: 'Escolhe o formato final do pedido.',
+                child: Column(
+                  children: [
+                    _checkoutChoiceTile(
+                      title: 'Digital',
+                      subtitle: 'Entrega por link para download.',
+                      selected: productType == 'digital',
+                      onTap: () => setState(() {
+                        productType = 'digital';
+                        deliveryType = null;
+                      }),
+                      leading: const Icon(
+                        Icons.cloud_download_outlined,
+                        color: kBrandRose,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _checkoutChoiceTile(
+                      title: 'Papel',
+                      subtitle: 'Levantamento ou envio.',
+                      selected: productType == 'paper',
+                      onTap: () => setState(() {
+                        productType = 'paper';
+                        deliveryType = deliveryType ?? 'pickup';
+                      }),
+                      leading: const Icon(
+                        Icons.print_outlined,
+                        color: kBrandRose,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _checkoutChoiceTile(
+                      title: 'Ambos',
+                      subtitle: 'Recebes digital e papel.',
+                      selected: productType == 'both',
+                      onTap: () => setState(() {
+                        productType = 'both';
+                        deliveryType = deliveryType ?? 'pickup';
+                      }),
+                      leading: const Icon(
+                        Icons.layers_outlined,
+                        color: kBrandRose,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (productType != 'digital') ...[
+                const SizedBox(height: 16),
+                _checkoutSection(
+                  title: 'Entrega',
+                  subtitle: 'Define como o pedido em papel será entregue.',
+                  child: Column(
+                    children: [
+                      _checkoutChoiceTile(
+                        title: eventType == 'batizado'
+                            ? 'Entregar aos pais do bebé'
+                            : 'Entregar aos noivos',
+                        subtitle: 'Sem custo adicional.',
+                        selected: deliveryType == 'pickup',
+                        onTap: () => setState(() => deliveryType = 'pickup'),
+                        leading: const Icon(
+                          Icons.handshake_outlined,
+                          color: kBrandRose,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _checkoutChoiceTile(
+                        title: 'Enviar por correio',
+                        subtitle: 'Acresce €5.00 ao total.',
+                        selected: deliveryType == 'shipping',
+                        onTap: () => setState(() => deliveryType = 'shipping'),
+                        leading: const Icon(
+                          Icons.local_shipping_outlined,
+                          color: kBrandRose,
+                        ),
+                      ),
+                      if (deliveryType == 'shipping') ...[
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: addressCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Morada para envio',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+              if (filmEligible) ...[
+                const SizedBox(height: 16),
+                _checkoutSection(
+                  title: 'Filme',
+                  subtitle: 'Opção definida no catálogo do evento.',
+                  child: _checkoutChoiceTile(
+                    title: wantsFilm ? 'Filme incluído' : 'Sem filme',
+                    subtitle: wantsFilm
+                        ? 'Extra aplicado: €30.00'
+                        : 'Nenhum custo adicional.',
+                    selected: wantsFilm,
+                    onTap: () {},
+                    leading: Icon(
+                      wantsFilm
+                          ? Icons.movie_creation_outlined
+                          : Icons.hide_image_outlined,
+                      color: kBrandRose,
+                    ),
+                    trailing: Text(
+                      wantsFilm ? '+€30' : '€0',
+                      style: const TextStyle(
+                        color: kBrandRose,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              _checkoutSection(
+                title: 'Pagamento',
+                subtitle: offlineCheckout
+                    ? 'Modo offline ativo. Só pagamento em dinheiro.'
+                    : 'Escolhe como queres concluir o pedido.',
+                child: Column(
+                  children: [
+                    _checkoutChoiceTile(
+                      title: 'Dinheiro',
+                      subtitle: 'Pagamento direto com o fotógrafo.',
+                      selected: paymentMethod == 'cash',
+                      onTap: () => setState(() => paymentMethod = 'cash'),
+                      leading: const Icon(
+                        Icons.payments_outlined,
+                        color: kBrandRose,
+                      ),
+                    ),
+                    if (!offlineCheckout) ...[
+                      const SizedBox(height: 10),
+                      _checkoutChoiceTile(
+                        title: 'Pagamento online',
+                        subtitle: 'Stripe com cartão e métodos locais.',
+                        selected: paymentMethod == 'online',
+                        onTap: () => setState(() => paymentMethod = 'online'),
+                        leading: const Icon(
+                          Icons.lock_outline,
+                          color: kBrandRose,
+                        ),
+                        trailing: const Icon(
+                          Icons.chevron_right,
+                          color: kBrandRose,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: _paymentBadges(),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (paymentMethod == 'online') ...[
+                const SizedBox(height: 16),
+                _checkoutSection(
+                  title: 'Método online',
+                  subtitle: 'Seleciona a opção preferida.',
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < onlineOptions.length; i++) ...[
+                        if (i > 0) const SizedBox(height: 10),
+                        _checkoutChoiceTile(
+                          title: onlineOptions[i].label,
+                          subtitle: onlineOptions[i].opensWeb
+                              ? 'Abre no navegador'
+                              : 'Pagamento dentro da app',
+                          selected: onlineMethod == onlineOptions[i].id,
+                          onTap: () => setState(
+                            () => onlineMethod = onlineOptions[i].id,
+                          ),
+                          leading: _paymentMethodIcon(onlineOptions[i].id),
+                        ),
+                      ],
+                      if (onlineMethod == 'card' && Platform.isIOS) ...[
+                        const SizedBox(height: 14),
+                        stripe.CardFormField(
+                          controller: _cardFormController,
+                          style: stripe.CardFormStyle(
+                            backgroundColor: const Color(0xFF1C1C1C),
+                            textColor: Colors.white,
+                            placeholderColor: Colors.white38,
+                            fontSize: 16,
+                            borderColor: kBrandRose,
+                            borderWidth: 1,
+                            borderRadius: 12,
+                          ),
+                          onCardChanged: (details) {
+                            final complete = details?.complete ?? false;
+                            if (_cardComplete != complete) {
+                              setState(() => _cardComplete = complete);
+                            }
+                          },
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              _checkoutSection(
+                title: 'Resumo',
+                subtitle: 'Confirma os valores antes de submeter.',
+                child: Column(
+                  children: [
+                    _checkoutSummaryRow(
+                      'Fotos',
+                      '€${itemsTotal.toStringAsFixed(2)}',
+                    ),
+                    if (filmFee > 0) ...[
+                      const SizedBox(height: 8),
+                      _checkoutSummaryRow(
+                        'Filme',
+                        '+€${filmFee.toStringAsFixed(2)}',
+                      ),
+                    ],
+                    if (shippingFee > 0) ...[
+                      const SizedBox(height: 8),
+                      _checkoutSummaryRow(
+                        'Envio',
+                        '+€${shippingFee.toStringAsFixed(2)}',
+                      ),
+                    ],
+                    if (isOnlinePayment) ...[
+                      const SizedBox(height: 8),
+                      _checkoutSummaryRow(
+                        'Taxa Stripe',
+                        '+€${processingFee.toStringAsFixed(2)}',
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Divider(color: kBrandRose.withOpacity(0.2), height: 1),
+                    const SizedBox(height: 12),
+                    _checkoutSummaryRow(
+                      'Total',
+                      '€${(isOnlinePayment ? totalWithFee : total).toStringAsFixed(2)}',
+                      strong: true,
+                      valueColor: kBrandRose,
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: items.isEmpty || isSubmitting
+                            ? null
+                            : () async {
+                                String? sessionToken;
+                                try {
+                                  setState(() => isSubmitting = true);
+                                  final session = ref.read(
+                                    guestSessionProvider,
+                                  );
+                                  if (session == null) return;
+                                  sessionToken = session.token;
+                                  if (nameCtrl.text.trim().isEmpty ||
+                                      phoneCtrl.text.trim().isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Nome e telemóvel são obrigatórios.',
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  final email = emailCtrl.text.trim();
+                                  if (productType != 'paper' && email.isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Email é obrigatório para produto digital.',
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  if (email.isNotEmpty &&
+                                      !RegExp(
+                                        r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                                      ).hasMatch(email)) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Email invalido. Exemplo: nome@email.com',
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  if (productType != 'digital' &&
+                                      deliveryType == null) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Escolhe o tipo de entrega.',
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  if (deliveryType == 'shipping' &&
+                                      addressCtrl.text.trim().isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Morada obrigatória para envio.',
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
+
+                                  if (paymentMethod == 'online') {
+                                    if (!Platform.isAndroid &&
+                                        !Platform.isIOS) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Pagamento online disponível apenas no telemóvel (Android/iOS).',
+                                          ),
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    if (onlineMethod == 'card' &&
+                                        Platform.isIOS &&
+                                        !_cardComplete) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Preenche os dados do cartão.',
+                                          ),
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    if (kOnlineWebMethods.contains(
+                                      onlineMethod,
+                                    )) {
+                                      final checkout = await ref
+                                          .read(apiProvider)
+                                          .createStripeCheckoutSession(
+                                            eventId: widget.eventId,
+                                            token: session.token,
+                                            customerName: nameCtrl.text.trim(),
+                                            phone: phoneCtrl.text.trim(),
+                                            email: email,
+                                            photoItems: items
+                                                .map(
+                                                  (i) => CartItemPayload(
+                                                    photoId: i.photoId,
+                                                    quantity: i.quantity,
+                                                  ),
+                                                )
+                                                .toList(),
+                                            productType: productType,
+                                            deliveryType: deliveryType,
+                                            deliveryAddress: addressCtrl.text
+                                                .trim(),
+                                            wantsFilm: wantsFilm,
+                                            paymentMethodType: onlineMethod,
+                                            processingFee: processingFee,
+                                          );
+                                      if (checkout.checkoutUrl.isEmpty) {
+                                        throw Exception(
+                                          'Pagamento online indisponível de momento.',
+                                        );
+                                      }
+                                      final uri = Uri.tryParse(
+                                        checkout.checkoutUrl,
+                                      );
+                                      if (uri == null) {
+                                        throw Exception(
+                                          'URL de pagamento inválido.',
+                                        );
+                                      }
+                                      final opened = await launchUrl(
+                                        uri,
+                                        mode: LaunchMode.externalApplication,
+                                      );
+                                      if (!opened) {
+                                        throw Exception(
+                                          'Não foi possível abrir o navegador.',
+                                        );
+                                      }
+                                      await ref
+                                          .read(savedOrdersProvider.notifier)
+                                          .add(checkout.orderCode);
+                                      if (!context.mounted) return;
+                                      Navigator.pushAndRemoveUntil(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => TicketPage(
+                                            orderCode: checkout.orderCode,
+                                            autoClose: true,
+                                          ),
+                                        ),
+                                        (route) => route.isFirst,
+                                      );
+                                      return;
+                                    }
+                                    final intent = await ref
+                                        .read(apiProvider)
+                                        .createStripeIntent(
+                                          eventId: widget.eventId,
+                                          token: session.token,
+                                          customerName: nameCtrl.text.trim(),
+                                          phone: phoneCtrl.text.trim(),
+                                          email: email,
+                                          photoItems: items
+                                              .map(
+                                                (i) => CartItemPayload(
+                                                  photoId: i.photoId,
+                                                  quantity: i.quantity,
+                                                ),
+                                              )
+                                              .toList(),
+                                          productType: productType,
+                                          deliveryType: deliveryType,
+                                          deliveryAddress: addressCtrl.text
+                                              .trim(),
+                                          wantsFilm: wantsFilm,
+                                          processingFee: processingFee,
+                                        );
+                                    stripe.Stripe.publishableKey =
+                                        intent.publishableKey;
+                                    if (appConfig.enablePlatformPay &&
+                                        Platform.isIOS) {
+                                      stripe.Stripe.merchantIdentifier =
+                                          appConfig.applePayMerchantId;
+                                    }
+                                    stripe.Stripe.urlScheme =
+                                        appConfig.stripeUrlScheme;
+                                    await stripe.Stripe.instance
+                                        .applySettings();
+                                    final isTestKey = intent.publishableKey
+                                        .startsWith('pk_test_');
+                                    if (onlineMethod == 'card') {
+                                      if (Platform.isIOS) {
+                                        var confirmed = await stripe
+                                            .Stripe
+                                            .instance
+                                            .confirmPayment(
+                                              paymentIntentClientSecret:
+                                                  intent.clientSecret,
+                                              data: stripe.PaymentMethodParams.card(
+                                                paymentMethodData:
+                                                    stripe.PaymentMethodData(
+                                                      billingDetails:
+                                                          stripe.BillingDetails(
+                                                            name: nameCtrl.text
+                                                                .trim(),
+                                                            email: email,
+                                                            phone: phoneCtrl
+                                                                .text
+                                                                .trim(),
+                                                          ),
+                                                    ),
+                                              ),
+                                            );
+                                        if (confirmed.status ==
+                                            stripe
+                                                .PaymentIntentsStatus
+                                                .RequiresAction) {
+                                          confirmed = await stripe
+                                              .Stripe
+                                              .instance
+                                              .handleNextAction(
+                                                intent.clientSecret,
+                                                returnURL:
+                                                    '${appConfig.stripeUrlScheme}://redirect',
+                                              );
+                                        }
+                                      } else {
+                                        await stripe.Stripe.instance.initPaymentSheet(
+                                          paymentSheetParameters:
+                                              stripe.SetupPaymentSheetParameters(
+                                                paymentIntentClientSecret:
+                                                    intent.clientSecret,
+                                                merchantDisplayName:
+                                                    'Studio 59',
+                                                returnURL:
+                                                    '${appConfig.stripeUrlScheme}://redirect',
+                                                style: ThemeMode.dark,
+                                              ),
+                                        );
+                                        await stripe.Stripe.instance
+                                            .presentPaymentSheet();
+                                      }
+                                    } else if (onlineMethod == 'apple_pay') {
+                                      if (!Platform.isIOS) {
+                                        throw Exception(
+                                          'Apple Pay só está disponível em iOS.',
+                                        );
+                                      }
+                                      final platformPaySupported = await stripe
+                                          .Stripe
+                                          .instance
+                                          .isPlatformPaySupported(
+                                            googlePay:
+                                                stripe.IsGooglePaySupportedParams(
+                                                  testEnv: isTestKey,
+                                                  existingPaymentMethodRequired:
+                                                      false,
+                                                ),
+                                          );
+                                      if (!platformPaySupported) {
+                                        throw Exception(
+                                          'Apple Pay não está disponível neste dispositivo.',
+                                        );
+                                      }
+                                      await stripe.Stripe.instance
+                                          .confirmPlatformPayPaymentIntent(
+                                            clientSecret: intent.clientSecret,
+                                            confirmParams:
+                                                stripe
+                                                    .PlatformPayConfirmParams.applePay(
+                                                  applePay: stripe.ApplePayParams(
+                                                    merchantCountryCode:
+                                                        appConfig
+                                                            .merchantCountryCode,
+                                                    currencyCode: 'EUR',
+                                                    cartItems: [
+                                                      stripe
+                                                          .ApplePayCartSummaryItem.immediate(
+                                                        label: 'Studio 59',
+                                                        amount: total
+                                                            .toStringAsFixed(2),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                          );
+                                    } else if (onlineMethod == 'google_pay') {
+                                      if (!Platform.isAndroid) {
+                                        throw Exception(
+                                          'Google Pay só está disponível em Android.',
+                                        );
+                                      }
+                                      final platformPaySupported = await stripe
+                                          .Stripe
+                                          .instance
+                                          .isPlatformPaySupported(
+                                            googlePay:
+                                                stripe.IsGooglePaySupportedParams(
+                                                  testEnv: isTestKey,
+                                                  existingPaymentMethodRequired:
+                                                      false,
+                                                ),
+                                          );
+                                      if (!platformPaySupported) {
+                                        throw Exception(
+                                          'Google Pay não está disponível neste dispositivo.',
+                                        );
+                                      }
+                                      await stripe.Stripe.instance
+                                          .confirmPlatformPayPaymentIntent(
+                                            clientSecret: intent.clientSecret,
+                                            confirmParams:
+                                                stripe
+                                                    .PlatformPayConfirmParams.googlePay(
+                                                  googlePay: stripe.GooglePayParams(
+                                                    testEnv: isTestKey,
+                                                    merchantCountryCode:
+                                                        appConfig
+                                                            .merchantCountryCode,
+                                                    currencyCode: 'EUR',
+                                                    merchantName: 'Studio 59',
+                                                  ),
+                                                ),
+                                          );
+                                    } else {
+                                      throw Exception(
+                                        'Método de pagamento inválido.',
+                                      );
+                                    }
+
+                                    final code = intent.orderCode;
+                                    await ref
+                                        .read(savedOrdersProvider.notifier)
+                                        .add(code);
+                                    ref.read(cartProvider.notifier).clear();
+                                    ref.read(wantsFilmProvider.notifier).state =
+                                        false;
+                                    if (!context.mounted) return;
+                                    Navigator.pushReplacement(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => TicketPage(
+                                          orderCode: code,
+                                          autoClose: true,
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
+
+                                  final code = await ref
+                                      .read(apiProvider)
+                                      .createOrder(
+                                        eventId: widget.eventId,
+                                        token: session.token,
+                                        customerName: nameCtrl.text.trim(),
+                                        phone: phoneCtrl.text.trim(),
+                                        email: email,
+                                        paymentMethod: 'cash',
+                                        photoItems: items
+                                            .map(
+                                              (i) => CartItemPayload(
+                                                photoId: i.photoId,
+                                                quantity: i.quantity,
+                                              ),
+                                            )
+                                            .toList(),
+                                        pricePerPhoto: pricePerPhoto,
+                                        productType: productType,
+                                        deliveryType: deliveryType,
+                                        deliveryAddress: addressCtrl.text
+                                            .trim(),
+                                        wantsFilm: wantsFilm,
+                                      );
+                                  await ref
+                                      .read(savedOrdersProvider.notifier)
+                                      .add(code);
+                                  ref.read(cartProvider.notifier).clear();
+                                  ref.read(wantsFilmProvider.notifier).state =
+                                      false;
+                                  if (!context.mounted) return;
+                                  if (code.startsWith('OFF-')) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Sem internet. Pedido guardado para sincronizar.',
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  Navigator.pushReplacement(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => TicketPage(
+                                        orderCode: code,
+                                        autoClose: true,
+                                      ),
+                                    ),
+                                  );
+                                } on stripe.StripeException catch (e) {
+                                  if (!context.mounted) return;
+                                  final message =
+                                      e.error.localizedMessage ??
+                                      e.error.message ??
+                                      'Pagamento cancelado.';
+                                  final type = e.error.type;
+                                  final code = e.error.code;
+                                  final suffix = [type, code]
+                                      .where(
+                                        (v) =>
+                                            v != null &&
+                                            v.toString().isNotEmpty,
+                                      )
+                                      .join(' / ');
+                                  final fullMessage = suffix.isNotEmpty
+                                      ? '$message ($suffix)'
+                                      : message;
+                                  if (sessionToken != null) {
+                                    await ref
+                                        .read(apiProvider)
+                                        .logClientIssue(
+                                          token: sessionToken!,
+                                          message: 'stripe_exception',
+                                          context: {
+                                            'message': message,
+                                            'type': type?.toString(),
+                                            'code': code?.toString(),
+                                            'platform':
+                                                Platform.operatingSystem,
+                                            'release': kReleaseMode,
+                                          },
+                                        );
+                                  }
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text(fullMessage)),
+                                  );
+                                } catch (e) {
+                                  if (!context.mounted) return;
+                                  if (sessionToken != null) {
+                                    await ref
+                                        .read(apiProvider)
+                                        .logClientIssue(
+                                          token: sessionToken!,
+                                          message: 'payment_flow_error',
+                                          context: {
+                                            'error': e.toString(),
+                                            'platform':
+                                                Platform.operatingSystem,
+                                            'release': kReleaseMode,
+                                          },
+                                        );
+                                  }
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Erro ao submeter: $e'),
+                                    ),
+                                  );
+                                } finally {
+                                  if (mounted)
+                                    setState(() => isSubmitting = false);
+                                }
+                              },
+                        child: Text(
+                          isSubmitting ? 'A submeter...' : 'Submeter pedido',
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: items.isEmpty || isSubmitting
-                  ? null
-                  : () async {
-                      String? sessionToken;
-                      try {
-                        setState(() => isSubmitting = true);
-                        final session = ref.read(guestSessionProvider);
-                        if (session == null) return;
-                        sessionToken = session.token;
-                        if (nameCtrl.text.trim().isEmpty ||
-                            phoneCtrl.text.trim().isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Nome e telemóvel são obrigatórios.',
-                              ),
-                            ),
-                          );
-                          return;
-                        }
-                        final email = emailCtrl.text.trim();
-                        if (productType != 'paper' && email.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Email é obrigatório para produto digital.'),
-                            ),
-                          );
-                          return;
-                        }
-                        if (email.isNotEmpty &&
-                            !RegExp(
-                              r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
-                            ).hasMatch(email)) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Email invalido. Exemplo: nome@email.com',
-                              ),
-                            ),
-                          );
-                          return;
-                        }
-                        if (productType != 'digital' && deliveryType == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Escolhe o tipo de entrega.'),
-                            ),
-                          );
-                          return;
-                        }
-                        if (deliveryType == 'shipping' &&
-                            addressCtrl.text.trim().isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Morada obrigatória para envio.'),
-                            ),
-                          );
-                          return;
-                        }
-
-                        if (paymentMethod == 'online') {
-                          if (!Platform.isAndroid && !Platform.isIOS) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Pagamento online disponível apenas no telemóvel (Android/iOS).',
-                                ),
-                              ),
-                            );
-                            return;
-                          }
-                          if (onlineMethod == 'card' &&
-                              Platform.isIOS &&
-                              !_cardComplete) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Preenche os dados do cartão.'),
-                              ),
-                            );
-                            return;
-                          }
-                          if (kOnlineWebMethods.contains(onlineMethod)) {
-                            final checkout = await ref
-                                .read(apiProvider)
-                                .createStripeCheckoutSession(
-                                  eventId: widget.eventId,
-                                  token: session.token,
-                                  customerName: nameCtrl.text.trim(),
-                                  phone: phoneCtrl.text.trim(),
-                                  email: email,
-                                  photoItems: items
-                                      .map(
-                                        (i) => CartItemPayload(
-                                          photoId: i.photoId,
-                                          quantity: i.quantity,
-                                        ),
-                                      )
-                                      .toList(),
-                                  productType: productType,
-                                  deliveryType: deliveryType,
-                                  deliveryAddress: addressCtrl.text.trim(),
-                                  wantsFilm: wantsFilm,
-                                  paymentMethodType: onlineMethod,
-                                  processingFee: processingFee,
-                                );
-                            if (checkout.checkoutUrl.isEmpty) {
-                              throw Exception(
-                                'Pagamento online indisponível de momento.',
-                              );
-                            }
-                            final uri = Uri.tryParse(checkout.checkoutUrl);
-                            if (uri == null) {
-                              throw Exception('URL de pagamento inválido.');
-                            }
-                            final opened = await launchUrl(
-                              uri,
-                              mode: LaunchMode.externalApplication,
-                            );
-                            if (!opened) {
-                              throw Exception(
-                                'Não foi possível abrir o navegador.',
-                              );
-                            }
-                            await ref
-                                .read(savedOrdersProvider.notifier)
-                                .add(checkout.orderCode);
-                            if (!context.mounted) return;
-                            Navigator.pushAndRemoveUntil(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    TicketPage(orderCode: checkout.orderCode, autoClose: true),
-                              ),
-                              (route) => route.isFirst,
-                            );
-                            return;
-                          }
-                          final intent = await ref
-                              .read(apiProvider)
-                              .createStripeIntent(
-                                eventId: widget.eventId,
-                                token: session.token,
-                                customerName: nameCtrl.text.trim(),
-                                phone: phoneCtrl.text.trim(),
-                                email: email,
-                                photoItems: items
-                                    .map(
-                                      (i) => CartItemPayload(
-                                        photoId: i.photoId,
-                                        quantity: i.quantity,
-                                      ),
-                                    )
-                                    .toList(),
-                                productType: productType,
-                                deliveryType: deliveryType,
-                                deliveryAddress: addressCtrl.text.trim(),
-                                wantsFilm: wantsFilm,
-                                processingFee: processingFee,
-                              );
-                          stripe.Stripe.publishableKey = intent.publishableKey;
-                          if (appConfig.enablePlatformPay && Platform.isIOS) {
-                            stripe.Stripe.merchantIdentifier =
-                                appConfig.applePayMerchantId;
-                          }
-                          stripe.Stripe.urlScheme = appConfig.stripeUrlScheme;
-                          await stripe.Stripe.instance.applySettings();
-                          final isTestKey = intent.publishableKey.startsWith(
-                            'pk_test_',
-                          );
-                          if (onlineMethod == 'card') {
-                            if (Platform.isIOS) {
-                              var confirmed = await stripe.Stripe.instance
-                                  .confirmPayment(
-                                    paymentIntentClientSecret:
-                                        intent.clientSecret,
-                                    data: stripe.PaymentMethodParams.card(
-                                      paymentMethodData:
-                                          stripe.PaymentMethodData(
-                                            billingDetails:
-                                                stripe.BillingDetails(
-                                                  name: nameCtrl.text.trim(),
-                                                  email: email,
-                                                  phone: phoneCtrl.text.trim(),
-                                                ),
-                                          ),
-                                    ),
-                                  );
-                              if (confirmed.status ==
-                                  stripe.PaymentIntentsStatus.RequiresAction) {
-                                confirmed = await stripe.Stripe.instance
-                                    .handleNextAction(
-                                      intent.clientSecret,
-                                      returnURL:
-                                          '${appConfig.stripeUrlScheme}://redirect',
-                                    );
-                              }
-                            } else {
-                              await stripe.Stripe.instance.initPaymentSheet(
-                                paymentSheetParameters:
-                                    stripe.SetupPaymentSheetParameters(
-                                      paymentIntentClientSecret:
-                                          intent.clientSecret,
-                                      merchantDisplayName: 'Studio 59',
-                                      returnURL:
-                                          '${appConfig.stripeUrlScheme}://redirect',
-                                      style: ThemeMode.dark,
-                                    ),
-                              );
-                              await stripe.Stripe.instance
-                                  .presentPaymentSheet();
-                            }
-                          } else if (onlineMethod == 'apple_pay') {
-                            if (!Platform.isIOS) {
-                              throw Exception(
-                                'Apple Pay só está disponível em iOS.',
-                              );
-                            }
-                            final platformPaySupported = await stripe
-                                .Stripe
-                                .instance
-                                .isPlatformPaySupported(
-                                  googlePay: stripe.IsGooglePaySupportedParams(
-                                    testEnv: isTestKey,
-                                    existingPaymentMethodRequired: false,
-                                  ),
-                                );
-                            if (!platformPaySupported) {
-                              throw Exception(
-                                'Apple Pay não está disponível neste dispositivo.',
-                              );
-                            }
-                            await stripe.Stripe.instance
-                                .confirmPlatformPayPaymentIntent(
-                                  clientSecret: intent.clientSecret,
-                                  confirmParams:
-                                      stripe.PlatformPayConfirmParams.applePay(
-                                        applePay: stripe.ApplePayParams(
-                                          merchantCountryCode:
-                                              appConfig.merchantCountryCode,
-                                          currencyCode: 'EUR',
-                                          cartItems: [
-                                            stripe
-                                                .ApplePayCartSummaryItem.immediate(
-                                              label: 'Studio 59',
-                                              amount: total.toStringAsFixed(2),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                );
-                          } else if (onlineMethod == 'google_pay') {
-                            if (!Platform.isAndroid) {
-                              throw Exception(
-                                'Google Pay só está disponível em Android.',
-                              );
-                            }
-                            final platformPaySupported = await stripe
-                                .Stripe
-                                .instance
-                                .isPlatformPaySupported(
-                                  googlePay: stripe.IsGooglePaySupportedParams(
-                                    testEnv: isTestKey,
-                                    existingPaymentMethodRequired: false,
-                                  ),
-                                );
-                            if (!platformPaySupported) {
-                              throw Exception(
-                                'Google Pay não está disponível neste dispositivo.',
-                              );
-                            }
-                            await stripe.Stripe.instance
-                                .confirmPlatformPayPaymentIntent(
-                                  clientSecret: intent.clientSecret,
-                                  confirmParams:
-                                      stripe.PlatformPayConfirmParams.googlePay(
-                                        googlePay: stripe.GooglePayParams(
-                                          testEnv: isTestKey,
-                                          merchantCountryCode:
-                                              appConfig.merchantCountryCode,
-                                          currencyCode: 'EUR',
-                                          merchantName: 'Studio 59',
-                                        ),
-                                      ),
-                                );
-                          } else {
-                            throw Exception('Método de pagamento inválido.');
-                          }
-
-                          final code = intent.orderCode;
-                          await ref
-                              .read(savedOrdersProvider.notifier)
-                              .add(code);
-                          ref.read(cartProvider.notifier).clear();
-                          ref.read(wantsFilmProvider.notifier).state = false;
-                          if (!context.mounted) return;
-                          Navigator.pushReplacement(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => TicketPage(orderCode: code, autoClose: true),
-                            ),
-                          );
-                          return;
-                        }
-
-                        final code = await ref
-                            .read(apiProvider)
-                            .createOrder(
-                              eventId: widget.eventId,
-                              token: session.token,
-                              customerName: nameCtrl.text.trim(),
-                              phone: phoneCtrl.text.trim(),
-                              email: email,
-                              paymentMethod: 'cash',
-                              photoItems: items
-                                  .map(
-                                    (i) => CartItemPayload(
-                                      photoId: i.photoId,
-                                      quantity: i.quantity,
-                                    ),
-                                  )
-                                  .toList(),
-                              pricePerPhoto: pricePerPhoto,
-                              productType: productType,
-                              deliveryType: deliveryType,
-                              deliveryAddress: addressCtrl.text.trim(),
-                              wantsFilm: wantsFilm,
-                            );
-                        await ref.read(savedOrdersProvider.notifier).add(code);
-                        ref.read(cartProvider.notifier).clear();
-                        ref.read(wantsFilmProvider.notifier).state = false;
-                        if (!context.mounted) return;
-                        if (code.startsWith('OFF-')) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Sem internet. Pedido guardado para sincronizar.',
-                              ),
-                            ),
-                          );
-                        }
-                        Navigator.pushReplacement(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => TicketPage(orderCode: code, autoClose: true),
-                          ),
-                        );
-                      } on stripe.StripeException catch (e) {
-                        if (!context.mounted) return;
-                        final message =
-                            e.error.localizedMessage ??
-                            e.error.message ??
-                            'Pagamento cancelado.';
-                        final type = e.error.type;
-                        final code = e.error.code;
-                        final suffix = [type, code]
-                            .where((v) => v != null && v.toString().isNotEmpty)
-                            .join(' / ');
-                        final fullMessage = suffix.isNotEmpty
-                            ? '$message ($suffix)'
-                            : message;
-                        if (sessionToken != null) {
-                          await ref
-                              .read(apiProvider)
-                              .logClientIssue(
-                                token: sessionToken!,
-                                message: 'stripe_exception',
-                                context: {
-                                  'message': message,
-                                  'type': type?.toString(),
-                                  'code': code?.toString(),
-                                  'platform': Platform.operatingSystem,
-                                  'release': kReleaseMode,
-                                },
-                              );
-                        }
-                        ScaffoldMessenger.of(
-                          context,
-                        ).showSnackBar(SnackBar(content: Text(fullMessage)));
-                      } catch (e) {
-                        if (!context.mounted) return;
-                        if (sessionToken != null) {
-                          await ref
-                              .read(apiProvider)
-                              .logClientIssue(
-                                token: sessionToken!,
-                                message: 'payment_flow_error',
-                                context: {
-                                  'error': e.toString(),
-                                  'platform': Platform.operatingSystem,
-                                  'release': kReleaseMode,
-                                },
-                              );
-                        }
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Erro ao submeter: $e')),
-                        );
-                      } finally {
-                        if (mounted) setState(() => isSubmitting = false);
-                      }
-                    },
-              child: Text(isSubmitting ? 'A submeter...' : 'Submeter pedido'),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -3426,7 +3771,11 @@ class MyOrdersPage extends ConsumerWidget {
 class TicketPage extends ConsumerStatefulWidget {
   final String orderCode;
   final bool autoClose;
-  const TicketPage({super.key, required this.orderCode, this.autoClose = false});
+  const TicketPage({
+    super.key,
+    required this.orderCode,
+    this.autoClose = false,
+  });
 
   @override
   ConsumerState<TicketPage> createState() => _TicketPageState();
@@ -3851,7 +4200,10 @@ class OrderDetailPage extends ConsumerWidget {
                 if ((o.cashChangeAmount ?? 0) > 0)
                   Text(
                     'Troco a devolver: ${formatEuroAmount(o.cashChangeAmount!)}€ (Studio deve ao cliente)',
-                    style: const TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                      color: Colors.orangeAccent,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 if ((o.cashDueAmount ?? 0) > 0)
                   Text('Em falta: ${formatEuroAmount(o.cashDueAmount!)}€'),
@@ -7014,362 +7366,512 @@ class DesktopOrdersView extends ConsumerStatefulWidget {
 class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
   String _status = '';
   DateTime _selectedDate = _startOfDay(DateTime.now());
+  int? _selectedEventId;
   Future<List<OrderListItem>>? _future;
+  Future<List<StaffEvent>>? _eventsFuture;
+  String? _lastOrdersKey;
 
   @override
   void initState() {
     super.initState();
-    _reload();
+    _eventsFuture = _loadEvents();
   }
 
-  void _reload() {
-    _future = ref
+  Future<List<StaffEvent>> _loadEvents() => ref
+      .read(apiProvider)
+      .staffEvents(widget.token, assignedOnly: !_canSeeAllEvents(widget.user));
+
+  String _dateKey(DateTime date) =>
+      '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  String _dateLabel(DateTime date) =>
+      '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+
+  Future<List<OrderListItem>> _loadOrders(List<StaffEvent> eventsForDate) {
+    final selectedEvent = eventsForDate.where((e) => e.id == _selectedEventId);
+    final singleEventId = selectedEvent.isNotEmpty
+        ? selectedEvent.first.id
+        : eventsForDate.length == 1
+        ? eventsForDate.first.id
+        : null;
+    final eventIds = singleEventId == null && eventsForDate.length > 1
+        ? eventsForDate.map((e) => e.id).toList()
+        : null;
+    return ref
         .read(apiProvider)
         .staffOrdersList(
           widget.token,
           status: _status,
+          eventId: singleEventId,
+          eventIds: eventIds,
           eventDate:
-              '${_selectedDate.year.toString().padLeft(4, '0')}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}',
+              singleEventId == null && (eventIds == null || eventIds.isEmpty)
+              ? _dateKey(_selectedDate)
+              : '',
         );
   }
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(kDeskGutter),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
+    return FutureBuilder<List<StaffEvent>>(
+      future: _eventsFuture,
+      builder: (context, eventSnap) {
+        if (!eventSnap.hasData) {
+          if (eventSnap.hasError) {
+            return Padding(
+              padding: const EdgeInsets.all(kDeskGutter),
+              child: _DeskCard(child: Text('Erro: ${eventSnap.error}')),
+            );
+          }
+          return const Center(child: CircularProgressIndicator());
+        }
+        final events = _filterEventsForUser(eventSnap.data!, widget.user);
+        final eventsForDate = events
+            .where((e) => e.eventDate == _dateKey(_selectedDate))
+            .toList();
+        final hasSelectedEvent = eventsForDate.any(
+          (e) => e.id == _selectedEventId,
+        );
+        final effectiveSelectedEventId = hasSelectedEvent
+            ? _selectedEventId
+            : null;
+        final ordersKey =
+            '${_dateKey(_selectedDate)}|$_status|${effectiveSelectedEventId ?? 'all'}|${eventsForDate.map((e) => e.id).join(',')}';
+        if (_future == null || _lastOrdersKey != ordersKey) {
+          _lastOrdersKey = ordersKey;
+          _future = _loadOrders(eventsForDate);
+        }
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(kDeskGutter),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              FilledButton.tonal(
-                onPressed: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: _selectedDate,
-                    firstDate: DateTime(2020, 1, 1),
-                    lastDate: DateTime(2100, 12, 31),
-                  );
-                  if (picked == null) return;
-                  setState(() {
-                    _selectedDate = _startOfDay(picked);
-                    _reload();
-                  });
-                },
-                child: Text(
-                  'Data: ${_selectedDate.day.toString().padLeft(2, '0')}/${_selectedDate.month.toString().padLeft(2, '0')}/${_selectedDate.year}',
+              _DeskCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        FilledButton.tonal(
+                          onPressed: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: _selectedDate,
+                              firstDate: DateTime(2020, 1, 1),
+                              lastDate: DateTime(2100, 12, 31),
+                            );
+                            if (picked == null) return;
+                            setState(() {
+                              _selectedDate = _startOfDay(picked);
+                              _selectedEventId = null;
+                              _future = null;
+                              _lastOrdersKey = null;
+                            });
+                          },
+                          child: Text('Data: ${_dateLabel(_selectedDate)}'),
+                        ),
+                        _DeskStatusFilterChip(
+                          label: 'Todos',
+                          selected: _status.isEmpty,
+                          onTap: () => setState(() {
+                            _status = '';
+                            _future = null;
+                            _lastOrdersKey = null;
+                          }),
+                        ),
+                        _DeskStatusFilterChip(
+                          label: 'Pendentes',
+                          selected: _status == 'pending',
+                          onTap: () => setState(() {
+                            _status = 'pending';
+                            _future = null;
+                            _lastOrdersKey = null;
+                          }),
+                        ),
+                        _DeskStatusFilterChip(
+                          label: 'Pagos',
+                          selected: _status == 'paid',
+                          onTap: () => setState(() {
+                            _status = 'paid';
+                            _future = null;
+                            _lastOrdersKey = null;
+                          }),
+                        ),
+                        _DeskStatusFilterChip(
+                          label: 'Entregues',
+                          selected: _status == 'delivered',
+                          onTap: () => setState(() {
+                            _status = 'delivered';
+                            _future = null;
+                            _lastOrdersKey = null;
+                          }),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => setState(() {
+                            _selectedEventId = null;
+                            _eventsFuture = _loadEvents();
+                            _future = null;
+                            _lastOrdersKey = null;
+                          }),
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Atualizar'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (eventsForDate.isEmpty)
+                      const Text(
+                        'Sem eventos nesta data.',
+                        style: TextStyle(color: kDeskMuted),
+                      )
+                    else if (eventsForDate.length == 1)
+                      _DeskStatusBadge(eventsForDate.first.name)
+                    else
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _DeskStatusFilterChip(
+                            label: 'Todos os eventos',
+                            selected: effectiveSelectedEventId == null,
+                            onTap: () => setState(() {
+                              _selectedEventId = null;
+                              _future = null;
+                              _lastOrdersKey = null;
+                            }),
+                          ),
+                          ...eventsForDate.map(
+                            (event) => _DeskStatusFilterChip(
+                              label: event.name,
+                              selected: effectiveSelectedEventId == event.id,
+                              onTap: () => setState(() {
+                                _selectedEventId = event.id;
+                                _future = null;
+                                _lastOrdersKey = null;
+                              }),
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
                 ),
               ),
-              _DeskStatusFilterChip(
-                label: 'Todos',
-                selected: _status.isEmpty,
-                onTap: () => setState(() {
-                  _status = '';
-                  _reload();
-                }),
-              ),
-              _DeskStatusFilterChip(
-                label: 'Pendentes',
-                selected: _status == 'pending',
-                onTap: () => setState(() {
-                  _status = 'pending';
-                  _reload();
-                }),
-              ),
-              _DeskStatusFilterChip(
-                label: 'Pagos',
-                selected: _status == 'paid',
-                onTap: () => setState(() {
-                  _status = 'paid';
-                  _reload();
-                }),
-              ),
-              _DeskStatusFilterChip(
-                label: 'Entregues',
-                selected: _status == 'delivered',
-                onTap: () => setState(() {
-                  _status = 'delivered';
-                  _reload();
-                }),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => setState(_reload),
-                icon: const Icon(Icons.refresh),
-                label: const Text('Atualizar'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          ValueListenableBuilder<String>(
-            valueListenable: widget.search,
-            builder: (context, value, _) {
-              return FutureBuilder<List<OrderListItem>>(
-                future: _future,
-                builder: (context, snap) {
-                  final orders = snap.data ?? const <OrderListItem>[];
-                  final query = value.trim().toLowerCase();
-                  final isPhotographer = _isPhotographerRole(widget.user.role);
-                  final canUpdate = widget.user.hasPermission('orders.update');
-                  final canDownload =
-                      widget.user.hasPermission('orders.download') &&
-                      !isPhotographer;
-                  final visible = query.isEmpty
-                      ? orders
-                      : orders
-                            .where(
-                              (o) =>
-                                  o.orderCode.toLowerCase().contains(query) ||
-                                  o.customerName.toLowerCase().contains(
-                                    query,
-                                  ) ||
-                                  (o.eventName ?? '').toLowerCase().contains(
-                                    query,
-                                  ),
-                            )
-                            .toList();
-                  if (visible.isEmpty) {
-                    return const _DeskCard(child: Text('Sem pedidos.'));
-                  }
-                  return Column(
-                    children: visible.map((o) {
-                      final statusColor = o.status == 'paid'
-                          ? Colors.lightGreenAccent
-                          : o.status == 'pending'
-                          ? Colors.orangeAccent
-                          : Colors.lightBlueAccent;
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        child: _DeskCard(
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(kDeskRadius),
-                            onTap: () async {
-                              await Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) =>
-                                      StaffOrderDetailPage(orderId: o.id),
+              const SizedBox(height: 16),
+              ValueListenableBuilder<String>(
+                valueListenable: widget.search,
+                builder: (context, value, _) {
+                  return FutureBuilder<List<OrderListItem>>(
+                    future: _future,
+                    builder: (context, snap) {
+                      final orders = snap.data ?? const <OrderListItem>[];
+                      final query = value.trim().toLowerCase();
+                      final isPhotographer = _isPhotographerRole(
+                        widget.user.role,
+                      );
+                      final canUpdate = widget.user.hasPermission(
+                        'orders.update',
+                      );
+                      final canDownload =
+                          widget.user.hasPermission('orders.download') &&
+                          !isPhotographer;
+                      final visible = query.isEmpty
+                          ? orders
+                          : orders
+                                .where(
+                                  (o) =>
+                                      o.orderCode.toLowerCase().contains(
+                                        query,
+                                      ) ||
+                                      o.customerName.toLowerCase().contains(
+                                        query,
+                                      ) ||
+                                      (o.eventName ?? '')
+                                          .toLowerCase()
+                                          .contains(query),
+                                )
+                                .toList();
+                      if (visible.isEmpty) {
+                        return const _DeskCard(child: Text('Sem pedidos.'));
+                      }
+                      return Column(
+                        children: visible.map((o) {
+                          final statusColor = o.status == 'paid'
+                              ? Colors.lightGreenAccent
+                              : o.status == 'pending'
+                              ? Colors.orangeAccent
+                              : Colors.lightBlueAccent;
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            child: _DeskCard(
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(
+                                  kDeskRadius,
                                 ),
-                              );
-                              if (!context.mounted) return;
-                              setState(_reload);
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.all(2),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
+                                onTap: () async {
+                                  await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          StaffOrderDetailPage(orderId: o.id),
+                                    ),
+                                  );
+                                  if (!context.mounted) return;
+                                  setState(() {
+                                    _future = null;
+                                    _lastOrdersKey = null;
+                                  });
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.all(2),
+                                  child: Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              o.orderCode,
-                                              style: const TextStyle(
-                                                fontSize: 18,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 4),
-                                            Text(
-                                              o.customerName,
-                                              style: const TextStyle(
-                                                color: kBrandRose,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      Column(
+                                      Row(
                                         crossAxisAlignment:
-                                            CrossAxisAlignment.end,
+                                            CrossAxisAlignment.start,
                                         children: [
-                                          _DeskStatusBadge(
-                                            o.status.toUpperCase(),
-                                            color: statusColor,
-                                          ),
-                                          const SizedBox(height: 6),
-                                          Text(
-                                            '€${(o.totalAmount ?? 0).toStringAsFixed(2)}',
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w700,
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  o.orderCode,
+                                                  style: const TextStyle(
+                                                    fontSize: 18,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Text(
+                                                  o.customerName,
+                                                  style: const TextStyle(
+                                                    color: kBrandRose,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
+                                          Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.end,
+                                            children: [
+                                              _DeskStatusBadge(
+                                                o.status.toUpperCase(),
+                                                color: statusColor,
+                                              ),
+                                              const SizedBox(height: 6),
+                                              Text(
+                                                '€${(o.totalAmount ?? 0).toStringAsFixed(2)}',
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 10),
+                                      Wrap(
+                                        spacing: 10,
+                                        runSpacing: 8,
+                                        children: [
+                                          if ((o.eventName ?? '')
+                                              .trim()
+                                              .isNotEmpty)
+                                            _DeskStatusBadge(
+                                              o.eventName!.trim(),
+                                            ),
+                                          if (o.paymentMethod.trim().isNotEmpty)
+                                            _DeskStatusBadge(
+                                              o.paymentMethod.toUpperCase(),
+                                            ),
+                                          if (o.cashReceivedAmount != null)
+                                            _DeskStatusBadge(
+                                              'Entregue €${formatEuroAmount(o.cashReceivedAmount!)}',
+                                            ),
+                                          if ((o.cashChangeAmount ?? 0) > 0)
+                                            _DeskStatusBadge(
+                                              'Troco €${formatEuroAmount(o.cashChangeAmount!)}',
+                                            ),
+                                          if ((o.cashDueAmount ?? 0) > 0)
+                                            _DeskStatusBadge(
+                                              'Falta €${formatEuroAmount(o.cashDueAmount!)}',
+                                              color: Colors.orangeAccent,
+                                            ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        children: [
+                                          _MobileActionChip(
+                                            label: 'Abrir',
+                                            color: kBrandRose,
+                                            onTap: () async {
+                                              await Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                  builder: (_) =>
+                                                      StaffOrderDetailPage(
+                                                        orderId: o.id,
+                                                      ),
+                                                ),
+                                              );
+                                              if (!context.mounted) return;
+                                              setState(() {
+                                                _future = null;
+                                                _lastOrdersKey = null;
+                                              });
+                                            },
+                                          ),
+                                          if (canUpdate &&
+                                              o.status != 'paid' &&
+                                              o.status != 'delivered')
+                                            _MobileActionChip(
+                                              label: 'Pagar',
+                                              color: Colors.lightGreenAccent,
+                                              onTap: () async {
+                                                final settlement =
+                                                    await promptCashSettlement(
+                                                      context,
+                                                      totalAmount:
+                                                          o.totalAmount ?? 0,
+                                                    );
+                                                if (settlement == null) return;
+                                                await ref
+                                                    .read(apiProvider)
+                                                    .markOrderPaid(
+                                                      widget.token,
+                                                      o.id,
+                                                      eventId: o.eventId,
+                                                      cashReceivedAmount:
+                                                          settlement
+                                                              .receivedAmount,
+                                                      cashChangeAmount:
+                                                          settlement
+                                                              .changeAmount,
+                                                      cashDueAmount:
+                                                          settlement.dueAmount,
+                                                      notes: settlement.notes,
+                                                    );
+                                                if (!context.mounted) return;
+                                                setState(() {
+                                                  _future = null;
+                                                  _lastOrdersKey = null;
+                                                });
+                                              },
+                                            ),
+                                          if (canUpdate &&
+                                              o.paymentMethod == 'cash')
+                                            _MobileActionChip(
+                                              label: 'Editar €',
+                                              color: Colors.amberAccent,
+                                              onTap: () async {
+                                                final edit =
+                                                    await promptCashOrderEdit(
+                                                      context,
+                                                      totalAmount:
+                                                          o.totalAmount ?? 0,
+                                                      currentStatus: o.status,
+                                                      currentReceived:
+                                                          o.cashReceivedAmount,
+                                                    );
+                                                if (edit == null ||
+                                                    !context.mounted)
+                                                  return;
+                                                await ref
+                                                    .read(apiProvider)
+                                                    .updateOrder(
+                                                      widget.token,
+                                                      o.id,
+                                                      StaffOrderUpdatePayload(
+                                                        customerName:
+                                                            o.customerName,
+                                                        status: edit.status,
+                                                        paymentMethod:
+                                                            o.paymentMethod,
+                                                        notes: edit.notes,
+                                                        cashReceivedAmount:
+                                                            edit.receivedAmount,
+                                                        cashChangeAmount:
+                                                            edit.changeAmount,
+                                                        cashDueAmount:
+                                                            edit.dueAmount,
+                                                      ),
+                                                    );
+                                                if (!context.mounted) return;
+                                                setState(() {
+                                                  _future = null;
+                                                  _lastOrdersKey = null;
+                                                });
+                                              },
+                                            ),
+                                          if (canDownload)
+                                            _MobileActionChip(
+                                              label: 'Enviar link',
+                                              color: kBrandRose,
+                                              onTap: () async {
+                                                await ref
+                                                    .read(apiProvider)
+                                                    .staffSendDownloadLink(
+                                                      widget.token,
+                                                      o.id,
+                                                    );
+                                                if (!context.mounted) return;
+                                                setState(() {
+                                                  _future = null;
+                                                  _lastOrdersKey = null;
+                                                });
+                                              },
+                                            ),
+                                          if (canDownload)
+                                            _MobileActionChip(
+                                              label: 'ZIP',
+                                              color: kDeskMuted,
+                                              onTap: () async {
+                                                final path = await ref
+                                                    .read(apiProvider)
+                                                    .staffDownloadAll(
+                                                      widget.token,
+                                                      o.id,
+                                                    );
+                                                if (!context.mounted) return;
+                                                ScaffoldMessenger.of(
+                                                  context,
+                                                ).showSnackBar(
+                                                  SnackBar(
+                                                    content: Text(
+                                                      'ZIP guardado: $path',
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                            ),
                                         ],
                                       ),
                                     ],
                                   ),
-                                  const SizedBox(height: 10),
-                                  Wrap(
-                                    spacing: 10,
-                                    runSpacing: 8,
-                                    children: [
-                                      if ((o.eventName ?? '').trim().isNotEmpty)
-                                        _DeskStatusBadge(o.eventName!.trim()),
-                                      if (o.paymentMethod.trim().isNotEmpty)
-                                        _DeskStatusBadge(
-                                          o.paymentMethod.toUpperCase(),
-                                        ),
-                                      if (o.cashReceivedAmount != null)
-                                        _DeskStatusBadge(
-                                          'Entregue €${formatEuroAmount(o.cashReceivedAmount!)}',
-                                        ),
-                                      if ((o.cashChangeAmount ?? 0) > 0)
-                                        _DeskStatusBadge(
-                                          'Troco €${formatEuroAmount(o.cashChangeAmount!)}',
-                                        ),
-                                      if ((o.cashDueAmount ?? 0) > 0)
-                                        _DeskStatusBadge(
-                                          'Falta €${formatEuroAmount(o.cashDueAmount!)}',
-                                          color: Colors.orangeAccent,
-                                        ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: [
-                                      _MobileActionChip(
-                                        label: 'Abrir',
-                                        color: kBrandRose,
-                                        onTap: () async {
-                                          await Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (_) =>
-                                                  StaffOrderDetailPage(
-                                                    orderId: o.id,
-                                                  ),
-                                            ),
-                                          );
-                                          if (!context.mounted) return;
-                                          setState(_reload);
-                                        },
-                                      ),
-                                      if (canUpdate &&
-                                          o.status != 'paid' &&
-                                          o.status != 'delivered')
-                                        _MobileActionChip(
-                                          label: 'Pagar',
-                                          color: Colors.lightGreenAccent,
-                                          onTap: () async {
-                                            final settlement =
-                                                await promptCashSettlement(
-                                                  context,
-                                                  totalAmount:
-                                                      o.totalAmount ?? 0,
-                                                );
-                                            if (settlement == null) return;
-                                            await ref
-                                                .read(apiProvider)
-                                                .markOrderPaid(
-                                                  widget.token,
-                                                  o.id,
-                                                  eventId: o.eventId,
-                                                  cashReceivedAmount:
-                                                      settlement.receivedAmount,
-                                                  cashChangeAmount:
-                                                      settlement.changeAmount,
-                                                  cashDueAmount:
-                                                      settlement.dueAmount,
-                                                  notes: settlement.notes,
-                                                );
-                                            if (!context.mounted) return;
-                                            setState(_reload);
-                                          },
-                                        ),
-                                      if (canUpdate && o.paymentMethod == 'cash')
-                                        _MobileActionChip(
-                                          label: 'Editar €',
-                                          color: Colors.amberAccent,
-                                          onTap: () async {
-                                            final edit = await promptCashOrderEdit(
-                                              context,
-                                              totalAmount: o.totalAmount ?? 0,
-                                              currentStatus: o.status,
-                                              currentReceived: o.cashReceivedAmount,
-                                            );
-                                            if (edit == null || !context.mounted) return;
-                                            await ref.read(apiProvider).updateOrder(
-                                              widget.token,
-                                              o.id,
-                                              StaffOrderUpdatePayload(
-                                                customerName: o.customerName,
-                                                status: edit.status,
-                                                paymentMethod: o.paymentMethod,
-                                                notes: edit.notes,
-                                                cashReceivedAmount: edit.receivedAmount,
-                                                cashChangeAmount: edit.changeAmount,
-                                                cashDueAmount: edit.dueAmount,
-                                              ),
-                                            );
-                                            if (!context.mounted) return;
-                                            setState(_reload);
-                                          },
-                                        ),
-                                      if (canDownload)
-                                        _MobileActionChip(
-                                          label: 'Enviar link',
-                                          color: kBrandRose,
-                                          onTap: () async {
-                                            await ref
-                                                .read(apiProvider)
-                                                .staffSendDownloadLink(
-                                                  widget.token,
-                                                  o.id,
-                                                );
-                                            if (!context.mounted) return;
-                                            setState(_reload);
-                                          },
-                                        ),
-                                      if (canDownload)
-                                        _MobileActionChip(
-                                          label: 'ZIP',
-                                          color: kDeskMuted,
-                                          onTap: () async {
-                                            final path = await ref
-                                                .read(apiProvider)
-                                                .staffDownloadAll(
-                                                  widget.token,
-                                                  o.id,
-                                                );
-                                            if (!context.mounted) return;
-                                            ScaffoldMessenger.of(
-                                              context,
-                                            ).showSnackBar(
-                                              SnackBar(
-                                                content: Text(
-                                                  'ZIP guardado: $path',
-                                                ),
-                                              ),
-                                            );
-                                          },
-                                        ),
-                                    ],
-                                  ),
-                                ],
+                                ),
                               ),
                             ),
-                          ),
-                        ),
+                          );
+                        }).toList(),
                       );
-                    }).toList(),
+                    },
                   );
                 },
-              );
-            },
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -7803,11 +8305,7 @@ class DesktopReportsView extends StatelessWidget {
 // ─── Dossiê ────────────────────────────────────────────────────────────────
 
 class DesktopDossieView extends ConsumerStatefulWidget {
-  const DesktopDossieView({
-    super.key,
-    required this.user,
-    required this.token,
-  });
+  const DesktopDossieView({super.key, required this.user, required this.token});
   final StaffUser user;
   final String token;
 
@@ -7821,8 +8319,19 @@ class _DesktopDossieViewState extends ConsumerState<DesktopDossieView> {
   int? _selectedMonth;
 
   static const List<String> _monthNames = [
-    '', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
-    'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+    '',
+    'Janeiro',
+    'Fevereiro',
+    'Março',
+    'Abril',
+    'Maio',
+    'Junho',
+    'Julho',
+    'Agosto',
+    'Setembro',
+    'Outubro',
+    'Novembro',
+    'Dezembro',
   ];
 
   @override
@@ -7877,14 +8386,16 @@ class _DesktopDossieViewState extends ConsumerState<DesktopDossieView> {
                     children: [
                       const _DeskSectionHeader('Ano'),
                       const SizedBox(height: 8),
-                      ...years.map((y) => _DossieYearTile(
-                        year: y,
-                        selected: _selectedYear == y,
-                        onTap: () => setState(() {
-                          _selectedYear = y;
-                          _selectedMonth = null;
-                        }),
-                      )),
+                      ...years.map(
+                        (y) => _DossieYearTile(
+                          year: y,
+                          selected: _selectedYear == y,
+                          onTap: () => setState(() {
+                            _selectedYear = y;
+                            _selectedMonth = null;
+                          }),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -7901,18 +8412,18 @@ class _DesktopDossieViewState extends ConsumerState<DesktopDossieView> {
                         _DeskSectionHeader('$_selectedYear'),
                         const SizedBox(height: 8),
                         ...(byYearMonth[_selectedYear]?.keys.toList()
-                              ?..sort((a, b) => b.compareTo(a)))
-                            ?.map((m) {
-                              final count =
-                                  byYearMonth[_selectedYear]![m]!.length;
-                              return _DossieMonthTile(
-                                label: _monthNames[m],
-                                count: count,
-                                selected: _selectedMonth == m,
-                                onTap: () =>
-                                    setState(() => _selectedMonth = m),
-                              );
-                            }) ??
+                                  ?..sort((a, b) => b.compareTo(a)))
+                                ?.map((m) {
+                                  final count =
+                                      byYearMonth[_selectedYear]![m]!.length;
+                                  return _DossieMonthTile(
+                                    label: _monthNames[m],
+                                    count: count,
+                                    selected: _selectedMonth == m,
+                                    onTap: () =>
+                                        setState(() => _selectedMonth = m),
+                                  );
+                                }) ??
                             [],
                       ],
                     ),
@@ -7931,14 +8442,15 @@ class _DesktopDossieViewState extends ConsumerState<DesktopDossieView> {
                           '${_monthNames[_selectedMonth!]} $_selectedYear',
                         ),
                         const SizedBox(height: 8),
-                        ...(byYearMonth[_selectedYear]![_selectedMonth]! )
-                            .map((e) => _DossieEventRow(
-                              event: e,
-                              token: widget.token,
-                              commissionRate: ref
-                                  .read(appRuntimeConfigProvider)
-                                  .commissionRate,
-                            )),
+                        ...(byYearMonth[_selectedYear]![_selectedMonth]!).map(
+                          (e) => _DossieEventRow(
+                            event: e,
+                            token: widget.token,
+                            commissionRate: ref
+                                .read(appRuntimeConfigProvider)
+                                .commissionRate,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -8082,25 +8594,22 @@ class _DossieEventRow extends ConsumerStatefulWidget {
 class _DossieEventRowState extends ConsumerState<_DossieEventRow> {
   bool _busy = false;
 
-  Future<void> _download(
-    Future<String> Function() action,
-    String label,
-  ) async {
+  Future<void> _download(Future<String> Function() action, String label) async {
     setState(() => _busy = true);
     try {
       final path = await action();
       if (!mounted) return;
       final result = await OpenFilex.open(path);
       if (result.type != ResultType.done && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$label guardado: $path')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$label guardado: $path')));
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro: $e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -12900,6 +13409,7 @@ class StaffOrdersPage extends ConsumerStatefulWidget {
 
 class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
   DateTime? selectedDate;
+  int? selectedEventId;
   String status = '';
   final queryCtrl = TextEditingController();
   final selected = <int>{};
@@ -12939,6 +13449,7 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
     if (token == null || user == null) return;
     setState(() {
       _lastToken = null;
+      selectedEventId = null;
       _eventsFuture = null;
       _ordersFuture = null;
       _lastOrdersKey = null;
@@ -12961,13 +13472,24 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
 
   Future<List<OrderListItem>> _loadOrdersFiltered(
     String token, {
+    int? eventId,
+    List<int>? eventIds,
     required String eventDate,
     required String status,
     required String query,
   }) async {
     return ref
         .read(apiProvider)
-        .staffOrdersList(token, eventDate: eventDate, status: status, q: query);
+        .staffOrdersList(
+          token,
+          eventId: eventId,
+          eventIds: eventIds,
+          eventDate: eventId == null && (eventIds == null || eventIds.isEmpty)
+              ? eventDate
+              : '',
+          status: status,
+          q: query,
+        );
   }
 
   @override
@@ -13034,7 +13556,15 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
             final eventsForDate = events
                 .where((e) => e.eventDate == resolvedDateKey)
                 .toList();
-            final eventIds = eventsForDate.map((e) => e.id).toList();
+            final hasSelectedEvent = eventsForDate.any(
+              (e) => e.id == selectedEventId,
+            );
+            final effectiveSelectedEventId = hasSelectedEvent
+                ? selectedEventId
+                : null;
+            final selectedEventIds = effectiveSelectedEventId == null
+                ? eventsForDate.map((e) => e.id).toList()
+                : <int>[effectiveSelectedEventId];
             final eventInfoById = {for (final e in events) e.id: e};
             return Column(
               children: [
@@ -13053,6 +13583,7 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                           if (picked == null) return;
                           setState(() {
                             selectedDate = picked;
+                            selectedEventId = null;
                             selected.clear();
                             _ordersFuture = null;
                             _lastOrdersKey = null;
@@ -13060,6 +13591,56 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                         },
                         child: Text('Data: ${_formatDateLabel(resolvedDate)}'),
                       ),
+                      if (eventsForDate.length > 1) ...[
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<String>(
+                          value: effectiveSelectedEventId?.toString() ?? '',
+                          items: [
+                            const DropdownMenuItem(
+                              value: '',
+                              child: Text('Todos os eventos'),
+                            ),
+                            ...eventsForDate.map(
+                              (event) => DropdownMenuItem(
+                                value: event.id.toString(),
+                                child: Text(event.name),
+                              ),
+                            ),
+                          ],
+                          onChanged: (value) => setState(() {
+                            selectedEventId = value == null || value.isEmpty
+                                ? null
+                                : int.tryParse(value);
+                            selected.clear();
+                            _ordersFuture = null;
+                            _lastOrdersKey = null;
+                          }),
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            labelText: 'Evento',
+                          ),
+                        ),
+                      ] else if (eventsForDate.length == 1) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: kBrandRose.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: kBrandRose.withOpacity(0.25),
+                            ),
+                          ),
+                          child: Text(
+                            'Evento: ${eventsForDate.first.name}',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
                         value: status,
@@ -13097,14 +13678,17 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                         ),
                         onSubmitted: (_) => setState(() => selected.clear()),
                       ),
-                      if (canExport && eventIds.length == 1) ...[
+                      if (canExport && selectedEventIds.length == 1) ...[
                         Padding(
                           padding: const EdgeInsets.only(top: 8),
                           child: FilledButton.tonal(
                             onPressed: () async {
                               final path = await ref
                                   .read(apiProvider)
-                                  .staffExportOrdersCsv(token, eventIds.first);
+                                  .staffExportOrdersCsv(
+                                    token,
+                                    selectedEventIds.first,
+                                  );
                               if (!context.mounted) return;
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
@@ -13121,7 +13705,10 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                             onPressed: () async {
                               final path = await ref
                                   .read(apiProvider)
-                                  .staffExportOrdersTxt(token, eventIds.first);
+                                  .staffExportOrdersTxt(
+                                    token,
+                                    selectedEventIds.first,
+                                  );
                               if (!context.mounted) return;
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
@@ -13136,20 +13723,22 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                           padding: const EdgeInsets.only(top: 8),
                           child: FilledButton.tonal(
                             onPressed: () async {
-                              final appConfig =
-                                  ref.read(appRuntimeConfigProvider);
+                              final appConfig = ref.read(
+                                appRuntimeConfigProvider,
+                              );
                               final path = await ref
                                   .read(apiProvider)
                                   .staffExportSalesPdf(
                                     token,
-                                    eventIds.first,
-                                    commissionRate:
-                                        appConfig.commissionRate,
+                                    selectedEventIds.first,
+                                    commissionRate: appConfig.commissionRate,
                                   );
                               if (!context.mounted) return;
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text('PDF vendas guardado em: $path'),
+                                  content: Text(
+                                    'PDF vendas guardado em: $path',
+                                  ),
                                 ),
                               );
                             },
@@ -13242,12 +13831,18 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                   child: FutureBuilder<List<OrderListItem>>(
                     future: () {
                       final key =
-                          '$resolvedDateKey|$status|${queryCtrl.text.trim()}';
+                          '$resolvedDateKey|$status|${queryCtrl.text.trim()}|${effectiveSelectedEventId ?? 'all'}|${selectedEventIds.join(',')}';
                       if (_ordersFuture == null || _lastOrdersKey != key) {
                         _lastOrdersKey = key;
                         _ordersFuture =
                             _loadOrdersFiltered(
                               token,
+                              eventId: effectiveSelectedEventId,
+                              eventIds:
+                                  effectiveSelectedEventId == null &&
+                                      selectedEventIds.length > 1
+                                  ? selectedEventIds
+                                  : null,
                               eventDate: resolvedDateKey,
                               status: status,
                               query: queryCtrl.text.trim(),
@@ -13538,31 +14133,44 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                   });
                                                 },
                                               ),
-                                            if (canUpdate && o.paymentMethod == 'cash')
+                                            if (canUpdate &&
+                                                o.paymentMethod == 'cash')
                                               _MobileActionChip(
                                                 label: 'Editar €',
                                                 color: Colors.amberAccent,
                                                 onTap: () async {
-                                                  final edit = await promptCashOrderEdit(
-                                                    context,
-                                                    totalAmount: o.totalAmount ?? 0,
-                                                    currentStatus: o.status,
-                                                    currentReceived: o.cashReceivedAmount,
-                                                  );
-                                                  if (edit == null || !context.mounted) return;
-                                                  await ref.read(apiProvider).updateOrder(
-                                                    token,
-                                                    o.id,
-                                                    StaffOrderUpdatePayload(
-                                                      customerName: o.customerName,
-                                                      status: edit.status,
-                                                      paymentMethod: o.paymentMethod,
-                                                      notes: edit.notes,
-                                                      cashReceivedAmount: edit.receivedAmount,
-                                                      cashChangeAmount: edit.changeAmount,
-                                                      cashDueAmount: edit.dueAmount,
-                                                    ),
-                                                  );
+                                                  final edit =
+                                                      await promptCashOrderEdit(
+                                                        context,
+                                                        totalAmount:
+                                                            o.totalAmount ?? 0,
+                                                        currentStatus: o.status,
+                                                        currentReceived: o
+                                                            .cashReceivedAmount,
+                                                      );
+                                                  if (edit == null ||
+                                                      !context.mounted)
+                                                    return;
+                                                  await ref
+                                                      .read(apiProvider)
+                                                      .updateOrder(
+                                                        token,
+                                                        o.id,
+                                                        StaffOrderUpdatePayload(
+                                                          customerName:
+                                                              o.customerName,
+                                                          status: edit.status,
+                                                          paymentMethod:
+                                                              o.paymentMethod,
+                                                          notes: edit.notes,
+                                                          cashReceivedAmount:
+                                                              edit.receivedAmount,
+                                                          cashChangeAmount:
+                                                              edit.changeAmount,
+                                                          cashDueAmount:
+                                                              edit.dueAmount,
+                                                        ),
+                                                      );
                                                   if (!context.mounted) return;
                                                   setState(() {
                                                     selected.remove(o.id);
@@ -13699,9 +14307,15 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
   Future<void> _save(String token) async {
     final isCash = paymentCtrl.text.trim() == 'cash';
     final rawReceived = cashReceivedCtrl.text.trim().replaceAll(',', '.');
-    final received = isCash && rawReceived.isNotEmpty ? num.tryParse(rawReceived) : null;
-    final change = (received != null && received > _orderTotal) ? received - _orderTotal : (received != null ? 0 : null);
-    final due = (received != null && received < _orderTotal) ? _orderTotal - received : (received != null ? 0 : null);
+    final received = isCash && rawReceived.isNotEmpty
+        ? num.tryParse(rawReceived)
+        : null;
+    final change = (received != null && received > _orderTotal)
+        ? received - _orderTotal
+        : (received != null ? 0 : null);
+    final due = (received != null && received < _orderTotal)
+        ? _orderTotal - received
+        : (received != null ? 0 : null);
     final payload = StaffOrderUpdatePayload(
       customerName: nameCtrl.text.trim(),
       customerEmail: emailCtrl.text.trim().isEmpty
@@ -13800,7 +14414,10 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
               if ((order.cashChangeAmount ?? 0) > 0)
                 Text(
                   'Troco a devolver: ${formatEuroAmount(order.cashChangeAmount!)}€ (Studio deve ao cliente)',
-                  style: const TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    color: Colors.orangeAccent,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               if ((order.cashDueAmount ?? 0) > 0)
                 Text('Em falta: ${formatEuroAmount(order.cashDueAmount!)}€'),
@@ -13820,11 +14437,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                   const SizedBox(height: 4),
                   Row(
                     children: const [
-                      Icon(
-                        Icons.print,
-                        size: 16,
-                        color: Colors.orangeAccent,
-                      ),
+                      Icon(Icons.print, size: 16, color: Colors.orangeAccent),
                       SizedBox(width: 6),
                       Text(
                         'Impressão necessária',
@@ -13893,7 +14506,9 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                     ],
                   ),
                 ),
-              if (canWrite && order.paymentMethod == 'cash' && order.status != 'pending')
+              if (canWrite &&
+                  order.paymentMethod == 'cash' &&
+                  order.status != 'pending')
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: OutlinedButton.icon(
@@ -13906,19 +14521,21 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                         currentNotes: order.notes,
                       );
                       if (edit == null || !context.mounted) return;
-                      await ref.read(apiProvider).updateOrder(
-                        token,
-                        order.id,
-                        StaffOrderUpdatePayload(
-                          customerName: order.customerName,
-                          status: edit.status,
-                          paymentMethod: order.paymentMethod,
-                          notes: edit.notes,
-                          cashReceivedAmount: edit.receivedAmount,
-                          cashChangeAmount: edit.changeAmount,
-                          cashDueAmount: edit.dueAmount,
-                        ),
-                      );
+                      await ref
+                          .read(apiProvider)
+                          .updateOrder(
+                            token,
+                            order.id,
+                            StaffOrderUpdatePayload(
+                              customerName: order.customerName,
+                              status: edit.status,
+                              paymentMethod: order.paymentMethod,
+                              notes: edit.notes,
+                              cashReceivedAmount: edit.receivedAmount,
+                              cashChangeAmount: edit.changeAmount,
+                              cashDueAmount: edit.dueAmount,
+                            ),
+                          );
                       if (!context.mounted) return;
                       setState(() => _loadDetail(token));
                     },
@@ -13988,9 +14605,13 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                 const SizedBox(height: 8),
                 StatefulBuilder(
                   builder: (_, setInner) {
-                    final raw = cashReceivedCtrl.text.trim().replaceAll(',', '.');
+                    final raw = cashReceivedCtrl.text.trim().replaceAll(
+                      ',',
+                      '.',
+                    );
                     final received = num.tryParse(raw);
-                    final change = received != null && received > order.totalAmount
+                    final change =
+                        received != null && received > order.totalAmount
                         ? received - order.totalAmount
                         : 0;
                     final due = received != null && received < order.totalAmount
@@ -14001,7 +14622,9 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                       children: [
                         TextField(
                           controller: cashReceivedCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
                           onChanged: (_) => setInner(() {}),
                           decoration: const InputDecoration(
                             labelText: 'Dinheiro recebido (€)',
@@ -14010,11 +14633,16 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                         ),
                         const SizedBox(height: 6),
                         if (received != null) ...[
-                          Text('Total: €${formatEuroAmount(order.totalAmount)}'),
+                          Text(
+                            'Total: €${formatEuroAmount(order.totalAmount)}',
+                          ),
                           if (change > 0)
                             Text(
                               'Troco a devolver ao cliente: €${formatEuroAmount(change)}',
-                              style: const TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.w600),
+                              style: const TextStyle(
+                                color: Colors.orangeAccent,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           if (due > 0)
                             Text(
@@ -14022,7 +14650,10 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                               style: const TextStyle(color: Colors.redAccent),
                             ),
                           if (change == 0 && due == 0)
-                            const Text('Pagamento exato.', style: TextStyle(color: Colors.lightGreenAccent)),
+                            const Text(
+                              'Pagamento exato.',
+                              style: TextStyle(color: Colors.lightGreenAccent),
+                            ),
                         ],
                       ],
                     );
@@ -14938,17 +15569,16 @@ class _AppRuntimeConfigFormState extends ConsumerState<AppRuntimeConfigForm> {
     applePayMerchantId: applePayMerchantIdCtrl.text.trim(),
     enablePlatformPay: enablePlatformPay,
     stripeUrlScheme: stripeUrlSchemeCtrl.text.trim(),
-    stripePercentFee: double.tryParse(
+    stripePercentFee:
+        double.tryParse(
           stripePercentFeeCtrl.text.trim().replaceAll(',', '.'),
         ) ??
         AppRuntimeConfig.defaults.stripePercentFee,
-    stripeFixedFee: double.tryParse(
-          stripeFixedFeeCtrl.text.trim().replaceAll(',', '.'),
-        ) ??
+    stripeFixedFee:
+        double.tryParse(stripeFixedFeeCtrl.text.trim().replaceAll(',', '.')) ??
         AppRuntimeConfig.defaults.stripeFixedFee,
-    commissionRate: double.tryParse(
-          commissionRateCtrl.text.trim().replaceAll(',', '.'),
-        ) ??
+    commissionRate:
+        double.tryParse(commissionRateCtrl.text.trim().replaceAll(',', '.')) ??
         AppRuntimeConfig.defaults.commissionRate,
   );
 
