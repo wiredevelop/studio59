@@ -102,16 +102,39 @@ String formatUiError(Object error) {
 
 String formatEuroAmount(num value) => value.toStringAsFixed(2);
 
+String previewUrlWithWidth(String url, int width) {
+  final parsed = Uri.tryParse(url);
+  if (parsed == null) return url;
+  final query = Map<String, String>.from(parsed.queryParameters);
+  query['w'] = '$width';
+  return parsed.replace(queryParameters: query).toString();
+}
+
+String formatDeliveryTypeLabel(String? value) {
+  switch (value) {
+    case 'pickup':
+      return 'Entregar';
+    case 'store_pickup':
+      return 'Levantar em Loja';
+    case 'shipping':
+      return 'Enviar por correio';
+    default:
+      return value ?? '-';
+  }
+}
+
 class CashSettlement {
   const CashSettlement({
     required this.receivedAmount,
     required this.changeAmount,
+    required this.changeGiven,
     required this.dueAmount,
     this.notes,
   });
 
   final num receivedAmount;
   final num changeAmount;
+  final bool changeGiven;
   final num dueAmount;
   final String? notes;
 }
@@ -128,6 +151,7 @@ Future<CashSettlement?> promptCashSettlement(
       context: context,
       builder: (dialogContext) {
         num received = totalAmount;
+        var changeGiven = false;
 
         num parseAmount() {
           final normalized = ctrl.text.trim().replaceAll(',', '.');
@@ -139,6 +163,9 @@ Future<CashSettlement?> promptCashSettlement(
             received = parseAmount();
             final change = received > totalAmount ? received - totalAmount : 0;
             final due = received < totalAmount ? totalAmount - received : 0;
+            if (change <= 0) {
+              changeGiven = true;
+            }
             return AlertDialog(
               title: const Text('Pagamento em dinheiro'),
               content: Column(
@@ -161,6 +188,17 @@ Future<CashSettlement?> promptCashSettlement(
                   const SizedBox(height: 12),
                   Text('Troco: €${formatEuroAmount(change)}'),
                   Text('Falta: €${formatEuroAmount(due)}'),
+                  if (change > 0) ...[
+                    const SizedBox(height: 12),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: changeGiven,
+                      onChanged: (value) =>
+                          setState(() => changeGiven = value ?? false),
+                      title: const Text('Troco entregue ao cliente'),
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   TextField(
                     controller: notesCtrl,
@@ -183,6 +221,7 @@ Future<CashSettlement?> promptCashSettlement(
                     CashSettlement(
                       receivedAmount: received,
                       changeAmount: change,
+                      changeGiven: change > 0 ? changeGiven : true,
                       dueAmount: due,
                       notes: notesCtrl.text.trim().isEmpty
                           ? null
@@ -207,12 +246,14 @@ class CashOrderEdit {
   const CashOrderEdit({
     required this.receivedAmount,
     required this.changeAmount,
+    required this.changeGiven,
     required this.dueAmount,
     required this.status,
     this.notes,
   });
   final num receivedAmount;
   final num changeAmount;
+  final bool changeGiven;
   final num dueAmount;
   final String status;
   final String? notes;
@@ -223,6 +264,7 @@ Future<CashOrderEdit?> promptCashOrderEdit(
   required num totalAmount,
   required String currentStatus,
   num? currentReceived,
+  bool? currentChangeGiven,
   String? currentNotes,
 }) async {
   final ctrl = TextEditingController(
@@ -236,12 +278,16 @@ Future<CashOrderEdit?> promptCashOrderEdit(
     return await showDialog<CashOrderEdit>(
       context: context,
       builder: (dialogContext) {
+        var changeGiven = currentChangeGiven ?? false;
         return StatefulBuilder(
           builder: (context, setState) {
             final normalized = ctrl.text.trim().replaceAll(',', '.');
             final received = num.tryParse(normalized) ?? 0;
             final change = received > totalAmount ? received - totalAmount : 0;
             final due = received < totalAmount ? totalAmount - received : 0;
+            if (change <= 0) {
+              changeGiven = true;
+            }
             return AlertDialog(
               title: const Text('Editar pagamento em dinheiro'),
               content: Column(
@@ -271,6 +317,17 @@ Future<CashOrderEdit?> promptCashOrderEdit(
                       ),
                     ),
                   if (due > 0) Text('Falta receber: €${formatEuroAmount(due)}'),
+                  if (change > 0) ...[
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: changeGiven,
+                      onChanged: (value) =>
+                          setState(() => changeGiven = value ?? false),
+                      title: const Text('Troco entregue ao cliente'),
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   TextField(
                     controller: notesCtrl,
@@ -313,6 +370,7 @@ Future<CashOrderEdit?> promptCashOrderEdit(
                     CashOrderEdit(
                       receivedAmount: received,
                       changeAmount: change,
+                      changeGiven: change > 0 ? changeGiven : true,
                       dueAmount: due,
                       status: status,
                       notes: notesCtrl.text.trim().isEmpty
@@ -1727,6 +1785,7 @@ Future<void> enqueueOrderUpdate(
   String status, {
   num? cashReceivedAmount,
   num? cashChangeAmount,
+  bool? cashChangeGiven,
   num? cashDueAmount,
   String? notes,
 }) async {
@@ -1740,6 +1799,7 @@ Future<void> enqueueOrderUpdate(
     'status': status,
     'cash_received_amount': cashReceivedAmount,
     'cash_change_amount': cashChangeAmount,
+    'cash_change_given': cashChangeGiven,
     'cash_due_amount': cashDueAmount,
     'notes': notes,
     'updated_at': DateTime.now().toIso8601String(),
@@ -1869,6 +1929,60 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
   bool faceSearching = false;
   int page = 1;
   static const int perPage = 24;
+  final Map<String, Future<PhotosPage>> _photosCache = {};
+  Future<PhotosPage>? _photosFuture;
+  String? _photosCacheToken;
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+
+  String _photosCacheKey(GuestSession session, int targetPage) =>
+      '${session.token}|$search|$targetPage|$perPage';
+
+  Future<PhotosPage> _fetchPhotosPage(GuestSession session, int targetPage) {
+    final key = _photosCacheKey(session, targetPage);
+    return _photosCache.putIfAbsent(
+      key,
+      () => ref.read(apiProvider).eventPhotosPage(
+        widget.eventId,
+        session.token,
+        search: search,
+        page: targetPage,
+        perPage: perPage,
+      ),
+    );
+  }
+
+  void _loadPage(GuestSession session, int targetPage) {
+    page = targetPage;
+    _photosFuture = _fetchPhotosPage(session, targetPage);
+  }
+
+  void _refreshPhotosForSearch(GuestSession session, String value) {
+    setState(() {
+      search = value.trim();
+      page = 1;
+      _photosCache.clear();
+      _loadPage(session, 1);
+    });
+  }
+
+  void _goToPage(GuestSession session, int next, int lastPage) {
+    if (next < 1 || next > lastPage || next == page) return;
+    setState(() => _loadPage(session, next));
+  }
+
+  void _prefetchAdjacentPages(GuestSession session, int currentPage, int last) {
+    if (currentPage < last) {
+      unawaited(_fetchPhotosPage(session, currentPage + 1));
+    }
+    if (currentPage > 1) {
+      unawaited(_fetchPhotosPage(session, currentPage - 1));
+    }
+  }
 
   void _openPhotoPreview(PhotoItem photo) {
     showDialog(
@@ -1876,61 +1990,79 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
       builder: (_) {
         final selected = ref.watch(cartProvider).containsKey(photo.id);
         final size = MediaQuery.of(context).size;
-        return AlertDialog(
-          title: Text('Foto ${photo.number}'),
-          content: SizedBox(
-            width: size.width * 0.9,
-            height: size.height * 0.7,
-            child: photo.previewUrl == null
-                ? const Center(child: Text('Sem preview'))
-                : Stack(
-                    children: [
-                      Positioned.fill(
-                        child: InteractiveViewer(
-                          minScale: 1,
-                          maxScale: 4,
-                          child: Image.network(
-                            photo.previewUrl!,
-                            fit: BoxFit.contain,
-                            cacheWidth: 1080,
-                            filterQuality: FilterQuality.medium,
-                          ),
-                        ),
-                      ),
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: Center(
-                            child: Opacity(
-                              opacity: 0.12,
-                              child: Text(
-                                'STUDIO 59',
-                                style: TextStyle(
-                                  fontSize: size.width * 0.12,
-                                  fontWeight: FontWeight.w800,
-                                  color: kBrandRose.withOpacity(0.7),
-                                  letterSpacing: 4,
+        final devicePixelRatio = MediaQuery.of(context).devicePixelRatio;
+        final previewCacheWidth = max(
+          1400,
+          min(2400, (size.longestSide * devicePixelRatio).round()),
+        );
+        var rotationTurns = 0;
+        return StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: Text('Foto ${photo.number}'),
+            content: SizedBox(
+              width: size.width * 0.9,
+              height: size.height * 0.7,
+              child: photo.previewUrl == null
+                  ? const Center(child: Text('Sem preview'))
+                  : Stack(
+                      children: [
+                        Positioned.fill(
+                          child: InteractiveViewer(
+                            minScale: 1,
+                            maxScale: 4,
+                            child: Center(
+                              child: RotatedBox(
+                                quarterTurns: rotationTurns,
+                                child: Image.network(
+                                  previewUrlWithWidth(photo.previewUrl!, 1400),
+                                  fit: BoxFit.contain,
+                                  cacheWidth: previewCacheWidth,
+                                  filterQuality: FilterQuality.high,
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: Center(
+                              child: Opacity(
+                                opacity: 0.12,
+                                child: Text(
+                                  'STUDIO 59',
+                                  style: TextStyle(
+                                    fontSize: size.width * 0.12,
+                                    fontWeight: FontWeight.w800,
+                                    color: kBrandRose.withOpacity(0.7),
+                                    letterSpacing: 4,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () =>
+                    setState(() => rotationTurns = (rotationTurns + 1) % 4),
+                child: const Text('Rodar'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Fechar'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  ref.read(cartProvider.notifier).toggle(photo);
+                  Navigator.pop(context);
+                },
+                child: Text(selected ? 'Remover' : 'Selecionar'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Fechar'),
-            ),
-            FilledButton(
-              onPressed: () {
-                ref.read(cartProvider.notifier).toggle(photo);
-                Navigator.pop(context);
-              },
-              child: Text(selected ? 'Remover' : 'Selecionar'),
-            ),
-          ],
         );
       },
     );
@@ -1989,6 +2121,11 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
     final session = ref.watch(guestSessionProvider);
     if (session == null)
       return const Scaffold(body: Center(child: Text('Sessao expirada')));
+    if (_photosCacheToken != session.token || _photosFuture == null) {
+      _photosCacheToken = session.token;
+      _photosCache.clear();
+      _loadPage(session, page);
+    }
 
     return SecureScreen(
       child: Scaffold(
@@ -2083,30 +2220,17 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                   labelText: 'Pesquisar numero',
                   border: const OutlineInputBorder(),
                   suffixIcon: IconButton(
-                    onPressed: () => setState(() {
-                      search = searchController.text.trim();
-                      page = 1;
-                    }),
+                    onPressed: () =>
+                        _refreshPhotosForSearch(session, searchController.text),
                     icon: const Icon(Icons.search),
                   ),
                 ),
-                onSubmitted: (v) => setState(() {
-                  search = v.trim();
-                  page = 1;
-                }),
+                onSubmitted: (v) => _refreshPhotosForSearch(session, v),
               ),
             ),
             Expanded(
               child: FutureBuilder<PhotosPage>(
-                future: ref
-                    .read(apiProvider)
-                    .eventPhotosPage(
-                      widget.eventId,
-                      session.token,
-                      search: search,
-                      page: page,
-                      perPage: perPage,
-                    ),
+                future: _photosFuture,
                 builder: (context, snap) {
                   if (!snap.hasData) {
                     if (snap.hasError)
@@ -2114,9 +2238,24 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                     return const Center(child: CircularProgressIndicator());
                   }
                   final pageData = snap.data!;
+                  _prefetchAdjacentPages(
+                    session,
+                    pageData.currentPage,
+                    pageData.lastPage,
+                  );
                   final photos = pageData.items;
                   final selected = ref.watch(cartProvider);
                   final suggestedIds = suggested.map((p) => p.id).toSet();
+                  final previewCacheWidth = max(
+                    420,
+                    min(
+                      720,
+                      (MediaQuery.of(context).size.width /
+                              3 *
+                              MediaQuery.of(context).devicePixelRatio)
+                          .round(),
+                    ),
+                  );
                   final remaining = photos
                       .where((p) => !suggestedIds.contains(p.id))
                       .toList();
@@ -2137,11 +2276,14 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                                             child: Text('preview...'),
                                           )
                                         : Image.network(
-                                            photo.previewUrl!,
+                                            previewUrlWithWidth(
+                                              photo.previewUrl!,
+                                              720,
+                                            ),
                                             fit: BoxFit.cover,
                                             width: double.infinity,
-                                            cacheWidth: 420,
-                                            filterQuality: FilterQuality.medium,
+                                            cacheWidth: previewCacheWidth,
+                                            filterQuality: FilterQuality.high,
                                             errorBuilder:
                                                 (context, error, stackTrace) =>
                                                     const Center(
@@ -2240,20 +2382,15 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                     );
                   }
 
-                  void goToPage(int next) {
-                    if (next < 1 || next > pageData.lastPage) return;
-                    if (next == page) return;
-                    setState(() => page = next);
-                  }
-
                   Widget pager() {
                     if (pageData.lastPage <= 1) return const SizedBox.shrink();
                     final last = pageData.lastPage;
+                    final currentPage = pageData.currentPage;
                     final visiblePages = <Object>{};
                     visiblePages.add(1);
                     visiblePages.add(last);
                     for (var d = -2; d <= 2; d++) {
-                      final p = page + d;
+                      final p = currentPage + d;
                       if (p >= 1 && p <= last) visiblePages.add(p);
                     }
                     final sorted = visiblePages.cast<int>().toList()..sort();
@@ -2271,12 +2408,13 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                         );
                       }
                       final p = sorted[i];
-                      final isCurrent = p == page;
+                      final isCurrent = p == currentPage;
                       items.add(
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 2),
                           child: OutlinedButton(
-                            onPressed: () => goToPage(p),
+                            onPressed: () =>
+                                _goToPage(session, p, pageData.lastPage),
                             style: OutlinedButton.styleFrom(
                               backgroundColor: isCurrent ? kBrandRose : null,
                               foregroundColor: isCurrent ? kBrandBlack : null,
@@ -2299,13 +2437,23 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         IconButton(
-                          onPressed: page > 1 ? () => goToPage(page - 1) : null,
+                          onPressed: currentPage > 1
+                              ? () => _goToPage(
+                                  session,
+                                  currentPage - 1,
+                                  pageData.lastPage,
+                                )
+                              : null,
                           icon: const Icon(Icons.chevron_left),
                         ),
                         ...items,
                         IconButton(
-                          onPressed: page < last
-                              ? () => goToPage(page + 1)
+                          onPressed: currentPage < last
+                              ? () => _goToPage(
+                                  session,
+                                  currentPage + 1,
+                                  pageData.lastPage,
+                                )
                               : null,
                           icon: const Icon(Icons.chevron_right),
                         ),
@@ -2340,9 +2488,17 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                           onHorizontalDragEnd: (details) {
                             final v = details.primaryVelocity ?? 0;
                             if (v > 300) {
-                              goToPage(page - 1);
+                              _goToPage(
+                                session,
+                                pageData.currentPage - 1,
+                                pageData.lastPage,
+                              );
                             } else if (v < -300) {
-                              goToPage(page + 1);
+                              _goToPage(
+                                session,
+                                pageData.currentPage + 1,
+                                pageData.lastPage,
+                              );
                             }
                           },
                           child: CustomScrollView(
@@ -2844,7 +3000,8 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
     final total = itemsTotal + extrasTotal;
     final appConfig = ref.watch(appRuntimeConfigProvider);
     final offlineCheckout = looksLikeLocalApiBaseUrl(appConfig.apiBaseUrl);
-    final isOnlinePayment = paymentMethod == 'online';
+    final allowsOnlinePayment = !offlineCheckout;
+    final isOnlinePayment = allowsOnlinePayment && paymentMethod == 'online';
     final processingFee = isOnlinePayment
         ? double.parse(
             (total * (appConfig.stripePercentFee / 100) +
@@ -2861,10 +3018,15 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
         setState(() => paymentMethod = 'cash');
       });
     }
-    final onlineOptions = buildOnlineMethodOptions(
-      supportsApplePay: supportsApplePay,
-      supportsGooglePay: supportsGooglePay,
-    );
+    final showEmailField = offlineCheckout
+        ? productType == 'digital'
+        : productType != 'paper';
+    final onlineOptions = allowsOnlinePayment
+        ? buildOnlineMethodOptions(
+            supportsApplePay: supportsApplePay,
+            supportsGooglePay: supportsGooglePay,
+          )
+        : <OnlineMethodOption>[];
     if (onlineOptions.isNotEmpty &&
         !onlineOptions.any((option) => option.id == onlineMethod)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2981,7 +3143,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                         border: OutlineInputBorder(),
                       ),
                     ),
-                    if (productType != 'paper') ...[
+                    if (showEmailField) ...[
                       const SizedBox(height: 10),
                       TextField(
                         controller: emailCtrl,
@@ -3066,6 +3228,18 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                       ),
                       const SizedBox(height: 10),
                       _checkoutChoiceTile(
+                        title: 'Levantar em Loja',
+                        subtitle: 'Sem custo adicional.',
+                        selected: deliveryType == 'store_pickup',
+                        onTap: () =>
+                            setState(() => deliveryType = 'store_pickup'),
+                        leading: const Icon(
+                          Icons.storefront_outlined,
+                          color: kBrandRose,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _checkoutChoiceTile(
                         title: 'Enviar por correio',
                         subtitle: 'Acresce €5.00 ao total.',
                         selected: deliveryType == 'shipping',
@@ -3135,7 +3309,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                         color: kBrandRose,
                       ),
                     ),
-                    if (!offlineCheckout) ...[
+                    if (allowsOnlinePayment) ...[
                       const SizedBox(height: 10),
                       _checkoutChoiceTile(
                         title: 'Pagamento online',
@@ -3160,7 +3334,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                   ],
                 ),
               ),
-              if (paymentMethod == 'online') ...[
+              if (isOnlinePayment) ...[
                 const SizedBox(height: 16),
                 _checkoutSection(
                   title: 'Método online',
@@ -3273,7 +3447,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                                     return;
                                   }
                                   final email = emailCtrl.text.trim();
-                                  if (productType != 'paper' && email.isEmpty) {
+                                  if (showEmailField && email.isEmpty) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
                                         content: Text(
@@ -3319,7 +3493,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                                     return;
                                   }
 
-                                  if (paymentMethod == 'online') {
+                                  if (isOnlinePayment) {
                                     if (!Platform.isAndroid &&
                                         !Platform.isIOS) {
                                       ScaffoldMessenger.of(
@@ -4034,21 +4208,27 @@ class _TicketPageState extends ConsumerState<TicketPage> {
                           ),
                         if ((order.cashChangeAmount ?? 0) > 0)
                           Text(
-                            'Troco a devolver: ${formatEuroAmount(order.cashChangeAmount!)}€ (Studio deve ao cliente)',
-                            style: const TextStyle(
-                              color: Colors.orangeAccent,
+                            order.cashChangeGiven
+                                ? 'Troco entregue: ${formatEuroAmount(order.cashChangeAmount!)}€'
+                                : 'TROCO por entregar: ${formatEuroAmount(order.cashChangeAmount!)}€',
+                            style: TextStyle(
+                              color: order.cashChangeGiven
+                                  ? Colors.lightGreenAccent
+                                  : Colors.orangeAccent,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                         if ((order.cashDueAmount ?? 0) > 0)
                           Text(
-                            'Em falta: ${formatEuroAmount(order.cashDueAmount!)}€',
+                            'DEVE: ${formatEuroAmount(order.cashDueAmount!)}€',
                             style: const TextStyle(color: Colors.redAccent),
                           ),
                         if (order.productType != null)
                           Text('Produto: ${order.productType}'),
                         if (order.deliveryType != null)
-                          Text('Entrega: ${order.deliveryType}'),
+                          Text(
+                            'Entrega: ${formatDeliveryTypeLabel(order.deliveryType)}',
+                          ),
                         if (order.deliveryAddress != null &&
                             order.deliveryAddress!.isNotEmpty)
                           Text('Morada: ${order.deliveryAddress}'),
@@ -4199,16 +4379,23 @@ class OrderDetailPage extends ConsumerWidget {
                   Text('Entregue: ${formatEuroAmount(o.cashReceivedAmount!)}€'),
                 if ((o.cashChangeAmount ?? 0) > 0)
                   Text(
-                    'Troco a devolver: ${formatEuroAmount(o.cashChangeAmount!)}€ (Studio deve ao cliente)',
-                    style: const TextStyle(
-                      color: Colors.orangeAccent,
+                    o.cashChangeGiven
+                        ? 'Troco entregue: ${formatEuroAmount(o.cashChangeAmount!)}€'
+                        : 'TROCO por entregar: ${formatEuroAmount(o.cashChangeAmount!)}€',
+                    style: TextStyle(
+                      color: o.cashChangeGiven
+                          ? Colors.lightGreenAccent
+                          : Colors.orangeAccent,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 if ((o.cashDueAmount ?? 0) > 0)
-                  Text('Em falta: ${formatEuroAmount(o.cashDueAmount!)}€'),
+                  Text('DEVE: ${formatEuroAmount(o.cashDueAmount!)}€'),
                 if (o.productType != null) Text('Produto: ${o.productType}'),
-                if (o.deliveryType != null) Text('Entrega: ${o.deliveryType}'),
+                if (o.deliveryType != null)
+                  Text(
+                    'Entrega: ${formatDeliveryTypeLabel(o.deliveryType)}',
+                  ),
                 if (o.deliveryAddress != null && o.deliveryAddress!.isNotEmpty)
                   Text('Morada: ${o.deliveryAddress}'),
                 if (o.wantsFilm) Text('Filme: +${o.filmFee}€'),
@@ -7697,12 +7884,17 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                                             ),
                                           if ((o.cashChangeAmount ?? 0) > 0)
                                             _DeskStatusBadge(
-                                              'Troco €${formatEuroAmount(o.cashChangeAmount!)}',
+                                              o.cashChangeGiven
+                                                  ? 'Troco entregue €${formatEuroAmount(o.cashChangeAmount!)}'
+                                                  : 'Troco €${formatEuroAmount(o.cashChangeAmount!)}',
+                                              color: o.cashChangeGiven
+                                                  ? Colors.lightGreenAccent
+                                                  : Colors.orangeAccent,
                                             ),
                                           if ((o.cashDueAmount ?? 0) > 0)
                                             _DeskStatusBadge(
-                                              'Falta €${formatEuroAmount(o.cashDueAmount!)}',
-                                              color: Colors.orangeAccent,
+                                              'Deve €${formatEuroAmount(o.cashDueAmount!)}',
+                                              color: Colors.redAccent,
                                             ),
                                         ],
                                       ),
@@ -7757,6 +7949,9 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                                                       cashChangeAmount:
                                                           settlement
                                                               .changeAmount,
+                                                      cashChangeGiven:
+                                                          settlement
+                                                              .changeGiven,
                                                       cashDueAmount:
                                                           settlement.dueAmount,
                                                       notes: settlement.notes,
@@ -7782,6 +7977,8 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                                                       currentStatus: o.status,
                                                       currentReceived:
                                                           o.cashReceivedAmount,
+                                                      currentChangeGiven:
+                                                          o.cashChangeGiven,
                                                     );
                                                 if (edit == null ||
                                                     !context.mounted)
@@ -7802,6 +7999,8 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                                                             edit.receivedAmount,
                                                         cashChangeAmount:
                                                             edit.changeAmount,
+                                                        cashChangeGiven:
+                                                            edit.changeGiven,
                                                         cashDueAmount:
                                                             edit.dueAmount,
                                                       ),
@@ -13024,6 +13223,103 @@ class _StaffEventGalleryPageState
     }
   }
 
+  Future<void> _deletePhoto(String token, StaffPhoto photo) async {
+    final ok = await _confirm(
+      context,
+      'Apagar foto?',
+      'Número ${photo.number}',
+    );
+    if (!ok) return;
+    await ref
+        .read(apiProvider)
+        .staffDeletePhoto(token, widget.event.id, photo.id);
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  Future<void> _openPhotoDialog(
+    String token,
+    StaffUser user,
+    StaffPhoto photo,
+  ) async {
+    await showDialog(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        insetPadding: const EdgeInsets.all(20),
+        backgroundColor: Colors.transparent,
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 960, maxHeight: 760),
+          decoration: BoxDecoration(
+            color: kDeskCard,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: kBrandRose.withOpacity(0.2)),
+          ),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 8, 8),
+                child: Row(
+                  children: [
+                    Text(
+                      'Foto #${photo.number}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const Spacer(),
+                    if (user.hasPermission('photos.delete'))
+                      IconButton(
+                        onPressed: () async {
+                          Navigator.pop(dialogContext);
+                          await _deletePhoto(token, photo);
+                        },
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          color: Colors.redAccent,
+                        ),
+                        tooltip: 'Apagar foto',
+                      ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      icon: const Icon(Icons.close),
+                      tooltip: 'Fechar',
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child:
+                      photo.previewUrl != null && photo.previewUrl!.isNotEmpty
+                      ? InteractiveViewer(
+                          minScale: 1,
+                          maxScale: 4,
+                          child: Center(
+                            child: Image.network(
+                              photo.previewUrl!,
+                              fit: BoxFit.contain,
+                            ),
+                          ),
+                        )
+                      : const Center(
+                          child: Icon(
+                            Icons.image_not_supported,
+                            color: Colors.white24,
+                            size: 42,
+                          ),
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final token = ref.watch(staffTokenProvider);
@@ -13143,23 +13439,9 @@ class _StaffEventGalleryPageState
                     itemBuilder: (_, i) {
                       final p = snap.data![i];
                       return GestureDetector(
+                        onTap: () => _openPhotoDialog(token, user, p),
                         onLongPress: user.hasPermission('photos.delete')
-                            ? () async {
-                                final ok = await _confirm(
-                                  context,
-                                  'Apagar foto?',
-                                  'Número ${p.number}',
-                                );
-                                if (!ok) return;
-                                await ref
-                                    .read(apiProvider)
-                                    .staffDeletePhoto(
-                                      token,
-                                      widget.event.id,
-                                      p.id,
-                                    );
-                                if (mounted) setState(() {});
-                              }
+                            ? () => _deletePhoto(token, p)
                             : null,
                         child: Container(
                           decoration: BoxDecoration(
@@ -14103,6 +14385,9 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                         cashChangeAmount:
                                                             settlement
                                                                 .changeAmount,
+                                                        cashChangeGiven:
+                                                            settlement
+                                                                .changeGiven,
                                                         cashDueAmount:
                                                             settlement
                                                                 .dueAmount,
@@ -14119,7 +14404,10 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                             : settlement
                                                                       .changeAmount >
                                                                   0
-                                                            ? 'Registado. Troco ${formatEuroAmount(settlement.changeAmount)}€.'
+                                                            ? settlement
+                                                                      .changeGiven
+                                                                  ? 'Registado. Troco entregue ${formatEuroAmount(settlement.changeAmount)}€.'
+                                                                  : 'Registado. TROCO pendente ${formatEuroAmount(settlement.changeAmount)}€.'
                                                             : emailed
                                                             ? 'Marcado pago e link enviado.'
                                                             : 'Marcado pago. Sem email.',
@@ -14147,6 +14435,8 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                         currentStatus: o.status,
                                                         currentReceived: o
                                                             .cashReceivedAmount,
+                                                        currentChangeGiven:
+                                                            o.cashChangeGiven,
                                                       );
                                                   if (edit == null ||
                                                       !context.mounted)
@@ -14163,13 +14453,15 @@ class _StaffOrdersPageState extends ConsumerState<StaffOrdersPage> {
                                                           paymentMethod:
                                                               o.paymentMethod,
                                                           notes: edit.notes,
-                                                          cashReceivedAmount:
-                                                              edit.receivedAmount,
-                                                          cashChangeAmount:
-                                                              edit.changeAmount,
-                                                          cashDueAmount:
-                                                              edit.dueAmount,
-                                                        ),
+                                                        cashReceivedAmount:
+                                                            edit.receivedAmount,
+                                                        cashChangeAmount:
+                                                            edit.changeAmount,
+                                                        cashChangeGiven:
+                                                            edit.changeGiven,
+                                                        cashDueAmount:
+                                                            edit.dueAmount,
+                                                      ),
                                                       );
                                                   if (!context.mounted) return;
                                                   setState(() {
@@ -14264,6 +14556,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
   bool editing = false;
   bool saving = false;
   bool _initialized = false;
+  bool cashChangeGiven = true;
   late final TextEditingController nameCtrl;
   late final TextEditingController emailCtrl;
   late final TextEditingController phoneCtrl;
@@ -14331,6 +14624,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
       notes: notesCtrl.text.trim().isEmpty ? null : notesCtrl.text.trim(),
       cashReceivedAmount: received,
       cashChangeAmount: change,
+      cashChangeGiven: (change ?? 0) > 0 ? cashChangeGiven : true,
       cashDueAmount: due,
     );
     if (payload.customerName.isEmpty) {
@@ -14388,6 +14682,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
           cashReceivedCtrl.text = order.cashReceivedAmount != null
               ? formatEuroAmount(order.cashReceivedAmount!)
               : '';
+          cashChangeGiven = order.cashChangeGiven;
           status = order.status;
           _orderTotal = order.totalAmount;
         }
@@ -14413,14 +14708,18 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                 ),
               if ((order.cashChangeAmount ?? 0) > 0)
                 Text(
-                  'Troco a devolver: ${formatEuroAmount(order.cashChangeAmount!)}€ (Studio deve ao cliente)',
-                  style: const TextStyle(
-                    color: Colors.orangeAccent,
+                  order.cashChangeGiven
+                      ? 'Troco entregue: ${formatEuroAmount(order.cashChangeAmount!)}€'
+                      : 'TROCO por entregar: ${formatEuroAmount(order.cashChangeAmount!)}€',
+                  style: TextStyle(
+                    color: order.cashChangeGiven
+                        ? Colors.lightGreenAccent
+                        : Colors.orangeAccent,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
               if ((order.cashDueAmount ?? 0) > 0)
-                Text('Em falta: ${formatEuroAmount(order.cashDueAmount!)}€'),
+                Text('DEVE: ${formatEuroAmount(order.cashDueAmount!)}€'),
               if (order.productType != null) ...[
                 const SizedBox(height: 8),
                 Row(
@@ -14452,7 +14751,9 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                 ],
               ],
               if (order.deliveryType != null)
-                Text('Entrega: ${order.deliveryType}'),
+                Text(
+                  'Entrega: ${formatDeliveryTypeLabel(order.deliveryType)}',
+                ),
               if ((order.deliveryAddress ?? '').isNotEmpty)
                 Text('Morada: ${order.deliveryAddress}'),
               if ((order.notes ?? '').isNotEmpty) ...[
@@ -14490,6 +14791,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                                 order.id,
                                 cashReceivedAmount: settlement.receivedAmount,
                                 cashChangeAmount: settlement.changeAmount,
+                                cashChangeGiven: settlement.changeGiven,
                                 cashDueAmount: settlement.dueAmount,
                                 notes: settlement.notes,
                               );
@@ -14518,6 +14820,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                         totalAmount: order.totalAmount,
                         currentStatus: order.status,
                         currentReceived: order.cashReceivedAmount,
+                        currentChangeGiven: order.cashChangeGiven,
                         currentNotes: order.notes,
                       );
                       if (edit == null || !context.mounted) return;
@@ -14533,6 +14836,7 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                               notes: edit.notes,
                               cashReceivedAmount: edit.receivedAmount,
                               cashChangeAmount: edit.changeAmount,
+                              cashChangeGiven: edit.changeGiven,
                               cashDueAmount: edit.dueAmount,
                             ),
                           );
@@ -14617,6 +14921,12 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                     final due = received != null && received < order.totalAmount
                         ? order.totalAmount - received
                         : 0;
+                    if (change <= 0 && !cashChangeGiven) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!mounted) return;
+                        setState(() => cashChangeGiven = true);
+                      });
+                    }
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -14637,12 +14947,32 @@ class _StaffOrderDetailPageState extends ConsumerState<StaffOrderDetailPage> {
                             'Total: €${formatEuroAmount(order.totalAmount)}',
                           ),
                           if (change > 0)
-                            Text(
-                              'Troco a devolver ao cliente: €${formatEuroAmount(change)}',
-                              style: const TextStyle(
-                                color: Colors.orangeAccent,
-                                fontWeight: FontWeight.w600,
-                              ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Troco a devolver ao cliente: €${formatEuroAmount(change)}',
+                                  style: const TextStyle(
+                                    color: Colors.orangeAccent,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                CheckboxListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  value: cashChangeGiven,
+                                  onChanged: (value) {
+                                    setState(
+                                      () => cashChangeGiven = value ?? false,
+                                    );
+                                    setInner(() {});
+                                  },
+                                  title: const Text(
+                                    'Troco entregue ao cliente',
+                                  ),
+                                  controlAffinity:
+                                      ListTileControlAffinity.leading,
+                                ),
+                              ],
                             ),
                           if (due > 0)
                             Text(
@@ -17465,6 +17795,7 @@ class ApiService {
     String filePath,
     String deviceId, {
     List<String> photoPaths = const [],
+    void Function(int sent, int total)? onSendProgress,
   }) async {
     final formPayload = <String, dynamic>{
       'device_id': deviceId,
@@ -17486,6 +17817,7 @@ class ApiService {
     final r = await dio.post(
       '/offline/events/$eventId/import',
       data: form,
+      onSendProgress: onSendProgress,
       options: Options(
         headers: {'Authorization': 'Bearer $token'},
         contentType: 'multipart/form-data',
@@ -17501,6 +17833,7 @@ class ApiService {
     int eventId,
     List<String> photoPaths, {
     List<dynamic> photosMeta = const [],
+    void Function(int sent, int total)? onSendProgress,
   }) async {
     final form = FormData();
     for (final photoPath in photoPaths) {
@@ -17520,6 +17853,7 @@ class ApiService {
     final r = await dio.post(
       '/offline/events/$eventId/import-photos',
       data: form,
+      onSendProgress: onSendProgress,
       options: Options(
         headers: {'Authorization': 'Bearer $token'},
         contentType: 'multipart/form-data',
@@ -17605,6 +17939,7 @@ class ApiService {
     int? eventId,
     num? cashReceivedAmount,
     num? cashChangeAmount,
+    bool? cashChangeGiven,
     num? cashDueAmount,
     String? notes,
   }) async {
@@ -17614,6 +17949,7 @@ class ApiService {
         data: {
           'cash_received_amount': cashReceivedAmount,
           'cash_change_amount': cashChangeAmount,
+          'cash_change_given': cashChangeGiven,
           'cash_due_amount': cashDueAmount,
           'notes': notes,
         },
@@ -17634,6 +17970,7 @@ class ApiService {
           'paid',
           cashReceivedAmount: cashReceivedAmount,
           cashChangeAmount: cashChangeAmount,
+          cashChangeGiven: cashChangeGiven,
           cashDueAmount: cashDueAmount,
           notes: notes,
         );
@@ -18337,6 +18674,7 @@ class OrderDetail {
     required this.wantsFilm,
     required this.cashReceivedAmount,
     required this.cashChangeAmount,
+    required this.cashChangeGiven,
     required this.cashDueAmount,
     required this.isOffline,
   });
@@ -18356,6 +18694,7 @@ class OrderDetail {
   final bool wantsFilm;
   final num? cashReceivedAmount;
   final num? cashChangeAmount;
+  final bool cashChangeGiven;
   final num? cashDueAmount;
   final bool isOffline;
 
@@ -18378,6 +18717,8 @@ class OrderDetail {
     wantsFilm: j['wants_film'] == true || j['wants_film'] == 1,
     cashReceivedAmount: _toNullableNum(j['cash_received_amount']),
     cashChangeAmount: _toNullableNum(j['cash_change_amount']),
+    cashChangeGiven:
+        j['cash_change_given'] == true || j['cash_change_given'] == 1,
     cashDueAmount: _toNullableNum(j['cash_due_amount']),
     isOffline: j['offline_mode'] == true || j['offline_mode'] == 1,
   );
@@ -18816,6 +19157,7 @@ class OrderListItem {
     this.totalAmount,
     this.cashReceivedAmount,
     this.cashChangeAmount,
+    this.cashChangeGiven = false,
     this.cashDueAmount,
     this.productType,
   });
@@ -18829,6 +19171,7 @@ class OrderListItem {
   final num? totalAmount;
   final num? cashReceivedAmount;
   final num? cashChangeAmount;
+  final bool cashChangeGiven;
   final num? cashDueAmount;
   final String? productType;
 
@@ -18849,6 +19192,8 @@ class OrderListItem {
         : num.tryParse(j['total_amount']?.toString() ?? ''),
     cashReceivedAmount: OrderDetail._toNullableNum(j['cash_received_amount']),
     cashChangeAmount: OrderDetail._toNullableNum(j['cash_change_amount']),
+    cashChangeGiven:
+        j['cash_change_given'] == true || j['cash_change_given'] == 1,
     cashDueAmount: OrderDetail._toNullableNum(j['cash_due_amount']),
     productType: j['product_type'] as String?,
   );
@@ -18868,6 +19213,7 @@ class StaffOrderDetail {
     this.customerPhone,
     this.cashReceivedAmount,
     this.cashChangeAmount,
+    this.cashChangeGiven = false,
     this.cashDueAmount,
     this.productType,
     this.deliveryType,
@@ -18886,6 +19232,7 @@ class StaffOrderDetail {
   final String? customerPhone;
   final num? cashReceivedAmount;
   final num? cashChangeAmount;
+  final bool cashChangeGiven;
   final num? cashDueAmount;
   final String? productType;
   final String? deliveryType;
@@ -18912,6 +19259,8 @@ class StaffOrderDetail {
     customerPhone: j['customer_phone'] as String?,
     cashReceivedAmount: OrderDetail._toNullableNum(j['cash_received_amount']),
     cashChangeAmount: OrderDetail._toNullableNum(j['cash_change_amount']),
+    cashChangeGiven:
+        j['cash_change_given'] == true || j['cash_change_given'] == 1,
     cashDueAmount: OrderDetail._toNullableNum(j['cash_due_amount']),
     productType: j['product_type'] as String?,
     deliveryType: j['delivery_type'] as String?,
@@ -18930,6 +19279,7 @@ class StaffOrderUpdatePayload {
     this.notes,
     this.cashReceivedAmount,
     this.cashChangeAmount,
+    this.cashChangeGiven,
     this.cashDueAmount,
   });
   final String customerName;
@@ -18940,6 +19290,7 @@ class StaffOrderUpdatePayload {
   final String? notes;
   final num? cashReceivedAmount;
   final num? cashChangeAmount;
+  final bool? cashChangeGiven;
   final num? cashDueAmount;
 
   Map<String, dynamic> toJson() => {
@@ -18951,6 +19302,7 @@ class StaffOrderUpdatePayload {
     'notes': notes,
     if (cashReceivedAmount != null) 'cash_received_amount': cashReceivedAmount,
     if (cashChangeAmount != null) 'cash_change_amount': cashChangeAmount,
+    if (cashChangeGiven != null) 'cash_change_given': cashChangeGiven,
     if (cashDueAmount != null) 'cash_due_amount': cashDueAmount,
   };
 }
@@ -19017,11 +19369,29 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
   List<String> _photoPaths = const [];
   String? _photoSourceLabel;
   String? _statusMessage;
+  Future<Map<String, int>>? _summaryFuture;
+  int? _summaryEventId;
+  String? _progressPhase;
+  double _progressValue = 0;
+  int _progressSentBytes = 0;
+  int _progressTotalBytes = 0;
+  double _progressBytesPerSecond = 0;
+  int _progressCompletedBytes = 0;
+  final Map<String, int> _progressActiveBytes = {};
+  final Stopwatch _progressStopwatch = Stopwatch();
+  DateTime? _lastProgressAt;
+  Timer? _progressTicker;
 
   @override
   void initState() {
     super.initState();
     _loadEvents();
+  }
+
+  @override
+  void dispose() {
+    _progressTicker?.cancel();
+    super.dispose();
   }
 
   Future<bool> _ensureOnlineApi() async {
@@ -19056,11 +19426,15 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
         .staffEvents(token, assignedOnly: !_canSeeAllEvents(user));
     final visibleEvents = _filterEventsForUser(events, user);
     if (!mounted) return;
-    setState(() {
-      _events = visibleEvents;
-      _eventId ??= visibleEvents.isNotEmpty ? visibleEvents.first.id : null;
-    });
-  }
+      setState(() {
+        _events = visibleEvents;
+        _eventId ??= visibleEvents.isNotEmpty ? visibleEvents.first.id : null;
+        if (_eventId != null && _summaryEventId != _eventId) {
+          _summaryEventId = _eventId;
+          _summaryFuture = _loadSummary(token, _eventId!);
+        }
+      });
+    }
 
   Future<void> _pickJsonFile() async {
     final picked = await FilePicker.platform.pickFiles(
@@ -19123,6 +19497,123 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     return {'orders': results[0] as int, 'photos': results[1] as int};
   }
 
+  Future<int> _sumFileSizes(Iterable<String> filePaths) async {
+    var total = 0;
+    for (final filePath in filePaths) {
+      try {
+        total += await File(filePath).length();
+      } catch (_) {}
+    }
+    return total;
+  }
+
+  void _startProgress(int totalBytes) {
+    _progressTicker?.cancel();
+    _progressStopwatch
+      ..reset()
+      ..start();
+    _progressCompletedBytes = 0;
+    _progressActiveBytes.clear();
+    _progressValue = 0;
+    _progressSentBytes = 0;
+    _progressTotalBytes = max(0, totalBytes);
+    _progressBytesPerSecond = 0;
+    _progressPhase = 'A preparar sincronização...';
+    _lastProgressAt = DateTime.now();
+    _progressTicker = Timer.periodic(const Duration(milliseconds: 120), (_) {
+      if (!mounted || !_loading) return;
+      setState(() {
+        _recalculateProgress();
+      });
+    });
+  }
+
+  void _setProgressPhase(String phase) {
+    _progressPhase = phase;
+  }
+
+  void _updateProgress(String key, int sentBytes) {
+    _progressActiveBytes[key] = max(0, sentBytes);
+    _lastProgressAt = DateTime.now();
+    _recalculateProgress();
+  }
+
+  void _completeProgress(String key, int payloadBytes) {
+    _progressActiveBytes.remove(key);
+    _progressCompletedBytes += max(0, payloadBytes);
+    _lastProgressAt = DateTime.now();
+    _recalculateProgress();
+  }
+
+  void _dropProgress(String key) {
+    _progressActiveBytes.remove(key);
+    _recalculateProgress();
+  }
+
+  void _finishProgress() {
+    _progressActiveBytes.clear();
+    _progressCompletedBytes = _progressTotalBytes;
+    _progressValue = 1;
+    _progressSentBytes = _progressTotalBytes;
+    _progressBytesPerSecond = _progressStopwatch.elapsedMilliseconds > 0
+        ? _progressSentBytes / (_progressStopwatch.elapsedMilliseconds / 1000)
+        : 0;
+    _progressPhase = 'Concluído.';
+    _lastProgressAt = DateTime.now();
+    _progressStopwatch.stop();
+    _progressTicker?.cancel();
+    _progressTicker = null;
+  }
+
+  void _clearProgress() {
+    _progressTicker?.cancel();
+    _progressTicker = null;
+    _progressStopwatch.stop();
+    _progressActiveBytes.clear();
+    _progressCompletedBytes = 0;
+    _progressValue = 0;
+    _progressSentBytes = 0;
+    _progressTotalBytes = 0;
+    _progressBytesPerSecond = 0;
+    _progressPhase = null;
+    _lastProgressAt = null;
+  }
+
+  void _recalculateProgress() {
+    final activeSent = _progressActiveBytes.values.fold<int>(
+      0,
+      (sum, value) => sum + value,
+    );
+    final sent = min(_progressTotalBytes, _progressCompletedBytes + activeSent);
+    _progressSentBytes = sent;
+    _progressValue = _progressTotalBytes <= 0
+        ? 0
+        : sent / _progressTotalBytes;
+    _progressBytesPerSecond = _progressStopwatch.elapsedMilliseconds > 0
+        ? sent / (_progressStopwatch.elapsedMilliseconds / 1000)
+        : 0;
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    var value = bytes.toDouble();
+    var unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex++;
+    }
+    final decimals = value >= 100 ? 0 : value >= 10 ? 1 : 2;
+    return '${value.toStringAsFixed(decimals)} ${units[unitIndex]}';
+  }
+
+  String _progressIdleLabel() {
+    if (_lastProgressAt == null) return '0 ms';
+    final idle = DateTime.now().difference(_lastProgressAt!).inMilliseconds;
+    if (idle < 1000) return '$idle ms';
+    return '${(idle / 1000).toStringAsFixed(2)} s';
+  }
+
   Future<Map<String, dynamic>> _loadOfflinePhotosMetaIndex(
     String jsonPath,
   ) async {
@@ -19180,6 +19671,10 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     Map<String, dynamic> photoMetaIndex,
   ) async {
     final batches = _photoBatches(_photoPaths).toList();
+    final batchSizes = <int>[];
+    for (final batch in batches) {
+      batchSizes.add(await _sumFileSizes(batch));
+    }
     var uploadedPhotos = 0;
     for (var i = 0; i < batches.length; i += _parallelPhotoUploads) {
       final window = batches.skip(i).take(_parallelPhotoUploads).toList();
@@ -19191,18 +19686,37 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
       setState(() {
         _statusMessage =
             'A importar fotos ${uploadedPhotos + 1}-${min(uploadedPhotos + batchPhotoCount, _photoPaths.length)} de ${_photoPaths.length}...';
+        _setProgressPhase(_statusMessage!);
       });
       await Future.wait(
-        window.map(
-          (batch) => ref
-              .read(apiProvider)
-              .offlineImportPhotoBatch(
-                token,
-                eventId,
-                batch,
-                photosMeta: _matchPhotosMetaForBatch(photoMetaIndex, batch),
-              ),
-        ),
+        window.asMap().entries.map((entry) async {
+          final batchIndex = i + entry.key;
+          final batch = entry.value;
+          final payloadBytes = batchSizes[batchIndex];
+          final requestKey = 'photos-$batchIndex';
+          try {
+            await ref.read(apiProvider).offlineImportPhotoBatch(
+              token,
+              eventId,
+              batch,
+              photosMeta: _matchPhotosMetaForBatch(photoMetaIndex, batch),
+              onSendProgress: (sent, total) {
+                final effectiveSent = total > 0
+                    ? ((sent / total) * payloadBytes).round()
+                    : min(sent, payloadBytes);
+                if (!mounted) return;
+                setState(() => _updateProgress(requestKey, effectiveSent));
+              },
+            );
+            if (!mounted) return;
+            setState(() => _completeProgress(requestKey, payloadBytes));
+          } catch (_) {
+            if (mounted) {
+              setState(() => _dropProgress(requestKey));
+            }
+            rethrow;
+          }
+        }),
       );
       uploadedPhotos += batchPhotoCount;
     }
@@ -19218,16 +19732,44 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
           'Sem ligação ao servidor online. Fecha a sessão offline ou verifica a internet.',
         );
       }
+      final totalBytes =
+          await _sumFileSizes(_photoPaths) + await File(_jsonPath!).length();
+      if (!mounted) return;
+      setState(() => _startProgress(totalBytes));
       final photoMetaIndex = await _loadOfflinePhotosMetaIndex(_jsonPath!);
       if (_photoPaths.isNotEmpty) {
         await _uploadPhotoBatches(token, _eventId!, photoMetaIndex);
       }
       if (!mounted) return;
-      setState(() => _statusMessage = 'A importar JSON...');
+      setState(() {
+        _statusMessage = 'A importar JSON...';
+        _setProgressPhase(_statusMessage!);
+      });
       final deviceId = await getDeviceId();
-      await ref
-          .read(apiProvider)
-          .offlineImportFile(token, _eventId!, _jsonPath!, deviceId);
+      final jsonBytes = await File(_jsonPath!).length();
+      const jsonRequestKey = 'payload-json';
+      try {
+        await ref.read(apiProvider).offlineImportFile(
+          token,
+          _eventId!,
+          _jsonPath!,
+          deviceId,
+          onSendProgress: (sent, total) {
+            final effectiveSent = total > 0
+                ? ((sent / total) * jsonBytes).round()
+                : min(sent, jsonBytes);
+            if (!mounted) return;
+            setState(() => _updateProgress(jsonRequestKey, effectiveSent));
+          },
+        );
+        if (!mounted) return;
+        setState(() => _completeProgress(jsonRequestKey, jsonBytes));
+      } catch (_) {
+        if (mounted) {
+          setState(() => _dropProgress(jsonRequestKey));
+        }
+        rethrow;
+      }
       StaffEvent? importedEvent;
       for (final event in _events) {
         if (event.id == _eventId) {
@@ -19237,10 +19779,13 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
       }
       if (!mounted) return;
       setState(() {
+        _finishProgress();
         _statusMessage = 'Importação concluída.';
         _jsonPath = null;
         _photoPaths = const [];
         _photoSourceLabel = null;
+        _summaryFuture = null;
+        _summaryEventId = null;
       });
       ScaffoldMessenger.of(
         context,
@@ -19257,12 +19802,22 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     } catch (e) {
       if (!mounted) return;
       final message = formatUiError(e);
-      setState(() => _statusMessage = 'Erro: $message');
+      setState(() {
+        _clearProgress();
+        _statusMessage = 'Erro: $message';
+      });
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Erro import: $message')));
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          if ((_statusMessage ?? '') != 'Importação concluída.') {
+            _clearProgress();
+          }
+        });
+      }
     }
   }
 
@@ -19271,6 +19826,11 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     final token = ref.watch(staffTokenProvider);
     if (token == null) {
       return const SizedBox.shrink();
+    }
+    if (_eventId != null &&
+        (_summaryFuture == null || _summaryEventId != _eventId)) {
+      _summaryEventId = _eventId;
+      _summaryFuture = _loadSummary(token, _eventId!);
     }
 
     return Column(
@@ -19294,7 +19854,11 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
               .toList(),
           onChanged: _loading
               ? null
-              : (value) => setState(() => _eventId = value),
+              : (value) => setState(() {
+                  _eventId = value;
+                  _summaryFuture = null;
+                  _summaryEventId = null;
+                }),
         ),
         const SizedBox(height: 12),
         OutlinedButton.icon(
@@ -19343,14 +19907,48 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
             label: Text(_loading ? 'A importar...' : 'Importar'),
           ),
         ),
+        if ((_loading || _progressValue > 0) && _progressTotalBytes > 0) ...[
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: _progressValue.clamp(0, 1).toDouble(),
+              minHeight: 12,
+              backgroundColor: Colors.white.withOpacity(0.08),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${(_progressValue * 100).toStringAsFixed(1)}%  •  ${_formatBytes(_progressSentBytes)} / ${_formatBytes(_progressTotalBytes)}',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${_formatBytes(_progressBytesPerSecond.round())}/s  •  último avanço há ${_progressIdleLabel()}',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.72),
+              fontSize: 12,
+            ),
+          ),
+          if ((_progressPhase ?? '').isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              _progressPhase!,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.72),
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ],
         if ((_statusMessage ?? '').isNotEmpty) ...[
           const SizedBox(height: 10),
           Text(_statusMessage!),
         ],
         const SizedBox(height: 18),
-        if (_eventId != null)
+        if (_eventId != null) ...[
           FutureBuilder<Map<String, int>>(
-            future: _loadSummary(token, _eventId!),
+            future: _summaryFuture,
             builder: (context, snapshot) {
               final orders = snapshot.data?['orders'] ?? 0;
               final photos = snapshot.data?['photos'] ?? 0;
@@ -19402,6 +20000,7 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
               );
             },
           ),
+        ],
       ],
     );
   }

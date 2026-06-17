@@ -20,7 +20,7 @@ class PublicCreateOrderRequest extends FormRequest
             'customer_email' => ['required', 'email', 'max:255'],
             'payment_method' => ['required', 'in:cash,online'],
             'product_type' => ['required', 'in:digital,paper,both'],
-            'delivery_type' => ['nullable', 'in:pickup,shipping'],
+            'delivery_type' => ['nullable', 'in:pickup,store_pickup,shipping'],
             'delivery_address' => ['nullable', 'string', 'max:1000'],
             'wants_film' => ['nullable', 'boolean'],
             'photo_ids' => ['nullable', 'array', 'min:1'],

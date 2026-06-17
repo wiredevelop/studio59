@@ -184,6 +184,7 @@ class OfflineSyncController extends Controller
                     if ($supportsCashColumns) {
                         $attributes['cash_received_amount'] = $orderPayload['cash_received_amount'] ?? null;
                         $attributes['cash_change_amount'] = $orderPayload['cash_change_amount'] ?? null;
+                        $attributes['cash_change_given'] = $orderPayload['cash_change_given'] ?? ((float) ($orderPayload['cash_change_amount'] ?? 0) <= 0);
                         $attributes['cash_due_amount'] = $orderPayload['cash_due_amount'] ?? null;
                     }
                     $order = Order::query()->firstOrCreate(
@@ -239,6 +240,7 @@ class OfflineSyncController extends Controller
                     if ($supportsCashColumns) {
                         $updatePayload['cash_received_amount'] = $update['cash_received_amount'] ?? null;
                         $updatePayload['cash_change_amount'] = $update['cash_change_amount'] ?? null;
+                        $updatePayload['cash_change_given'] = $update['cash_change_given'] ?? ((float) ($update['cash_change_amount'] ?? 0) <= 0);
                         $updatePayload['cash_due_amount'] = $update['cash_due_amount'] ?? null;
                     }
                     if (array_key_exists('notes', $update)) {
@@ -493,7 +495,7 @@ class OfflineSyncController extends Controller
             return $photo;
         }
 
-        GeneratePhotoPreview::dispatchSync($photo->id);
+        GeneratePhotoPreview::dispatchAfterResponse($photo->id);
 
         return $photo->fresh() ?? $photo;
     }
@@ -527,6 +529,7 @@ class OfflineSyncController extends Controller
     {
         return Schema::hasColumn('orders', 'cash_received_amount')
             && Schema::hasColumn('orders', 'cash_change_amount')
+            && Schema::hasColumn('orders', 'cash_change_given')
             && Schema::hasColumn('orders', 'cash_due_amount');
     }
 }

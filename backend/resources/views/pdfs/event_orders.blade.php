@@ -22,6 +22,7 @@ td { padding: 3px 4px; vertical-align: top; border-bottom: 1px solid #f5f5f5; fo
 .orange { color: #e65100; }
 .blue { color: #1565c0; }
 .badge { font-weight: 600; }
+.settlement { font-weight: 700; }
 .photos-cell { font-size: 8px; color: #444; }
 .note-cell { font-size: 8px; color: #666; font-style: italic; }
 .summary-row td { font-weight: 700; background: #f9f9f9; border-top: 2px solid #ddd; }
@@ -65,11 +66,17 @@ td { padding: 3px 4px; vertical-align: top; border-bottom: 1px solid #f5f5f5; fo
             ->implode(', ');
         $photoCount = $o->items->sum(fn($item) => $item->quantity ?? 1);
         $isPaid = in_array($o->status, ['paid', 'delivered']);
+        $hasDue = (float) $o->cash_due_amount > 0;
+        $hasPendingChange = (float) $o->cash_change_amount > 0 && ! $o->cash_change_given;
+        $settlementClass = $hasDue ? 'red' : ($hasPendingChange ? 'orange' : ($isPaid ? 'green' : 'orange'));
+        $settlementText = $hasDue
+            ? 'DEVE '.$fmt($o->cash_due_amount).' €'
+            : ($hasPendingChange
+                ? 'TROCO '.$fmt($o->cash_change_amount).' €'
+                : ($isPaid ? 'PAGO' : 'PENDENTE'));
         $flags = [];
-        if ((float)$o->cash_change_amount > 0)
-            $flags[] = 'Troco '.$fmt($o->cash_change_amount).' €';
-        if ((float)$o->cash_due_amount > 0)
-            $flags[] = 'Deve '.$fmt($o->cash_due_amount).' €';
+        if ((float)$o->cash_change_amount > 0 && $o->cash_change_given)
+            $flags[] = 'Troco entregue '.$fmt($o->cash_change_amount).' €';
         $noteText = trim(collect(array_filter([$o->notes, implode(' · ', $flags)]))->implode(' · '));
     @endphp
     <tr>
@@ -95,11 +102,7 @@ td { padding: 3px 4px; vertical-align: top; border-bottom: 1px solid #f5f5f5; fo
             @endif
         </td>
         <td style="text-align:center;">
-            @if($isPaid)
-                <span class="badge green">Pago</span>
-            @else
-                <span class="badge orange">Pendente</span>
-            @endif
+            <span class="settlement {{ $settlementClass }}">{{ $settlementText }}</span>
         </td>
         <td class="num">{{ $fmt($o->total_amount) }} €</td>
         <td class="note-cell">{{ $noteText }}</td>

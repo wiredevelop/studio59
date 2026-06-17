@@ -44,8 +44,8 @@
         .qr-panel .modal-body { height: auto; }
         .qr-panel .modal-body img { width: 100%; height: auto; display: block; object-fit: contain; }
         .modal-header { padding: 10px 14px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
-        .modal-body { position: relative; padding: 8px; }
-        .modal-body img { width: 100%; height: 100%; object-fit: contain; background: #000; border-radius: 12px; }
+        .modal-body { position: relative; padding: 8px; overflow: hidden; }
+        .modal-body img { width: 100%; height: 100%; object-fit: contain; background: #000; border-radius: 12px; transform-origin: center; transition: transform 160ms ease; }
         .modal-watermark { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: clamp(32px, 10vw, 120px); font-weight: 800; letter-spacing: 6px; color: var(--brand-rose); opacity: 0.12; pointer-events: none; }
         .modal-actions { padding: 12px 14px; display: flex; gap: 10px; justify-content: flex-end; }
         .bottom-bar { position: sticky; bottom: 12px; margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -103,7 +103,7 @@
             @php $previewUrl = route('preview.image', $photo).'?v='.($photo->updated_at ? $photo->updated_at->timestamp : 0); @endphp
             <div class="photo-card" data-photo-id="{{ $photo->id }}" data-photo-number="{{ $photo->number }}" data-photo-url="{{ $previewUrl }}">
                 <div class="photo-thumb">
-                    <img src="{{ $previewUrl }}" alt="Foto {{ $photo->number }}" loading="lazy" decoding="async">
+                    <img src="{{ $previewUrl }}&w=720" alt="Foto {{ $photo->number }}" loading="lazy" decoding="async">
                     <div class="wm-overlay">STUDIO 59</div>
                     <button type="button" class="select-badge" data-select-toggle>✓</button>
                 </div>
@@ -135,6 +135,7 @@
             <div class="modal-watermark">STUDIO 59</div>
         </div>
         <div class="modal-actions">
+            <button class="ios-btn ios-btn-secondary" id="modal-rotate" type="button">Rodar</button>
             <button class="ios-btn ios-btn-primary" id="modal-toggle">Selecionar</button>
         </div>
     </div>
@@ -163,6 +164,17 @@ const eventId = {{ $event->id }};
 const cartKey = `studio59_cart_${eventId}`;
 const wantsFilmKey = `studio59_wants_film_${eventId}`;
 const previewBase = '{{ url('/preview') }}/';
+let touchStartX = null;
+
+const withPreviewWidth = (url, width) => {
+    try {
+        const target = new URL(url, window.location.origin);
+        target.searchParams.set('w', String(width));
+        return target.toString();
+    } catch (_) {
+        return url;
+    }
+};
 
 const readCart = () => {
     try {
@@ -255,13 +267,21 @@ const initCards = () => {
 const modal = document.getElementById('photo-modal');
 const modalTitle = document.getElementById('modal-title');
 const modalImage = document.getElementById('modal-image');
+const modalRotate = document.getElementById('modal-rotate');
 const modalToggle = document.getElementById('modal-toggle');
 let modalCard = null;
+let modalRotation = 0;
+
+const applyModalRotation = () => {
+    if (modalImage) modalImage.style.transform = `rotate(${modalRotation}deg)`;
+};
 
 const openModal = (card) => {
     modalCard = card;
+    modalRotation = 0;
     modalTitle.textContent = `Foto ${card.dataset.photoNumber}`;
-    modalImage.src = card.dataset.photoUrl || `${previewBase}${card.dataset.photoId}`;
+    modalImage.src = withPreviewWidth(card.dataset.photoUrl || `${previewBase}${card.dataset.photoId}`, 1400);
+    applyModalRotation();
     syncModalButton();
     modal.style.display = 'flex';
 };
@@ -269,6 +289,8 @@ const openModal = (card) => {
 const closeModal = () => {
     modal.style.display = 'none';
     modalCard = null;
+    modalRotation = 0;
+    applyModalRotation();
 };
 
 const syncModalButton = () => {
@@ -282,6 +304,10 @@ modalToggle?.addEventListener('click', () => {
     if (!modalCard) return;
     toggleSelection(modalCard);
     syncModalButton();
+});
+modalRotate?.addEventListener('click', () => {
+    modalRotation = (modalRotation + 90) % 360;
+    applyModalRotation();
 });
 
 document.getElementById('modal-close')?.addEventListener('click', closeModal);
@@ -337,7 +363,7 @@ const renderSuggestions = (photos) => {
         card.dataset.photoUrl = p.preview_url || `${previewBase}${p.id}`;
         card.innerHTML = `
             <div class="photo-thumb">
-                <img src="${card.dataset.photoUrl}" alt="Foto ${p.number}" loading="lazy">
+                <img src="${withPreviewWidth(card.dataset.photoUrl, 720)}" alt="Foto ${p.number}" loading="lazy">
                 <div class="wm-overlay">STUDIO 59</div>
                 <button type="button" class="select-badge" data-select-toggle>✓</button>
             </div>
@@ -353,6 +379,23 @@ const renderSuggestions = (photos) => {
 };
 
 faceBtn?.addEventListener('click', () => faceInput?.click());
+document.addEventListener('touchstart', (e) => {
+    if (modal?.style.display === 'flex') return;
+    touchStartX = e.changedTouches?.[0]?.clientX ?? null;
+}, { passive: true });
+document.addEventListener('touchend', (e) => {
+    if (modal?.style.display === 'flex' || touchStartX === null) return;
+    const touchEndX = e.changedTouches?.[0]?.clientX ?? touchStartX;
+    const delta = touchEndX - touchStartX;
+    touchStartX = null;
+    if (Math.abs(delta) < 70) return;
+    const target = delta < 0
+        ? document.querySelector('a[rel="next"]')
+        : document.querySelector('a[rel="prev"]');
+    if (target instanceof HTMLAnchorElement && target.href) {
+        window.location.href = target.href;
+    }
+}, { passive: true });
 faceInput?.addEventListener('change', async () => {
     const file = faceInput.files?.[0];
     if (!file) return;

@@ -30,7 +30,7 @@ class SalesPdf
             $amount = (float) $o->total_amount;
             if ($o->payment_method === 'cash') {
                 $cashTotal += $amount;
-                if ((float) $o->cash_change_amount > 0) {
+                if ((float) $o->cash_change_amount > 0 && ! $o->cash_change_given) {
                     $changeOwed += (float) $o->cash_change_amount;
                 }
                 if ((float) $o->cash_due_amount > 0) {

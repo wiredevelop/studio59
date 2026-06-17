@@ -62,6 +62,8 @@
 <td>
     @if($order->delivery_type === 'shipping')
         Envio ({{ number_format($order->shipping_fee ?? 0, 2) }}€)
+    @elseif($order->delivery_type === 'store_pickup')
+        Levantar em Loja
     @elseif($order->delivery_type === 'pickup')
         Entregar
     @else

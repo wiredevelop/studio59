@@ -30,6 +30,7 @@ th { background: #f2f2f2; font-size: 9px; text-align: left; font-weight: 600; }
 .badge-online { color: #1565c0; font-weight: 600; }
 .badge-pending { color: #e65100; }
 .badge-paid { color: #2e7d32; }
+.badge-danger { color: #b63a2c; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -72,13 +73,13 @@ th { background: #f2f2f2; font-size: 9px; text-align: left; font-weight: 600; }
     <tr>
         @if($changeOwed > 0)
         <td><div class="kpi-box">
-            <div class="kpi-label">Trocos a Devolver</div>
+            <div class="kpi-label">Trocos por Entregar</div>
             <div class="kpi-val red">{{ $fmt($changeOwed) }} €</div>
         </div></td>
         @endif
         @if($photosOwed > 0)
         <td><div class="kpi-box">
-            <div class="kpi-label">Fotos em Dívida</div>
+            <div class="kpi-label">Valor em Dívida</div>
             <div class="kpi-val red">{{ $fmt($photosOwed) }} €</div>
         </div></td>
         @endif
@@ -124,6 +125,8 @@ th { background: #f2f2f2; font-size: 9px; text-align: left; font-weight: 600; }
     @php
         $photoNums = $o->items->filter(fn($i) => $i->photo)->map(fn($i) => $i->photo->number.'×'.($i->quantity ?? 1))->implode(', ');
         $photoCount = $o->items->sum(fn($i) => $i->quantity ?? 1);
+        $hasDue = (float) $o->cash_due_amount > 0;
+        $hasPendingChange = (float) $o->cash_change_amount > 0 && ! $o->cash_change_given;
     @endphp
     <tr>
         <td>{{ $o->order_code }}</td>
@@ -139,7 +142,11 @@ th { background: #f2f2f2; font-size: 9px; text-align: left; font-weight: 600; }
             @endif
         </td>
         <td style="text-align:center;">
-            @if($o->status === 'paid' || $o->status === 'delivered')
+            @if($hasDue)
+                <span class="badge-danger">DEVE {{ $fmt($o->cash_due_amount) }} €</span>
+            @elseif($hasPendingChange)
+                <span class="badge-pending">TROCO {{ $fmt($o->cash_change_amount) }} €</span>
+            @elseif($o->status === 'paid' || $o->status === 'delivered')
                 <span class="badge-paid">Pago</span>
             @else
                 <span class="badge-pending">Pendente</span>
@@ -148,13 +155,9 @@ th { background: #f2f2f2; font-size: 9px; text-align: left; font-weight: 600; }
         <td class="num">{{ $fmt($o->total_amount) }} €</td>
         <td class="note-text">
             {{ $o->notes ?? '' }}
-            @if((float)$o->cash_change_amount > 0)
+            @if((float)$o->cash_change_amount > 0 && $o->cash_change_given)
                 @if($o->notes) · @endif
-                Troco {{ $fmt($o->cash_change_amount) }} €
-            @endif
-            @if((float)$o->cash_due_amount > 0)
-                @if($o->notes || (float)$o->cash_change_amount > 0) · @endif
-                Deve {{ $fmt($o->cash_due_amount) }} €
+                Troco entregue {{ $fmt($o->cash_change_amount) }} €
             @endif
         </td>
     </tr>

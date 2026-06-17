@@ -16,10 +16,13 @@ const String kOfflineDiscoveryType = 'studio59_offline_discovery';
 const String kOfflineDiscoveryResponseType =
     'studio59_offline_discovery_response';
 
-Uint8List? _generateThumbnailBytes(Uint8List srcBytes) {
+Uint8List? _generateThumbnailBytes(Map<String, dynamic> payload) {
+  final srcBytes = payload['bytes'];
+  final maxWidth = payload['width'] as int? ?? 720;
+  final quality = payload['quality'] as int? ?? 84;
+  if (srcBytes is! Uint8List) return null;
   final decoded = img.decodeImage(srcBytes);
   if (decoded == null) return null;
-  const maxWidth = 400;
   final resized = decoded.width > maxWidth
       ? img.copyResize(
           decoded,
@@ -27,7 +30,7 @@ Uint8List? _generateThumbnailBytes(Uint8List srcBytes) {
           interpolation: img.Interpolation.linear,
         )
       : decoded;
-  return Uint8List.fromList(img.encodeJpg(resized, quality: 80));
+  return Uint8List.fromList(img.encodeJpg(resized, quality: quality));
 }
 
 bool looksLikeLocalApiBaseUrl(String url) {
@@ -80,6 +83,11 @@ String _mimeTypeForPath(String path) {
   if (ext.endsWith('.heic')) return 'image/heic';
   if (ext.endsWith('.heif')) return 'image/heif';
   return 'image/jpeg';
+}
+
+int _normalizedPreviewWidth(String? value) {
+  final parsed = int.tryParse((value ?? '').trim()) ?? 720;
+  return parsed.clamp(360, 1600).toInt();
 }
 
 String? _multipartHeaderValue(String? header, String key) {
@@ -252,6 +260,7 @@ class OfflineHostOrder {
     required this.paymentMethod,
     required this.cashReceivedAmount,
     required this.cashChangeAmount,
+    required this.cashChangeGiven,
     required this.cashDueAmount,
     required this.status,
     required this.totalAmount,
@@ -276,6 +285,7 @@ class OfflineHostOrder {
   final String paymentMethod;
   final num? cashReceivedAmount;
   final num? cashChangeAmount;
+  final bool cashChangeGiven;
   final num? cashDueAmount;
   final String status;
   final num totalAmount;
@@ -290,6 +300,7 @@ class OfflineHostOrder {
     String? paymentMethod,
     num? cashReceivedAmount,
     num? cashChangeAmount,
+    bool? cashChangeGiven,
     num? cashDueAmount,
     String? status,
     String? updatedAt,
@@ -310,6 +321,7 @@ class OfflineHostOrder {
     paymentMethod: paymentMethod ?? this.paymentMethod,
     cashReceivedAmount: cashReceivedAmount ?? this.cashReceivedAmount,
     cashChangeAmount: cashChangeAmount ?? this.cashChangeAmount,
+    cashChangeGiven: cashChangeGiven ?? this.cashChangeGiven,
     cashDueAmount: cashDueAmount ?? this.cashDueAmount,
     status: status ?? this.status,
     totalAmount: totalAmount,
@@ -335,6 +347,7 @@ class OfflineHostOrder {
     'payment_method': paymentMethod,
     'cash_received_amount': cashReceivedAmount,
     'cash_change_amount': cashChangeAmount,
+    'cash_change_given': cashChangeGiven,
     'cash_due_amount': cashDueAmount,
     'status': status,
     'total_amount': totalAmount,
@@ -358,6 +371,7 @@ class OfflineHostOrder {
     'payment_method': paymentMethod,
     'cash_received_amount': cashReceivedAmount,
     'cash_change_amount': cashChangeAmount,
+    'cash_change_given': cashChangeGiven,
     'cash_due_amount': cashDueAmount,
     'customer_name': customerName,
     'customer_email': customerEmail,
@@ -383,6 +397,7 @@ class OfflineHostOrder {
     'payment_method': paymentMethod,
     'cash_received_amount': cashReceivedAmount,
     'cash_change_amount': cashChangeAmount,
+    'cash_change_given': cashChangeGiven,
     'cash_due_amount': cashDueAmount,
     'status': status,
     'total_amount': totalAmount,
@@ -425,6 +440,9 @@ class OfflineHostOrder {
             : (json['cash_change_amount'] is num
                   ? json['cash_change_amount'] as num
                   : num.tryParse(json['cash_change_amount']?.toString() ?? '')),
+        cashChangeGiven:
+            json['cash_change_given'] == true ||
+            json['cash_change_given'] == 1,
         cashDueAmount: json['cash_due_amount'] == null
             ? null
             : (json['cash_due_amount'] is num
@@ -866,8 +884,56 @@ class OfflineHostServer {
   HttpServer? _server;
   RawDatagramSocket? _discoverySocket;
   OfflineHostSession? _session;
+  final Map<String, Future<Uint8List?>> _previewBuilds = {};
   bool get isRunning => _server != null;
   OfflineHostSession? get session => _session;
+
+  Future<Uint8List?> _loadOrCreatePreviewBytes(
+    OfflineHostPhoto photo,
+    int width,
+  ) {
+    final cacheKey = '${photo.id}:$width';
+    return _previewBuilds.putIfAbsent(cacheKey, () async {
+      try {
+        final cacheDir = await getTemporaryDirectory();
+        final cacheFile = File(
+          '${cacheDir.path}/s59_thumb_v3_${photo.id}_$width.jpg',
+        );
+        if (await cacheFile.exists()) {
+          return await cacheFile.readAsBytes();
+        }
+        final srcBytes = await File(photo.path).readAsBytes();
+        final generated = await compute(_generateThumbnailBytes, {
+          'bytes': srcBytes,
+          'width': width,
+          'quality': width >= 1200 ? 86 : 84,
+        });
+        if (generated != null) {
+          try {
+            await cacheFile.writeAsBytes(generated, flush: true);
+          } catch (_) {}
+        }
+        return generated ?? srcBytes;
+      } finally {
+        _previewBuilds.remove(cacheKey);
+      }
+    });
+  }
+
+  void _prewarmPreviewCache(
+    Iterable<OfflineHostPhoto> photos, {
+    int width = 720,
+  }) {
+    unawaited(
+      Future<void>(() async {
+        for (final photo in photos) {
+          try {
+            await _loadOrCreatePreviewBytes(photo, width);
+          } catch (_) {}
+        }
+      }),
+    );
+  }
 
   Future<OfflineHostStartResult> start(OfflineHostSession session) async {
     await stop(clearSessionFile: false);
@@ -896,6 +962,7 @@ class OfflineHostServer {
     final discoverySocket = _discoverySocket;
     _server = null;
     _discoverySocket = null;
+    _previewBuilds.clear();
     if (server != null) {
       await server.close(force: true);
     }
@@ -1300,28 +1367,20 @@ class OfflineHostServer {
     }
     final p = photo.path.toLowerCase();
     final isUnsupported = p.endsWith('.heic') || p.endsWith('.heif');
+    final width = _normalizedPreviewWidth(request.uri.queryParameters['w']);
     if (!isUnsupported) {
       try {
-        final cacheDir = await getTemporaryDirectory();
-        final cacheFile = File('${cacheDir.path}/s59_thumb_${photo.id}.jpg');
-        Uint8List thumbBytes;
-        if (await cacheFile.exists()) {
-          thumbBytes = await cacheFile.readAsBytes();
-        } else {
-          final srcBytes = await File(photo.path).readAsBytes();
-          final generated = await compute(_generateThumbnailBytes, srcBytes);
-          if (generated != null) {
-            thumbBytes = generated;
-            try {
-              await cacheFile.writeAsBytes(thumbBytes);
-            } catch (_) {}
-          } else {
-            thumbBytes = srcBytes;
-          }
+        final thumbBytes = await _loadOrCreatePreviewBytes(photo, width);
+        if (thumbBytes == null) {
+          throw const FormatException('Preview generation failed');
         }
         _writeCors(request.response);
         request.response.statusCode = HttpStatus.ok;
         request.response.headers.contentType = ContentType.parse('image/jpeg');
+        request.response.headers.set(
+          HttpHeaders.cacheControlHeader,
+          'public, max-age=31536000, immutable',
+        );
         request.response.contentLength = thumbBytes.length;
         request.response.add(thumbBytes);
         await request.response.close();
@@ -1431,6 +1490,14 @@ class OfflineHostServer {
     final slice = start >= total
         ? <OfflineHostPhoto>[]
         : filtered.skip(start).take(safePerPage).toList();
+    final nextSliceStart = safePage * safePerPage;
+    final nextSlice = nextSliceStart >= total
+        ? const <OfflineHostPhoto>[]
+        : filtered.skip(nextSliceStart).take(safePerPage).toList();
+    _prewarmPreviewCache(slice);
+    if (nextSlice.isNotEmpty) {
+      _prewarmPreviewCache(nextSlice);
+    }
     final requested = request.requestedUri;
     await _json(request, HttpStatus.ok, {
       'data': [
@@ -1746,8 +1813,7 @@ class OfflineHostServer {
       });
       return;
     }
-    if ((productType == 'digital' || productType == 'both') &&
-        customerEmail.isEmpty) {
+    if (productType == 'digital' && customerEmail.isEmpty) {
       await _json(request, HttpStatus.unprocessableEntity, {
         'message': 'Email obrigatório para entrega digital.',
       });
@@ -1840,6 +1906,7 @@ class OfflineHostServer {
       paymentMethod: 'cash',
       cashReceivedAmount: null,
       cashChangeAmount: null,
+      cashChangeGiven: true,
       cashDueAmount: null,
       status: 'pending',
       totalAmount: totalAmount,
@@ -2133,6 +2200,10 @@ class OfflineHostServer {
           : (body['cash_change_amount'] is num
                 ? body['cash_change_amount'] as num
                 : num.tryParse(body['cash_change_amount']?.toString() ?? '')),
+      cashChangeGiven: body['cash_change_given'] == null
+          ? current.cashChangeGiven
+          : (body['cash_change_given'] == true ||
+                body['cash_change_given'] == 1),
       cashDueAmount: body['cash_due_amount'] == null
           ? current.cashDueAmount
           : (body['cash_due_amount'] is num
@@ -2222,6 +2293,8 @@ class OfflineHostServer {
       cashChangeAmount: body['cash_change_amount'] is num
           ? body['cash_change_amount'] as num
           : num.tryParse(body['cash_change_amount']?.toString() ?? ''),
+      cashChangeGiven:
+          body['cash_change_given'] == true || body['cash_change_given'] == 1,
       cashDueAmount: body['cash_due_amount'] is num
           ? body['cash_due_amount'] as num
           : num.tryParse(body['cash_due_amount']?.toString() ?? ''),

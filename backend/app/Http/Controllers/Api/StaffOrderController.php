@@ -110,6 +110,7 @@ class StaffOrderController extends Controller
             'payment_method' => $order->payment_method,
             'cash_received_amount' => $order->cash_received_amount,
             'cash_change_amount' => $order->cash_change_amount,
+            'cash_change_given' => $order->cash_change_given,
             'cash_due_amount' => $order->cash_due_amount,
             'status' => $order->status,
             'total_amount' => $order->total_amount,
@@ -148,16 +149,22 @@ class StaffOrderController extends Controller
             'notes' => ['nullable', 'string', 'max:2000'],
             'cash_received_amount' => ['nullable', 'numeric', 'min:0'],
             'cash_change_amount' => ['nullable', 'numeric', 'min:0'],
+            'cash_change_given' => ['nullable', 'boolean'],
             'cash_due_amount' => ['nullable', 'numeric', 'min:0'],
         ]);
 
-        $updateData = collect($validated)->except(['cash_received_amount', 'cash_change_amount', 'cash_due_amount'])->toArray();
+        $updateData = collect($validated)->except(['cash_received_amount', 'cash_change_amount', 'cash_change_given', 'cash_due_amount'])->toArray();
         if (($order->payment_method === 'cash' || ($validated['payment_method'] ?? null) === 'cash')) {
             if (array_key_exists('cash_received_amount', $validated)) {
                 $updateData['cash_received_amount'] = $validated['cash_received_amount'];
             }
             if (array_key_exists('cash_change_amount', $validated)) {
                 $updateData['cash_change_amount'] = $validated['cash_change_amount'];
+            }
+            if (array_key_exists('cash_change_given', $validated)) {
+                $updateData['cash_change_given'] = $validated['cash_change_given'];
+            } elseif (($validated['cash_change_amount'] ?? $order->cash_change_amount ?? 0) <= 0) {
+                $updateData['cash_change_given'] = true;
             }
             if (array_key_exists('cash_due_amount', $validated)) {
                 $updateData['cash_due_amount'] = $validated['cash_due_amount'];
@@ -208,6 +215,7 @@ class StaffOrderController extends Controller
         $validated = $request->validate([
             'cash_received_amount' => ['nullable', 'numeric', 'min:0'],
             'cash_change_amount' => ['nullable', 'numeric', 'min:0'],
+            'cash_change_given' => ['nullable', 'boolean'],
             'cash_due_amount' => ['nullable', 'numeric', 'min:0'],
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
@@ -216,6 +224,10 @@ class StaffOrderController extends Controller
         if ($order->payment_method === 'cash') {
             $update['cash_received_amount'] = $validated['cash_received_amount'] ?? null;
             $update['cash_change_amount'] = $validated['cash_change_amount'] ?? null;
+            $changeAmount = (float) ($validated['cash_change_amount'] ?? 0);
+            $update['cash_change_given'] = $changeAmount > 0
+                ? (bool) ($validated['cash_change_given'] ?? false)
+                : true;
             $update['cash_due_amount'] = $validated['cash_due_amount'] ?? null;
         }
         if (array_key_exists('notes', $validated)) {

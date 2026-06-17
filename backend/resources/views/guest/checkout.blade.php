@@ -63,6 +63,7 @@
         <div class="section-card space-y-3" id="delivery-section" style="display:none;">
             <div class="text-sm font-semibold">Entrega</div>
             <label class="option"><input type="radio" name="delivery_type" value="pickup"> <span id="delivery-pickup-label">Entregar aos noivos</span></label>
+            <label class="option"><input type="radio" name="delivery_type" value="store_pickup"> <span>Levantar em Loja</span></label>
             <label class="option"><input type="radio" name="delivery_type" value="shipping"> <span>Enviar por correio (+5€)</span></label>
             <input name="delivery_address" id="delivery-address" class="ios-input" placeholder="Morada para envio" style="display:none;">
         </div>
@@ -195,7 +196,7 @@ const deliveryRadios = document.querySelectorAll('input[name="delivery_type"]');
 deliveryRadios.forEach((r) => r.addEventListener('change', () => {
     if (r.value === 'shipping' && r.checked) {
         deliveryAddress.style.display = 'block';
-    } else if (r.value === 'pickup' && r.checked) {
+    } else if (r.checked) {
         deliveryAddress.style.display = 'none';
         deliveryAddress.value = '';
     }
