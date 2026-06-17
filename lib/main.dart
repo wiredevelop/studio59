@@ -19359,8 +19359,9 @@ class OfflineSyncPanel extends ConsumerStatefulWidget {
 }
 
 class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
-  static const int _photoBatchSize = 20;
-  static const int _parallelPhotoUploads = 3;
+  static const int _photoBatchSize = 8;
+  static const int _parallelPhotoUploads = 2;
+  static const int _maxPhotoBatchBytes = 8 * 1024 * 1024;
 
   List<StaffEvent> _events = [];
   int? _eventId;
@@ -19658,10 +19659,101 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     return matched;
   }
 
-  Iterable<List<String>> _photoBatches(List<String> photoPaths) sync* {
-    for (var i = 0; i < photoPaths.length; i += _photoBatchSize) {
-      final end = min(i + _photoBatchSize, photoPaths.length);
-      yield photoPaths.sublist(i, end);
+  bool _isPayloadTooLargeError(Object error) =>
+      error is DioException && error.response?.statusCode == 413;
+
+  Future<List<List<String>>> _photoBatches(List<String> photoPaths) async {
+    final batches = <List<String>>[];
+    var current = <String>[];
+    var currentBytes = 0;
+    for (final photoPath in photoPaths) {
+      final fileBytes = await _sumFileSizes([photoPath]);
+      final shouldSplit = current.isNotEmpty &&
+          (current.length >= _photoBatchSize ||
+              currentBytes + fileBytes > _maxPhotoBatchBytes);
+      if (shouldSplit) {
+        batches.add(current);
+        current = <String>[];
+        currentBytes = 0;
+      }
+      current.add(photoPath);
+      currentBytes += fileBytes;
+    }
+    if (current.isNotEmpty) {
+      batches.add(current);
+    }
+    return batches;
+  }
+
+  Future<void> _uploadPhotoBatchSafely(
+    String token,
+    int eventId,
+    List<String> batch,
+    Map<String, dynamic> photoMetaIndex, {
+    required String requestKey,
+    required int payloadBytes,
+  }) async {
+    try {
+      await ref.read(apiProvider).offlineImportPhotoBatch(
+        token,
+        eventId,
+        batch,
+        photosMeta: _matchPhotosMetaForBatch(photoMetaIndex, batch),
+        onSendProgress: (sent, total) {
+          final effectiveSent = total > 0
+              ? ((sent / total) * payloadBytes).round()
+              : min(sent, payloadBytes);
+          if (!mounted) return;
+          setState(() => _updateProgress(requestKey, effectiveSent));
+        },
+      );
+      if (!mounted) return;
+      setState(() => _completeProgress(requestKey, payloadBytes));
+    } catch (error) {
+      if (_isPayloadTooLargeError(error) && batch.length > 1) {
+        final mid = batch.length ~/ 2;
+        final first = batch.sublist(0, mid);
+        final second = batch.sublist(mid);
+        final firstBytes = await _sumFileSizes(first);
+        final secondBytes = max(0, payloadBytes - firstBytes);
+        if (!mounted) return;
+        setState(() {
+          _dropProgress(requestKey);
+          _setProgressPhase(
+            'Lote demasiado grande. A dividir automaticamente...',
+          );
+        });
+        await _uploadPhotoBatchSafely(
+          token,
+          eventId,
+          first,
+          photoMetaIndex,
+          requestKey: '$requestKey-a',
+          payloadBytes: firstBytes,
+        );
+        await _uploadPhotoBatchSafely(
+          token,
+          eventId,
+          second,
+          photoMetaIndex,
+          requestKey: '$requestKey-b',
+          payloadBytes: secondBytes,
+        );
+        return;
+      }
+      if (_isPayloadTooLargeError(error) && batch.length == 1) {
+        final fileName = path.basename(batch.first);
+        if (mounted) {
+          setState(() => _dropProgress(requestKey));
+        }
+        throw Exception(
+          'O ficheiro $fileName excede o limite do servidor. Reduz o tamanho dessa foto e tenta novamente.',
+        );
+      }
+      if (mounted) {
+        setState(() => _dropProgress(requestKey));
+      }
+      rethrow;
     }
   }
 
@@ -19670,7 +19762,7 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     int eventId,
     Map<String, dynamic> photoMetaIndex,
   ) async {
-    final batches = _photoBatches(_photoPaths).toList();
+    final batches = await _photoBatches(_photoPaths);
     final batchSizes = <int>[];
     for (final batch in batches) {
       batchSizes.add(await _sumFileSizes(batch));
@@ -19694,28 +19786,14 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
           final batch = entry.value;
           final payloadBytes = batchSizes[batchIndex];
           final requestKey = 'photos-$batchIndex';
-          try {
-            await ref.read(apiProvider).offlineImportPhotoBatch(
-              token,
-              eventId,
-              batch,
-              photosMeta: _matchPhotosMetaForBatch(photoMetaIndex, batch),
-              onSendProgress: (sent, total) {
-                final effectiveSent = total > 0
-                    ? ((sent / total) * payloadBytes).round()
-                    : min(sent, payloadBytes);
-                if (!mounted) return;
-                setState(() => _updateProgress(requestKey, effectiveSent));
-              },
-            );
-            if (!mounted) return;
-            setState(() => _completeProgress(requestKey, payloadBytes));
-          } catch (_) {
-            if (mounted) {
-              setState(() => _dropProgress(requestKey));
-            }
-            rethrow;
-          }
+          await _uploadPhotoBatchSafely(
+            token,
+            eventId,
+            batch,
+            photoMetaIndex,
+            requestKey: requestKey,
+            payloadBytes: payloadBytes,
+          );
         }),
       );
       uploadedPhotos += batchPhotoCount;
