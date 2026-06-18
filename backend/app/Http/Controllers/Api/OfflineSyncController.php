@@ -495,9 +495,16 @@ class OfflineSyncController extends Controller
             return $photo;
         }
 
-        GeneratePhotoPreview::dispatchAfterResponse($photo->id);
+        if ($photo->preview_status !== 'pending') {
+            $photo->forceFill([
+                'preview_status' => 'pending',
+                'preview_error' => null,
+            ])->save();
+        }
 
-        return $photo->fresh() ?? $photo;
+        GeneratePhotoPreview::dispatch($photo->id);
+
+        return $photo;
     }
 
     private function resolveImportedPhotoId(Event $event, array $payload, array $photoMap): ?int
