@@ -7631,7 +7631,7 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
         return SingleChildScrollView(
           padding: const EdgeInsets.all(kDeskGutter),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _DeskCard(
                 child: Column(
@@ -18419,7 +18419,8 @@ class ApiService {
 
   Future<String> staffExportOrdersPdf(String token, int eventId) async {
     final tempDir = await getTemporaryDirectory();
-    final savePath = '${tempDir.path}/pedidos-evento-$eventId.pdf';
+    final savePath =
+        '${tempDir.path}/pedidos-evento-$eventId-${DateTime.now().microsecondsSinceEpoch}.pdf';
     final r = await dio.download(
       '/events/$eventId/orders/export-orders-pdf',
       savePath,
@@ -18435,7 +18436,8 @@ class ApiService {
     double commissionRate = 15.0,
   }) async {
     final tempDir = await getTemporaryDirectory();
-    final savePath = '${tempDir.path}/vendas-evento-$eventId.pdf';
+    final savePath =
+        '${tempDir.path}/vendas-evento-$eventId-${DateTime.now().microsecondsSinceEpoch}.pdf';
     final r = await dio.download(
       '/events/$eventId/orders/export-sales-pdf',
       savePath,

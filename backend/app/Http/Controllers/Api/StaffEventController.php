@@ -45,12 +45,9 @@ class StaffEventController extends Controller
 
         $paginator = $query->paginate($perPage);
 
-        $canRead = $user && $user->hasPermission('events.view');
-        if (! $canRead) {
-            $paginator->setCollection(
-                $paginator->getCollection()->map(fn (Event $event) => $this->calendarEventPayload($event))
-            );
-        }
+        $paginator->setCollection(
+            $paginator->getCollection()->map(fn (Event $event) => $this->calendarEventPayload($event))
+        );
 
         return response()->json($paginator);
     }
@@ -87,8 +84,7 @@ class StaffEventController extends Controller
         $nextId = $index < ($ids->count() - 1) ? (int) $ids[$index + 1] : null;
 
         $event = Event::find($currentId);
-        $canRead = $user && $user->hasPermission('events.view');
-        $eventPayload = $event && $canRead ? $event : ($event ? $this->calendarEventPayload($event) : null);
+        $eventPayload = $event ? $this->calendarEventPayload($event) : null;
 
         return response()->json([
             'event' => $eventPayload,
@@ -112,6 +108,11 @@ class StaffEventController extends Controller
             'is_active_today' => $event->is_active_today,
             'location' => $event->location,
             'event_type' => $event->event_type,
+            'event_meta' => $event->event_meta,
+            'qr_token' => $event->qr_token,
+            'access_pin' => $event->access_pin,
+            'notes' => $event->notes,
+            'is_locked' => (bool) $event->is_locked,
         ];
     }
 
