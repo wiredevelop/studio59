@@ -19359,9 +19359,9 @@ class OfflineSyncPanel extends ConsumerStatefulWidget {
 }
 
 class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
-  static const int _photoBatchSize = 12;
-  static const int _parallelPhotoUploads = 4;
-  static const int _maxPhotoBatchBytes = 12 * 1024 * 1024;
+  static const int _photoBatchSize = 24;
+  static const int _parallelPhotoUploads = 6;
+  static const int _maxPhotoBatchBytes = 32 * 1024 * 1024;
 
   List<StaffEvent> _events = [];
   int? _eventId;
@@ -19659,11 +19659,15 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
   String _progressEtaLabel() {
     final remainingBytes = max(0, _progressTotalBytes - _progressSentBytes);
     if (remainingBytes <= 0) return '0s';
-    final blendedSpeed = _progressInstantBytesPerSecond > 0
-        ? (_progressInstantBytesPerSecond * 0.65) + (_progressBytesPerSecond * 0.35)
-        : _progressBytesPerSecond;
-    if (blendedSpeed <= 0) return '--';
-    final etaSeconds = max(1, (remainingBytes / blendedSpeed).round());
+    final averageSpeed = _progressBytesPerSecond;
+    final currentSpeed = _progressInstantBytesPerSecond;
+    final etaSpeed = averageSpeed > 0
+        ? (currentSpeed > 0
+              ? max(averageSpeed * 0.85, currentSpeed * 0.35 + averageSpeed * 0.65)
+              : averageSpeed)
+        : currentSpeed;
+    if (etaSpeed <= 0) return '--';
+    final etaSeconds = max(1, (remainingBytes / etaSpeed).round());
     return _formatEta(Duration(seconds: etaSeconds));
   }
 
