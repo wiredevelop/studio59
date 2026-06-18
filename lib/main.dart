@@ -3018,9 +3018,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
         setState(() => paymentMethod = 'cash');
       });
     }
-    final showEmailField = offlineCheckout
-        ? productType == 'digital'
-        : productType != 'paper';
+    final showEmailField = productType != 'paper';
     final onlineOptions = allowsOnlinePayment
         ? buildOnlineMethodOptions(
             supportsApplePay: supportsApplePay,
@@ -3451,7 +3449,7 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
                                         content: Text(
-                                          'Email é obrigatório para produto digital.',
+                                          'Email é obrigatório para produto digital ou ambos.',
                                         ),
                                       ),
                                     );
