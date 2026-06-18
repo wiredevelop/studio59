@@ -109,9 +109,6 @@ class OfflineSyncController extends Controller
         $checksum = hash('sha256', $raw);
 
         $existing = OfflineSync::query()->where('checksum', $checksum)->first();
-        if ($existing && $existing->status === 'completed') {
-            return response()->json(['message' => 'Already imported', 'sync_id' => $existing->id]);
-        }
         $sync = $existing ?: new OfflineSync();
         $sync->fill([
             'event_id' => $event->id,
@@ -187,14 +184,18 @@ class OfflineSyncController extends Controller
                         $attributes['cash_change_given'] = $orderPayload['cash_change_given'] ?? ((float) ($orderPayload['cash_change_amount'] ?? 0) <= 0);
                         $attributes['cash_due_amount'] = $orderPayload['cash_due_amount'] ?? null;
                     }
-                    $order = Order::query()->firstOrCreate(
+                    $order = Order::query()->updateOrCreate(
                         ['order_code' => $orderPayload['order_code']],
                         $attributes
                     );
 
                     if (! empty($orderPayload['items']) && is_array($orderPayload['items'])) {
+                        OrderItem::query()->where('order_id', $order->id)->delete();
                         foreach ($orderPayload['items'] as $item) {
                             $resolvedPhotoId = $this->resolveImportedPhotoId($event, $item, $photoMap);
+                            if (! $resolvedPhotoId) {
+                                continue;
+                            }
                             OrderItem::query()->firstOrCreate(
                                 [
                                     'order_id' => $order->id,
