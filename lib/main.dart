@@ -19359,9 +19359,9 @@ class OfflineSyncPanel extends ConsumerStatefulWidget {
 }
 
 class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
-  static const int _photoBatchSize = 8;
-  static const int _parallelPhotoUploads = 2;
-  static const int _maxPhotoBatchBytes = 8 * 1024 * 1024;
+  static const int _photoBatchSize = 12;
+  static const int _parallelPhotoUploads = 4;
+  static const int _maxPhotoBatchBytes = 12 * 1024 * 1024;
 
   List<StaffEvent> _events = [];
   int? _eventId;
@@ -19377,10 +19377,13 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
   int _progressSentBytes = 0;
   int _progressTotalBytes = 0;
   double _progressBytesPerSecond = 0;
+  double _progressInstantBytesPerSecond = 0;
   int _progressCompletedBytes = 0;
   final Map<String, int> _progressActiveBytes = {};
   final Stopwatch _progressStopwatch = Stopwatch();
   DateTime? _lastProgressAt;
+  DateTime? _lastProgressSampleAt;
+  int _lastProgressSampleBytes = 0;
   Timer? _progressTicker;
 
   @override
@@ -19519,8 +19522,11 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     _progressSentBytes = 0;
     _progressTotalBytes = max(0, totalBytes);
     _progressBytesPerSecond = 0;
+    _progressInstantBytesPerSecond = 0;
     _progressPhase = 'A preparar sincronização...';
     _lastProgressAt = DateTime.now();
+    _lastProgressSampleAt = _lastProgressAt;
+    _lastProgressSampleBytes = 0;
     _progressTicker = Timer.periodic(const Duration(milliseconds: 120), (_) {
       if (!mounted || !_loading) return;
       setState(() {
@@ -19559,6 +19565,7 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     _progressBytesPerSecond = _progressStopwatch.elapsedMilliseconds > 0
         ? _progressSentBytes / (_progressStopwatch.elapsedMilliseconds / 1000)
         : 0;
+    _progressInstantBytesPerSecond = _progressBytesPerSecond;
     _progressPhase = 'Concluído.';
     _lastProgressAt = DateTime.now();
     _progressStopwatch.stop();
@@ -19576,8 +19583,11 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     _progressSentBytes = 0;
     _progressTotalBytes = 0;
     _progressBytesPerSecond = 0;
+    _progressInstantBytesPerSecond = 0;
     _progressPhase = null;
     _lastProgressAt = null;
+    _lastProgressSampleAt = null;
+    _lastProgressSampleBytes = 0;
   }
 
   void _recalculateProgress() {
@@ -19593,6 +19603,23 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     _progressBytesPerSecond = _progressStopwatch.elapsedMilliseconds > 0
         ? sent / (_progressStopwatch.elapsedMilliseconds / 1000)
         : 0;
+    final now = DateTime.now();
+    final sampleAt = _lastProgressSampleAt;
+    if (sampleAt != null) {
+      final elapsedMs = now.difference(sampleAt).inMilliseconds;
+      if (elapsedMs >= 180) {
+        final deltaBytes = max(0, sent - _lastProgressSampleBytes);
+        final instant = deltaBytes / (elapsedMs / 1000);
+        _progressInstantBytesPerSecond = _progressInstantBytesPerSecond <= 0
+            ? instant
+            : (_progressInstantBytesPerSecond * 0.6) + (instant * 0.4);
+        _lastProgressSampleAt = now;
+        _lastProgressSampleBytes = sent;
+      }
+    } else {
+      _lastProgressSampleAt = now;
+      _lastProgressSampleBytes = sent;
+    }
   }
 
   String _formatBytes(int bytes) {
@@ -19613,6 +19640,45 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     final idle = DateTime.now().difference(_lastProgressAt!).inMilliseconds;
     if (idle < 1000) return '$idle ms';
     return '${(idle / 1000).toStringAsFixed(2)} s';
+  }
+
+  String _formatEta(Duration duration) {
+    if (duration.inSeconds < 60) {
+      return '${duration.inSeconds}s';
+    }
+    final minutes = duration.inMinutes;
+    final seconds = duration.inSeconds % 60;
+    if (minutes < 60) {
+      return '${minutes}m ${seconds.toString().padLeft(2, '0')}s';
+    }
+    final hours = duration.inHours;
+    final remainingMinutes = duration.inMinutes % 60;
+    return '${hours}h ${remainingMinutes.toString().padLeft(2, '0')}m';
+  }
+
+  String _progressEtaLabel() {
+    final remainingBytes = max(0, _progressTotalBytes - _progressSentBytes);
+    if (remainingBytes <= 0) return '0s';
+    final blendedSpeed = _progressInstantBytesPerSecond > 0
+        ? (_progressInstantBytesPerSecond * 0.65) + (_progressBytesPerSecond * 0.35)
+        : _progressBytesPerSecond;
+    if (blendedSpeed <= 0) return '--';
+    final etaSeconds = max(1, (remainingBytes / blendedSpeed).round());
+    return _formatEta(Duration(seconds: etaSeconds));
+  }
+
+  Future<Map<String, int>> _buildPhotoSizeIndex(
+    Iterable<String> photoPaths,
+  ) async {
+    final sizes = <String, int>{};
+    for (final photoPath in photoPaths) {
+      try {
+        sizes[photoPath] = await File(photoPath).length();
+      } catch (_) {
+        sizes[photoPath] = 0;
+      }
+    }
+    return sizes;
   }
 
   Future<Map<String, dynamic>> _loadOfflinePhotosMetaIndex(
@@ -19662,12 +19728,15 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
   bool _isPayloadTooLargeError(Object error) =>
       error is DioException && error.response?.statusCode == 413;
 
-  Future<List<List<String>>> _photoBatches(List<String> photoPaths) async {
+  Future<List<List<String>>> _photoBatches(
+    List<String> photoPaths,
+    Map<String, int> sizeByPath,
+  ) async {
     final batches = <List<String>>[];
     var current = <String>[];
     var currentBytes = 0;
     for (final photoPath in photoPaths) {
-      final fileBytes = await _sumFileSizes([photoPath]);
+      final fileBytes = sizeByPath[photoPath] ?? 0;
       final shouldSplit = current.isNotEmpty &&
           (current.length >= _photoBatchSize ||
               currentBytes + fileBytes > _maxPhotoBatchBytes);
@@ -19761,11 +19830,14 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     String token,
     int eventId,
     Map<String, dynamic> photoMetaIndex,
+    Map<String, int> sizeByPath,
   ) async {
-    final batches = await _photoBatches(_photoPaths);
+    final batches = await _photoBatches(_photoPaths, sizeByPath);
     final batchSizes = <int>[];
     for (final batch in batches) {
-      batchSizes.add(await _sumFileSizes(batch));
+      batchSizes.add(
+        batch.fold<int>(0, (sum, filePath) => sum + (sizeByPath[filePath] ?? 0)),
+      );
     }
     var uploadedPhotos = 0;
     for (var i = 0; i < batches.length; i += _parallelPhotoUploads) {
@@ -19811,12 +19883,22 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
         );
       }
       final totalBytes =
-          await _sumFileSizes(_photoPaths) + await File(_jsonPath!).length();
+          await File(_jsonPath!).length();
+      final photoSizeIndex = await _buildPhotoSizeIndex(_photoPaths);
+      final totalPhotoBytes = photoSizeIndex.values.fold<int>(
+        0,
+        (sum, value) => sum + value,
+      );
       if (!mounted) return;
-      setState(() => _startProgress(totalBytes));
+      setState(() => _startProgress(totalBytes + totalPhotoBytes));
       final photoMetaIndex = await _loadOfflinePhotosMetaIndex(_jsonPath!);
       if (_photoPaths.isNotEmpty) {
-        await _uploadPhotoBatches(token, _eventId!, photoMetaIndex);
+        await _uploadPhotoBatches(
+          token,
+          _eventId!,
+          photoMetaIndex,
+          photoSizeIndex,
+        );
       }
       if (!mounted) return;
       setState(() {
@@ -20002,7 +20084,15 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
           ),
           const SizedBox(height: 4),
           Text(
-            '${_formatBytes(_progressBytesPerSecond.round())}/s  •  último avanço há ${_progressIdleLabel()}',
+            'Atual ${_formatBytes(_progressInstantBytesPerSecond.round())}/s  •  Média ${_formatBytes(_progressBytesPerSecond.round())}/s  •  ETA ${_progressEtaLabel()}',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.72),
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Último avanço há ${_progressIdleLabel()}',
             style: TextStyle(
               color: Colors.white.withOpacity(0.72),
               fontSize: 12,
