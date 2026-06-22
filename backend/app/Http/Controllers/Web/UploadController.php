@@ -37,7 +37,7 @@ class UploadController extends Controller
             return [
                 'id' => $photo->id,
                 'number' => $photo->number,
-                'preview_url' => $photo->preview_path ? route('preview.image', $photo) : null,
+                'preview_url' => $photo->preview_path ? route('preview.image', $photo).'?v='.($photo->updated_at?->timestamp ?? 0) : null,
             ];
         }));
     }

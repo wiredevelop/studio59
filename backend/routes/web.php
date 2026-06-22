@@ -12,6 +12,7 @@ use App\Http\Controllers\Web\ProfileController;
 use App\Http\Controllers\Web\UploadController;
 use App\Http\Controllers\Web\UserController;
 use App\Models\Photo;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 
@@ -43,10 +44,65 @@ Route::get('/downloads/{token}', [DownloadAccessController::class, 'show'])->nam
 Route::get('/downloads/{token}/photo/{photoId}', [DownloadAccessController::class, 'download'])->name('downloads.photo');
 Route::match(['get', 'post'], '/downloads/{token}/bulk', [DownloadAccessController::class, 'bulkDownload'])->name('downloads.bulk');
 
-Route::get('/preview/{photo}', function (Photo $photo) {
+Route::get('/preview/{photo}', function (Request $request, Photo $photo) {
     abort_unless($photo->preview_path && Storage::disk('local')->exists($photo->preview_path), 404);
     $path = storage_path('app/private/'.$photo->preview_path);
-    $mtime = filemtime($path);
+    $width = max(0, (int) $request->query('w', 0));
+    if ($width > 0) {
+        $width = min(1280, max(160, $width));
+        $variantPath = preg_replace('/\.jpe?g$/i', '.w'.$width.'.jpg', $path) ?: $path;
+        $sourceMtime = filemtime($path) ?: 0;
+        $variantMtime = is_file($variantPath) ? (filemtime($variantPath) ?: 0) : 0;
+
+        if ($variantMtime < $sourceMtime) {
+            $lockHandle = @fopen($variantPath.'.lock', 'c');
+            if ($lockHandle) {
+                try {
+                    if (flock($lockHandle, LOCK_EX)) {
+                        clearstatcache(true, $variantPath);
+                        $variantMtime = is_file($variantPath) ? (filemtime($variantPath) ?: 0) : 0;
+                        if ($variantMtime < $sourceMtime) {
+                            $source = @imagecreatefromjpeg($path);
+                            if ($source) {
+                                $sourceWidth = imagesx($source);
+                                $sourceHeight = imagesy($source);
+                                $targetWidth = max(1, min($sourceWidth, $width));
+                                $targetHeight = max(1, (int) round($sourceHeight * ($targetWidth / max(1, $sourceWidth))));
+                                $target = imagecreatetruecolor($targetWidth, $targetHeight);
+                                imagecopyresampled(
+                                    $target,
+                                    $source,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    $targetWidth,
+                                    $targetHeight,
+                                    $sourceWidth,
+                                    $sourceHeight,
+                                );
+                                imageinterlace($target, true);
+                                imagejpeg($target, $variantPath, 76);
+                                imagedestroy($target);
+                                imagedestroy($source);
+                            } elseif (! copy($path, $variantPath)) {
+                                $variantPath = $path;
+                            }
+                        }
+                    }
+                } finally {
+                    flock($lockHandle, LOCK_UN);
+                    fclose($lockHandle);
+                }
+            }
+        }
+
+        if (is_file($variantPath)) {
+            $path = $variantPath;
+        }
+    }
+
+    $mtime = filemtime($path) ?: filemtime(storage_path('app/private/'.$photo->preview_path));
     $etag = md5($photo->preview_path.'|'.$mtime.'|'.filesize($path));
     $response = response()->file($path);
     $response->setEtag($etag);

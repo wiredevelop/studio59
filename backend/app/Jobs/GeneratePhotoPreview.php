@@ -57,7 +57,7 @@ class GeneratePhotoPreview implements ShouldQueue
 
             $srcWidth = imagesx($src);
             $srcHeight = imagesy($src);
-            $maxDim = 2000;
+            $maxDim = 1280;
             $scale = min(1, $maxDim / max($srcWidth, $srcHeight));
             $targetWidth = max(1, (int) round($srcWidth * $scale));
             $targetHeight = max(1, (int) round($srcHeight * $scale));
@@ -95,7 +95,7 @@ class GeneratePhotoPreview implements ShouldQueue
             }
 
             imageinterlace($canvas, true);
-            imagejpeg($canvas, $targetPath, 88);
+            imagejpeg($canvas, $targetPath, 84);
             imagedestroy($canvas);
 
             $photo->update([

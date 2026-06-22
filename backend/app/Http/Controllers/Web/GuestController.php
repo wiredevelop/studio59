@@ -68,18 +68,33 @@ class GuestController extends Controller
 
         $search = trim((string) $request->query('search', ''));
 
-        $photos = $event->photos()
+        $baseQuery = $event->photos()
             ->where('status', 'active')
             ->whereNotNull('preview_path')
-            ->when($search !== '', fn ($q) => $q->where('number', 'like', '%'.$search.'%'))
+            ->when($search !== '', fn ($q) => $q->where('number', 'like', '%'.$search.'%'));
+        $photos = (clone $baseQuery)
             ->orderBy('number')
             ->paginate(9)
             ->withQueryString();
+        $nextPagePhotos = collect();
+        if ($photos->hasMorePages()) {
+            $nextPagePhotos = (clone $baseQuery)
+                ->orderBy('number')
+                ->forPage($photos->currentPage() + 1, $photos->perPage())
+                ->get(['id', 'number', 'preview_path', 'updated_at'])
+                ->map(fn (Photo $photo) => [
+                    'id' => $photo->id,
+                    'number' => $photo->number,
+                    'preview_url' => route('preview.image', $photo).'?v='.($photo->updated_at?->timestamp ?? 0),
+                ])
+                ->values();
+        }
 
         return view('guest.catalog', [
             'event' => $event,
             'photos' => $photos,
             'search' => $search,
+            'nextPagePhotos' => $nextPagePhotos,
         ]);
     }
 
@@ -223,7 +238,7 @@ class GuestController extends Controller
             return [
                 'id' => $photo->id,
                 'number' => $photo->number,
-                'preview_url' => route('preview.image', ['photo' => $photo->id]),
+                'preview_url' => route('preview.image', ['photo' => $photo->id]).'?v='.($photo->updated_at?->timestamp ?? 0),
             ];
         })->filter()->values();
 

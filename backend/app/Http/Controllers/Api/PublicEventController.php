@@ -152,7 +152,7 @@ class PublicEventController extends Controller
                 'id' => $photo->id,
                 'number' => $photo->number,
                 'preview_url' => $photo->preview_path
-                    ? $request->getSchemeAndHttpHost().route('preview.image', ['photo' => $photo->id], false)
+                    ? $request->getSchemeAndHttpHost().route('preview.image', ['photo' => $photo->id], false).'?v='.($photo->updated_at?->timestamp ?? 0)
                     : null,
             ]);
 
@@ -282,7 +282,7 @@ class PublicEventController extends Controller
                 'id' => $photo->id,
                 'number' => $photo->number,
                 'preview_url' => $photo->preview_path
-                    ? $request->getSchemeAndHttpHost().route('preview.image', ['photo' => $photo->id], false)
+                    ? $request->getSchemeAndHttpHost().route('preview.image', ['photo' => $photo->id], false).'?v='.($photo->updated_at?->timestamp ?? 0)
                     : null,
             ];
         })->filter()->values();

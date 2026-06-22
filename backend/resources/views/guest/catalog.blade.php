@@ -103,7 +103,7 @@
             @php $previewUrl = route('preview.image', $photo).'?v='.($photo->updated_at ? $photo->updated_at->timestamp : 0); @endphp
             <div class="photo-card" data-photo-id="{{ $photo->id }}" data-photo-number="{{ $photo->number }}" data-photo-url="{{ $previewUrl }}">
                 <div class="photo-thumb">
-                    <img src="{{ $previewUrl }}&w=720" alt="Foto {{ $photo->number }}" loading="lazy" decoding="async">
+                    <img src="{{ $previewUrl }}&w=320" alt="Foto {{ $photo->number }}" loading="eager" fetchpriority="high" decoding="async">
                     <div class="wm-overlay">STUDIO 59</div>
                     <button type="button" class="select-badge" data-select-toggle>✓</button>
                 </div>
@@ -164,6 +164,9 @@ const eventId = {{ $event->id }};
 const cartKey = `studio59_cart_${eventId}`;
 const wantsFilmKey = `studio59_wants_film_${eventId}`;
 const previewBase = '{{ url('/preview') }}/';
+const gridPreviewWidth = 320;
+const modalPreviewWidth = 960;
+const nextPagePhotos = @json($nextPagePhotos);
 let touchStartX = null;
 
 const withPreviewWidth = (url, width) => {
@@ -190,6 +193,13 @@ const updateCartBadge = () => {
     const count = cartCount(cart);
     const btn = document.getElementById('cart-btn');
     if (btn) btn.textContent = `Carrinho (${count})`;
+};
+
+const warmPreview = (url) => {
+    const img = new Image();
+    img.decoding = 'async';
+    img.loading = 'eager';
+    img.src = withPreviewWidth(url, gridPreviewWidth);
 };
 
 const setSelectedState = (card, selected) => {
@@ -280,7 +290,7 @@ const openModal = (card) => {
     modalCard = card;
     modalRotation = 0;
     modalTitle.textContent = `Foto ${card.dataset.photoNumber}`;
-    modalImage.src = withPreviewWidth(card.dataset.photoUrl || `${previewBase}${card.dataset.photoId}`, 1400);
+    modalImage.src = withPreviewWidth(card.dataset.photoUrl || `${previewBase}${card.dataset.photoId}`, modalPreviewWidth);
     applyModalRotation();
     syncModalButton();
     modal.style.display = 'flex';
@@ -315,6 +325,19 @@ modal?.addEventListener('click', (e) => { if (e.target === modal) closeModal(); 
 
 updateCartBadge();
 initCards();
+
+if (Array.isArray(nextPagePhotos) && nextPagePhotos.length > 0) {
+    const prefetch = () => {
+        nextPagePhotos.forEach((photo) => {
+            if (photo?.preview_url) warmPreview(photo.preview_url);
+        });
+    };
+    if ('requestIdleCallback' in window) {
+        window.requestIdleCallback(prefetch, { timeout: 1500 });
+    } else {
+        window.setTimeout(prefetch, 800);
+    }
+}
 
 const clearGuestBtn = document.getElementById('clear-guest-btn');
 clearGuestBtn?.addEventListener('click', () => {
@@ -363,7 +386,7 @@ const renderSuggestions = (photos) => {
         card.dataset.photoUrl = p.preview_url || `${previewBase}${p.id}`;
         card.innerHTML = `
             <div class="photo-thumb">
-                <img src="${withPreviewWidth(card.dataset.photoUrl, 720)}" alt="Foto ${p.number}" loading="lazy">
+                <img src="${withPreviewWidth(card.dataset.photoUrl, gridPreviewWidth)}" alt="Foto ${p.number}" loading="eager" fetchpriority="high" decoding="async">
                 <div class="wm-overlay">STUDIO 59</div>
                 <button type="button" class="select-badge" data-select-toggle>✓</button>
             </div>
