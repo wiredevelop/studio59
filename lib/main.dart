@@ -33,6 +33,8 @@ import 'offline_host.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  PaintingBinding.instance.imageCache.maximumSize = 80;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 96 << 20;
   await _initFirebase();
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   runApp(const ProviderScope(child: Studio59App()));
@@ -1929,34 +1931,36 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
   bool faceSearching = false;
   int page = 1;
   static const int perPage = 24;
-  final Map<String, Future<PhotosPage>> _photosCache = {};
   Future<PhotosPage>? _photosFuture;
   String? _photosCacheToken;
 
   @override
   void dispose() {
+    _releaseCatalogImageCache();
     searchController.dispose();
     super.dispose();
   }
 
-  String _photosCacheKey(GuestSession session, int targetPage) =>
-      '${session.token}|$search|$targetPage|$perPage';
+  void _releaseCatalogImageCache() {
+    final imageCache = PaintingBinding.instance.imageCache;
+    imageCache.clear();
+    imageCache.clearLiveImages();
+  }
 
   Future<PhotosPage> _fetchPhotosPage(GuestSession session, int targetPage) {
-    final key = _photosCacheKey(session, targetPage);
-    return _photosCache.putIfAbsent(
-      key,
-      () => ref.read(apiProvider).eventPhotosPage(
-        widget.eventId,
-        session.token,
-        search: search,
-        page: targetPage,
-        perPage: perPage,
-      ),
+    return ref.read(apiProvider).eventPhotosPage(
+      widget.eventId,
+      session.token,
+      search: search,
+      page: targetPage,
+      perPage: perPage,
     );
   }
 
   void _loadPage(GuestSession session, int targetPage) {
+    if (targetPage != page) {
+      _releaseCatalogImageCache();
+    }
     page = targetPage;
     _photosFuture = _fetchPhotosPage(session, targetPage);
   }
@@ -1965,7 +1969,7 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
     setState(() {
       search = value.trim();
       page = 1;
-      _photosCache.clear();
+      _releaseCatalogImageCache();
       _loadPage(session, 1);
     });
   }
@@ -1973,15 +1977,6 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
   void _goToPage(GuestSession session, int next, int lastPage) {
     if (next < 1 || next > lastPage || next == page) return;
     setState(() => _loadPage(session, next));
-  }
-
-  void _prefetchAdjacentPages(GuestSession session, int currentPage, int last) {
-    if (currentPage < last) {
-      unawaited(_fetchPhotosPage(session, currentPage + 1));
-    }
-    if (currentPage > 1) {
-      unawaited(_fetchPhotosPage(session, currentPage - 1));
-    }
   }
 
   void _openPhotoPreview(PhotoItem photo) {
@@ -2014,10 +2009,10 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                               child: RotatedBox(
                                 quarterTurns: rotationTurns,
                                 child: Image.network(
-                                  previewUrlWithWidth(photo.previewUrl!, 1400),
+                                  previewUrlWithWidth(photo.previewUrl!, 1280),
                                   fit: BoxFit.contain,
                                   cacheWidth: previewCacheWidth,
-                                  filterQuality: FilterQuality.high,
+                                  filterQuality: FilterQuality.medium,
                                 ),
                               ),
                             ),
@@ -2123,7 +2118,7 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
       return const Scaffold(body: Center(child: Text('Sessao expirada')));
     if (_photosCacheToken != session.token || _photosFuture == null) {
       _photosCacheToken = session.token;
-      _photosCache.clear();
+      _releaseCatalogImageCache();
       _loadPage(session, page);
     }
 
@@ -2238,11 +2233,6 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                     return const Center(child: CircularProgressIndicator());
                   }
                   final pageData = snap.data!;
-                  _prefetchAdjacentPages(
-                    session,
-                    pageData.currentPage,
-                    pageData.lastPage,
-                  );
                   final photos = pageData.items;
                   final selected = ref.watch(cartProvider);
                   final suggestedIds = suggested.map((p) => p.id).toSet();
@@ -2278,12 +2268,12 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                                         : Image.network(
                                             previewUrlWithWidth(
                                               photo.previewUrl!,
-                                              720,
+                                              640,
                                             ),
                                             fit: BoxFit.cover,
                                             width: double.infinity,
                                             cacheWidth: previewCacheWidth,
-                                            filterQuality: FilterQuality.high,
+                                            filterQuality: FilterQuality.low,
                                             errorBuilder:
                                                 (context, error, stackTrace) =>
                                                     const Center(

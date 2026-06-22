@@ -884,23 +884,27 @@ class OfflineHostServer {
   HttpServer? _server;
   RawDatagramSocket? _discoverySocket;
   OfflineHostSession? _session;
-  final Map<String, Future<Uint8List?>> _previewBuilds = {};
+  final Map<String, Future<File?>> _previewBuilds = {};
+  Future<Directory>? _previewCacheDirFuture;
   bool get isRunning => _server != null;
   OfflineHostSession? get session => _session;
 
-  Future<Uint8List?> _loadOrCreatePreviewBytes(
+  Future<Directory> _previewCacheDir() =>
+      _previewCacheDirFuture ??= getTemporaryDirectory();
+
+  Future<File?> _loadOrCreatePreviewFile(
     OfflineHostPhoto photo,
     int width,
   ) {
     final cacheKey = '${photo.id}:$width';
     return _previewBuilds.putIfAbsent(cacheKey, () async {
       try {
-        final cacheDir = await getTemporaryDirectory();
+        final cacheDir = await _previewCacheDir();
         final cacheFile = File(
           '${cacheDir.path}/s59_thumb_v3_${photo.id}_$width.jpg',
         );
         if (await cacheFile.exists()) {
-          return await cacheFile.readAsBytes();
+          return cacheFile;
         }
         final srcBytes = await File(photo.path).readAsBytes();
         final generated = await compute(_generateThumbnailBytes, {
@@ -908,31 +912,19 @@ class OfflineHostServer {
           'width': width,
           'quality': width >= 1200 ? 86 : 84,
         });
-        if (generated != null) {
-          try {
-            await cacheFile.writeAsBytes(generated, flush: true);
-          } catch (_) {}
+        if (generated == null) {
+          return null;
         }
-        return generated ?? srcBytes;
+        try {
+          await cacheFile.writeAsBytes(generated, flush: true);
+          return cacheFile;
+        } catch (_) {
+          return null;
+        }
       } finally {
         _previewBuilds.remove(cacheKey);
       }
     });
-  }
-
-  void _prewarmPreviewCache(
-    Iterable<OfflineHostPhoto> photos, {
-    int width = 720,
-  }) {
-    unawaited(
-      Future<void>(() async {
-        for (final photo in photos) {
-          try {
-            await _loadOrCreatePreviewBytes(photo, width);
-          } catch (_) {}
-        }
-      }),
-    );
   }
 
   Future<OfflineHostStartResult> start(OfflineHostSession session) async {
@@ -963,6 +955,7 @@ class OfflineHostServer {
     _server = null;
     _discoverySocket = null;
     _previewBuilds.clear();
+    _previewCacheDirFuture = null;
     if (server != null) {
       await server.close(force: true);
     }
@@ -1370,8 +1363,8 @@ class OfflineHostServer {
     final width = _normalizedPreviewWidth(request.uri.queryParameters['w']);
     if (!isUnsupported) {
       try {
-        final thumbBytes = await _loadOrCreatePreviewBytes(photo, width);
-        if (thumbBytes == null) {
+        final previewFile = await _loadOrCreatePreviewFile(photo, width);
+        if (previewFile == null || !await previewFile.exists()) {
           throw const FormatException('Preview generation failed');
         }
         _writeCors(request.response);
@@ -1381,8 +1374,8 @@ class OfflineHostServer {
           HttpHeaders.cacheControlHeader,
           'public, max-age=31536000, immutable',
         );
-        request.response.contentLength = thumbBytes.length;
-        request.response.add(thumbBytes);
+        request.response.contentLength = await previewFile.length();
+        await request.response.addStream(previewFile.openRead());
         await request.response.close();
         return;
       } catch (_) {
@@ -1490,14 +1483,6 @@ class OfflineHostServer {
     final slice = start >= total
         ? <OfflineHostPhoto>[]
         : filtered.skip(start).take(safePerPage).toList();
-    final nextSliceStart = safePage * safePerPage;
-    final nextSlice = nextSliceStart >= total
-        ? const <OfflineHostPhoto>[]
-        : filtered.skip(nextSliceStart).take(safePerPage).toList();
-    _prewarmPreviewCache(slice);
-    if (nextSlice.isNotEmpty) {
-      _prewarmPreviewCache(nextSlice);
-    }
     final requested = request.requestedUri;
     await _json(request, HttpStatus.ok, {
       'data': [
