@@ -880,6 +880,8 @@ class OfflineHostServer {
   OfflineHostServer._();
 
   static final OfflineHostServer instance = OfflineHostServer._();
+  static const List<int> _warmPreviewWidths = <int>[640, 1280];
+  static const int _warmPreviewParallelism = 6;
 
   HttpServer? _server;
   RawDatagramSocket? _discoverySocket;
@@ -927,6 +929,27 @@ class OfflineHostServer {
     });
   }
 
+  Future<void> _warmPreviews(OfflineHostSession session) async {
+    for (final width in _warmPreviewWidths) {
+      for (
+        var i = 0;
+        i < session.photos.length;
+        i += _warmPreviewParallelism
+      ) {
+        if (_session?.sessionId != session.sessionId || _server == null) {
+          return;
+        }
+        final batch = session.photos
+            .skip(i)
+            .take(_warmPreviewParallelism)
+            .toList();
+        await Future.wait(
+          batch.map((photo) => _loadOrCreatePreviewFile(photo, width)),
+        );
+      }
+    }
+  }
+
   Future<OfflineHostStartResult> start(OfflineHostSession session) async {
     await stop(clearSessionFile: false);
     final lanHosts = await _resolveLanHosts();
@@ -941,6 +964,7 @@ class OfflineHostServer {
     );
     await _startDiscoveryResponder();
     await _persistArtifacts();
+    unawaited(_warmPreviews(_session!));
     unawaited(_listen(server));
     return OfflineHostStartResult(
       session: _session!,

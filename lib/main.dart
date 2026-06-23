@@ -1931,8 +1931,17 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
   bool faceSearching = false;
   int page = 1;
   static const int perPage = 24;
+  static const int _offlineCatalogPageSize = 200;
+  static const int _offlinePreviewWidth = 640;
+  static const int _offlinePreviewDownloadParallelism = 8;
   Future<PhotosPage>? _photosFuture;
   String? _photosCacheToken;
+  bool _offlineCatalogMode = false;
+  bool _offlineCatalogLoading = false;
+  double _offlineCatalogProgress = 0;
+  String? _offlineCatalogStatus;
+  List<PhotoItem> _offlineCatalogPhotos = const [];
+  Map<int, String> _offlinePreviewFiles = const {};
 
   @override
   void dispose() {
@@ -1942,6 +1951,9 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
   }
 
   void _releaseCatalogImageCache() {
+    if (_offlineCatalogMode) {
+      return;
+    }
     final imageCache = PaintingBinding.instance.imageCache;
     imageCache.clear();
     imageCache.clearLiveImages();
@@ -1958,6 +1970,11 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
   }
 
   void _loadPage(GuestSession session, int targetPage) {
+    if (_offlineCatalogMode) {
+      page = targetPage;
+      _photosFuture = Future.value(_buildOfflinePhotosPage());
+      return;
+    }
     if (targetPage != page) {
       _releaseCatalogImageCache();
     }
@@ -1969,14 +1986,205 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
     setState(() {
       search = value.trim();
       page = 1;
-      _releaseCatalogImageCache();
-      _loadPage(session, 1);
+      if (_offlineCatalogMode) {
+        _photosFuture = Future.value(_buildOfflinePhotosPage());
+      } else {
+        _releaseCatalogImageCache();
+        _loadPage(session, 1);
+      }
     });
   }
 
   void _goToPage(GuestSession session, int next, int lastPage) {
     if (next < 1 || next > lastPage || next == page) return;
     setState(() => _loadPage(session, next));
+  }
+
+  Future<Directory> _offlineCatalogCacheDir() async {
+    final dir = await getTemporaryDirectory();
+    final cacheDir = Directory(
+      path.join(dir.path, 'studio59_offline_catalog', '${widget.eventId}'),
+    );
+    await cacheDir.create(recursive: true);
+    return cacheDir;
+  }
+
+  File _offlinePreviewFileFor(Directory cacheDir, PhotoItem photo) {
+    return File(
+      path.join(
+        cacheDir.path,
+        'p_${photo.id}_${photo.number}_w$_offlinePreviewWidth.jpg',
+      ),
+    );
+  }
+
+  PhotosPage _buildOfflinePhotosPage() {
+    final filtered = search.isEmpty
+        ? _offlineCatalogPhotos
+        : _offlineCatalogPhotos
+              .where((photo) => photo.number.toLowerCase().contains(search))
+              .toList();
+    final total = filtered.length;
+    final lastPage = total == 0 ? 1 : ((total - 1) ~/ perPage) + 1;
+    final safePage = page.clamp(1, lastPage).toInt();
+    final start = (safePage - 1) * perPage;
+    final items = start >= total
+        ? const <PhotoItem>[]
+        : filtered.skip(start).take(perPage).toList();
+    page = safePage;
+    return PhotosPage(
+      items: items,
+      total: total,
+      currentPage: safePage,
+      lastPage: lastPage,
+      perPage: perPage,
+    );
+  }
+
+  Future<List<PhotoItem>> _fetchAllOfflinePhotos(GuestSession session) async {
+    final photos = <PhotoItem>[];
+    var nextPage = 1;
+    var lastPage = 1;
+    do {
+      final pageData = await ref.read(apiProvider).eventPhotosPage(
+        widget.eventId,
+        session.token,
+        search: '',
+        page: nextPage,
+        perPage: _offlineCatalogPageSize,
+      );
+      photos.addAll(pageData.items);
+      lastPage = pageData.lastPage;
+      nextPage = pageData.currentPage + 1;
+    } while (nextPage <= lastPage);
+    return photos;
+  }
+
+  Future<File?> _cacheOfflinePreview(
+    PhotoItem photo,
+    Directory cacheDir,
+  ) async {
+    if (photo.previewUrl == null || photo.previewUrl!.isEmpty) {
+      return null;
+    }
+    final file = _offlinePreviewFileFor(cacheDir, photo);
+    if (await file.exists() && await file.length() > 0) {
+      return file;
+    }
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 10)
+      ..idleTimeout = const Duration(seconds: 10)
+      ..findProxy = (_) => 'DIRECT';
+    try {
+      final uri = Uri.parse(previewUrlWithWidth(photo.previewUrl!, _offlinePreviewWidth));
+      final request = await client.getUrl(uri);
+      final response = await request.close();
+      if (response.statusCode != HttpStatus.ok) {
+        return null;
+      }
+      final bytes = await consolidateHttpClientResponseBytes(response);
+      if (bytes.isEmpty) {
+        return null;
+      }
+      await file.writeAsBytes(bytes, flush: false);
+      return file;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> _prepareOfflineCatalog(GuestSession session) async {
+    if (_offlineCatalogLoading) {
+      return;
+    }
+    setState(() {
+      _offlineCatalogLoading = true;
+      _offlineCatalogProgress = 0;
+      _offlineCatalogStatus = 'A carregar catálogo offline...';
+      _offlineCatalogPhotos = const [];
+      _offlinePreviewFiles = const {};
+      _photosFuture = null;
+    });
+    try {
+      final photos = await _fetchAllOfflinePhotos(session);
+      final cacheDir = await _offlineCatalogCacheDir();
+      final previewFiles = <int, String>{};
+      final total = photos.length;
+      var completed = 0;
+      for (var i = 0; i < photos.length; i += _offlinePreviewDownloadParallelism) {
+        final batch = photos.skip(i).take(_offlinePreviewDownloadParallelism).toList();
+        final results = await Future.wait(
+          batch.map((photo) => _cacheOfflinePreview(photo, cacheDir)),
+        );
+        for (var j = 0; j < batch.length; j++) {
+          final file = results[j];
+          if (file != null) {
+            previewFiles[batch[j].id] = file.path;
+          }
+          completed++;
+        }
+        if (!mounted) {
+          return;
+        }
+        if (completed == total || completed % 16 == 0) {
+          setState(() {
+            _offlineCatalogProgress = total == 0 ? 1 : completed / total;
+            _offlineCatalogStatus =
+                'A preparar catálogo offline... $completed/$total';
+          });
+        }
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        page = 1;
+        _offlineCatalogPhotos = photos;
+        _offlinePreviewFiles = previewFiles;
+        _offlineCatalogLoading = false;
+        _offlineCatalogProgress = 1;
+        _offlineCatalogStatus = 'Catálogo offline pronto.';
+        _photosFuture = Future.value(_buildOfflinePhotosPage());
+      });
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _offlineCatalogLoading = false;
+        _offlineCatalogStatus = null;
+        _photosFuture = Future<PhotosPage>.error(e);
+      });
+    }
+  }
+
+  Widget _buildCatalogPreviewImage(PhotoItem photo, int previewCacheWidth) {
+    final offlinePath = _offlinePreviewFiles[photo.id];
+    if (_offlineCatalogMode &&
+        offlinePath != null &&
+        File(offlinePath).existsSync()) {
+      return Image.file(
+        File(offlinePath),
+        fit: BoxFit.cover,
+        width: double.infinity,
+        filterQuality: FilterQuality.low,
+        gaplessPlayback: true,
+      );
+    }
+    if (photo.previewUrl == null) {
+      return const Center(child: Text('preview...'));
+    }
+    return Image.network(
+      previewUrlWithWidth(photo.previewUrl!, 640),
+      fit: BoxFit.cover,
+      width: double.infinity,
+      cacheWidth: previewCacheWidth,
+      filterQuality: FilterQuality.low,
+      errorBuilder: (context, error, stackTrace) =>
+          const Center(child: Text('Sem preview')),
+    );
   }
 
   void _openPhotoPreview(PhotoItem photo) {
@@ -2008,12 +2216,24 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                             child: Center(
                               child: RotatedBox(
                                 quarterTurns: rotationTurns,
-                                child: Image.network(
-                                  previewUrlWithWidth(photo.previewUrl!, 1280),
-                                  fit: BoxFit.contain,
-                                  cacheWidth: previewCacheWidth,
-                                  filterQuality: FilterQuality.medium,
-                                ),
+                                child: _offlineCatalogMode &&
+                                        _offlinePreviewFiles[photo.id] != null &&
+                                        File(_offlinePreviewFiles[photo.id]!)
+                                            .existsSync()
+                                    ? Image.file(
+                                        File(_offlinePreviewFiles[photo.id]!),
+                                        fit: BoxFit.contain,
+                                        filterQuality: FilterQuality.medium,
+                                      )
+                                    : Image.network(
+                                        previewUrlWithWidth(
+                                          photo.previewUrl!,
+                                          1280,
+                                        ),
+                                        fit: BoxFit.contain,
+                                        cacheWidth: previewCacheWidth,
+                                        filterQuality: FilterQuality.medium,
+                                      ),
                               ),
                             ),
                           ),
@@ -2116,10 +2336,20 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
     final session = ref.watch(guestSessionProvider);
     if (session == null)
       return const Scaffold(body: Center(child: Text('Sessao expirada')));
-    if (_photosCacheToken != session.token || _photosFuture == null) {
+    final offlineCatalogMode = looksLikeLocalApiBaseUrl(
+      ref.read(appRuntimeConfigProvider).apiBaseUrl,
+    );
+    if (_photosCacheToken != session.token ||
+        _offlineCatalogMode != offlineCatalogMode ||
+        _photosFuture == null) {
       _photosCacheToken = session.token;
-      _releaseCatalogImageCache();
-      _loadPage(session, page);
+      _offlineCatalogMode = offlineCatalogMode;
+      if (_offlineCatalogMode) {
+        unawaited(_prepareOfflineCatalog(session));
+      } else {
+        _releaseCatalogImageCache();
+        _loadPage(session, page);
+      }
     }
 
     return SecureScreen(
@@ -2227,6 +2457,31 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
               child: FutureBuilder<PhotosPage>(
                 future: _photosFuture,
                 builder: (context, snap) {
+                  if (_offlineCatalogMode && _offlineCatalogLoading) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const CircularProgressIndicator(),
+                            const SizedBox(height: 16),
+                            Text(_offlineCatalogStatus ?? 'A preparar catálogo offline...'),
+                            const SizedBox(height: 12),
+                            LinearProgressIndicator(
+                              value: _offlineCatalogProgress.clamp(0, 1).toDouble(),
+                              minHeight: 10,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '${(_offlineCatalogProgress * 100).toStringAsFixed(0)}%',
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
                   if (!snap.hasData) {
                     if (snap.hasError)
                       return Center(child: Text('Erro: ${snap.error}'));
@@ -2261,27 +2516,10 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
                                 Positioned.fill(
                                   child: InkWell(
                                     onTap: () => _openPhotoPreview(photo),
-                                    child: photo.previewUrl == null
-                                        ? const Center(
-                                            child: Text('preview...'),
-                                          )
-                                        : Image.network(
-                                            previewUrlWithWidth(
-                                              photo.previewUrl!,
-                                              640,
-                                            ),
-                                            fit: BoxFit.cover,
-                                            width: double.infinity,
-                                            cacheWidth: previewCacheWidth,
-                                            filterQuality: FilterQuality.low,
-                                            errorBuilder:
-                                                (context, error, stackTrace) =>
-                                                    const Center(
-                                                      child: Text(
-                                                        'Sem preview',
-                                                      ),
-                                                    ),
-                                          ),
+                                    child: _buildCatalogPreviewImage(
+                                      photo,
+                                      previewCacheWidth,
+                                    ),
                                   ),
                                 ),
                                 Positioned.fill(
