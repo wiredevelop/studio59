@@ -881,7 +881,7 @@ class OfflineHostServer {
 
   static final OfflineHostServer instance = OfflineHostServer._();
   static const List<int> _warmPreviewWidths = <int>[640, 1280];
-  static const int _warmPreviewParallelism = 6;
+  static const int _warmPreviewParallelism = 2;
 
   HttpServer? _server;
   RawDatagramSocket? _discoverySocket;
@@ -1321,6 +1321,7 @@ class OfflineHostServer {
 
   Map<String, dynamic> _guestSessionJson(OfflineHostSession session) => {
     'event_session_token': session.guestToken,
+    'offline_mode': true,
     'event': _eventJson(session),
   };
 

@@ -1933,7 +1933,7 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
   static const int perPage = 24;
   static const int _offlineCatalogPageSize = 200;
   static const int _offlinePreviewWidth = 640;
-  static const int _offlinePreviewDownloadParallelism = 8;
+  static const int _offlinePreviewDownloadParallelism = 4;
   Future<PhotosPage>? _photosFuture;
   String? _photosCacheToken;
   bool _offlineCatalogMode = false;
@@ -2071,28 +2071,38 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
     if (await file.exists() && await file.length() > 0) {
       return file;
     }
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 10)
-      ..idleTimeout = const Duration(seconds: 10)
-      ..findProxy = (_) => 'DIRECT';
-    try {
-      final uri = Uri.parse(previewUrlWithWidth(photo.previewUrl!, _offlinePreviewWidth));
-      final request = await client.getUrl(uri);
-      final response = await request.close();
-      if (response.statusCode != HttpStatus.ok) {
-        return null;
+    final uri = Uri.parse(
+      previewUrlWithWidth(photo.previewUrl!, _offlinePreviewWidth),
+    );
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 20)
+        ..idleTimeout = const Duration(seconds: 20)
+        ..findProxy = (_) => 'DIRECT';
+      try {
+        final request = await client.getUrl(uri);
+        final response = await request.close();
+        if (response.statusCode != HttpStatus.ok) {
+          continue;
+        }
+        final bytes = await consolidateHttpClientResponseBytes(response);
+        if (bytes.isEmpty) {
+          continue;
+        }
+        await file.writeAsBytes(bytes, flush: false);
+        return file;
+      } catch (_) {
+        if (attempt >= 2) {
+          return null;
+        }
+      } finally {
+        client.close(force: true);
       }
-      final bytes = await consolidateHttpClientResponseBytes(response);
-      if (bytes.isEmpty) {
-        return null;
-      }
-      await file.writeAsBytes(bytes, flush: false);
-      return file;
-    } catch (_) {
-      return null;
-    } finally {
-      client.close(force: true);
+      await Future<void>.delayed(
+        Duration(milliseconds: 200 * (attempt + 1)),
+      );
     }
+    return null;
   }
 
   Future<void> _prepareOfflineCatalog(GuestSession session) async {
@@ -2113,8 +2123,15 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
       final previewFiles = <int, String>{};
       final total = photos.length;
       var completed = 0;
-      for (var i = 0; i < photos.length; i += _offlinePreviewDownloadParallelism) {
-        final batch = photos.skip(i).take(_offlinePreviewDownloadParallelism).toList();
+      for (
+        var i = 0;
+        i < photos.length;
+        i += _offlinePreviewDownloadParallelism
+      ) {
+        final batch = photos
+            .skip(i)
+            .take(_offlinePreviewDownloadParallelism)
+            .toList();
         final results = await Future.wait(
           batch.map((photo) => _cacheOfflinePreview(photo, cacheDir)),
         );
@@ -2134,6 +2151,15 @@ class _GuestCatalogPageState extends ConsumerState<GuestCatalogPage> {
             _offlineCatalogStatus =
                 'A preparar catálogo offline... $completed/$total';
           });
+        }
+      }
+      final missing = photos
+          .where((photo) => !previewFiles.containsKey(photo.id))
+          .toList();
+      for (final photo in missing) {
+        final file = await _cacheOfflinePreview(photo, cacheDir);
+        if (file != null) {
+          previewFiles[photo.id] = file.path;
         }
       }
       if (!mounted) {
@@ -3227,7 +3253,9 @@ class _CheckoutPageState extends ConsumerState<CheckoutPage> {
     final extrasTotal = filmFee + shippingFee;
     final total = itemsTotal + extrasTotal;
     final appConfig = ref.watch(appRuntimeConfigProvider);
-    final offlineCheckout = looksLikeLocalApiBaseUrl(appConfig.apiBaseUrl);
+    final offlineCheckout =
+        session?.offlineMode == true ||
+        looksLikeLocalApiBaseUrl(appConfig.apiBaseUrl);
     final allowsOnlinePayment = !offlineCheckout;
     final isOnlinePayment = allowsOnlinePayment && paymentMethod == 'online';
     final processingFee = isOnlinePayment
@@ -18819,6 +18847,7 @@ class GuestSession {
     required this.eventDate,
     required this.location,
     required this.qrToken,
+    required this.offlineMode,
   });
   final String token;
   final int eventId;
@@ -18830,6 +18859,7 @@ class GuestSession {
   final String? eventDate;
   final String? location;
   final String? qrToken;
+  final bool offlineMode;
 
   factory GuestSession.fromJson(Map<String, dynamic> j) {
     final e = j['event'] as Map<String, dynamic>;
@@ -18852,6 +18882,7 @@ class GuestSession {
       eventDate: e['event_date'] as String?,
       location: e['location'] as String?,
       qrToken: e['qr_token'] as String?,
+      offlineMode: j['offline_mode'] == true || j['offline_mode'] == 1,
     );
   }
 }
