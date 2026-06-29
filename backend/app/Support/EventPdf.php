@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Event;
+use App\Support\ServiceTemplateCatalog;
 use Dompdf\Dompdf;
 use Dompdf\Options;
 use Illuminate\Support\Carbon;
@@ -59,11 +60,14 @@ class EventPdf
             'dateShort' => $event->event_date ? Carbon::parse($event->event_date)->format('d/m/y') : null,
             'namesLine' => $namesLine,
             'eventTypeLabel' => strtoupper($event->event_type ?: 'EVENTO'),
+            'serviceTemplate' => ServiceTemplateCatalog::findByType($event->event_type),
         ];
 
-        $template = ($event->event_type ?? '') === 'casamento'
-            ? 'pdfs.template-casamento'
-            : 'pdfs.event_sheet';
+        $template = match ($event->event_type ?? '') {
+            'casamento' => 'pdfs.template-casamento',
+            'batizado' => 'pdfs.event_sheet',
+            default => 'pdfs.event_sheet_dynamic',
+        };
         $html = view($template, $data)->render();
 
         $options = new Options();

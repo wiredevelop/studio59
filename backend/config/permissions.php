@@ -31,6 +31,8 @@ return [
     'users.update' => 'Editar utilizadores',
     'users.delete' => 'Apagar utilizadores',
 
+    'service_templates.manage' => 'Gerir tipos de serviço e fichas',
+
     'clients.list' => 'Ver clientes',
     'clients.view' => 'Ver detalhes do cliente',
     'clients.create' => 'Criar clientes',

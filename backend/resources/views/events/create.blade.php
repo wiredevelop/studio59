@@ -21,8 +21,9 @@
                 <label class="block text-sm">Tipo de serviço</label>
                 <select name="event_type" class="border p-2 rounded w-full" id="event-type">
                     <option value="">—</option>
-                    <option value="casamento" {{ old('event_type') === 'casamento' ? 'selected' : '' }}>CASAMENTO</option>
-                    <option value="batizado" {{ old('event_type') === 'batizado' ? 'selected' : '' }}>BATIZADO</option>
+                    @foreach($serviceTemplates as $serviceTemplate)
+                        <option value="{{ $serviceTemplate->slug }}" {{ old('event_type') === $serviceTemplate->slug ? 'selected' : '' }}>{{ strtoupper($serviceTemplate->name) }}</option>
+                    @endforeach
                 </select>
             </div>
             <div>
@@ -187,6 +188,7 @@
         </div>
     </div>
 
+    <div id="legacy-service-sections">
     @php
         $igrejaRaw = $meta['igreja_local'] ?? '';
         $igrejaNome = $meta['igreja_localidade'] ?? '';
@@ -398,6 +400,17 @@
             <input type="file" name="event_meta[foto_noivos]" accept="image/*" capture="environment" class="border p-2 rounded w-full bg-white">
         </div>
     </div>
+    </div>
+
+    @foreach($customTemplates as $serviceTemplate)
+        <div class="hidden event-template-block" data-template-type="{{ $serviceTemplate->slug }}">
+            @include('events.partials.template-fields', [
+                'serviceTemplate' => $serviceTemplate,
+                'meta' => $meta,
+                'event' => null,
+            ])
+        </div>
+    @endforeach
 
     <div class="event-card space-y-3">
         <div class="font-semibold">Observações</div>
@@ -411,10 +424,9 @@
 </form>
 <script>
     document.addEventListener('DOMContentLoaded', () => {
-        const input = document.querySelector('input[name=\"event_meta[equipa_de_trabalho]\"]');
         const preview = document.getElementById('team-preview');
         const countInput = document.getElementById('team-count');
-        if (!input || !preview) return;
+        if (!preview) return;
 
         const teamUsers = @json($teamUsersPayload);
 
@@ -497,7 +509,18 @@
             };
         };
 
+        const getActiveInput = () => Array.from(document.querySelectorAll('input[name=\"event_meta[equipa_de_trabalho]\"]'))
+            .find((el) => !el.disabled);
+
         const render = () => {
+            const input = getActiveInput();
+            if (!input) {
+                preview.innerHTML = '';
+                if (countInput) {
+                    countInput.value = '';
+                }
+                return;
+            }
             const { matched, unknown } = resolveUsers(input.value || '');
             const total = matched.length + unknown.length;
             if (countInput) {
@@ -518,7 +541,11 @@
             preview.innerHTML = `<div class=\"flex flex-wrap\">${chips}</div>${unknownText}`;
         };
 
-        input.addEventListener('input', render);
+        document.addEventListener('input', (event) => {
+            if (event.target && event.target.name === 'event_meta[equipa_de_trabalho]') {
+                render();
+            }
+        });
         render();
     });
 </script>
@@ -644,11 +671,23 @@
     const typeSelect = document.getElementById('event-type');
     const casamento = document.getElementById('event-meta-casamento');
     const batizado = document.getElementById('event-meta-batizado');
+    const legacySections = document.getElementById('legacy-service-sections');
     const couplePhoto = document.getElementById('event-couple-photo');
+    const templateBlocks = Array.from(document.querySelectorAll('.event-template-block'));
     const dateInput = document.getElementById('event-date');
     const clienteNoivo = document.getElementById('cliente-noivo-num');
     const clienteNoiva = document.getElementById('cliente-noiva-num');
     const clienteBatizado = document.getElementById('cliente-batizado-num');
+
+    function setDisabled(container, disabled) {
+        if (!container) return;
+        container.querySelectorAll('input, select, textarea').forEach((field) => {
+            if (field === clienteNoivo || field === clienteNoiva || field === clienteBatizado) {
+                return;
+            }
+            field.disabled = disabled;
+        });
+    }
 
     function generateClientNumber(suffix) {
         const date = dateInput && dateInput.value ? dateInput.value.replace(/-/g, '') : new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -678,10 +717,22 @@
 
     function toggleMeta() {
         const v = typeSelect.value;
+        const isLegacy = v === 'casamento' || v === 'batizado';
         casamento.classList.toggle('hidden', v !== 'casamento');
         batizado.classList.toggle('hidden', v !== 'batizado');
+        if (legacySections) {
+            legacySections.classList.toggle('hidden', !isLegacy);
+        }
+        setDisabled(casamento, v !== 'casamento');
+        setDisabled(batizado, v !== 'batizado');
+        setDisabled(legacySections, !isLegacy);
+        templateBlocks.forEach((block) => {
+            const active = !isLegacy && block.dataset.templateType === v;
+            block.classList.toggle('hidden', !active);
+            setDisabled(block, !active);
+        });
         if (couplePhoto) {
-            couplePhoto.classList.toggle('hidden', v === 'batizado');
+            couplePhoto.classList.toggle('hidden', !isLegacy || v === 'batizado');
         }
         ensureClientNumbers();
     }

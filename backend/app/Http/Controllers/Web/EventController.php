@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Support\Audit;
 use App\Support\EventPdf;
 use App\Support\EventInviteService;
+use App\Support\ServiceTemplateCatalog;
 use App\Support\TeamAssignment;
 use Illuminate\Support\Carbon;
 use Illuminate\Http\Request;
@@ -25,6 +26,8 @@ class EventController extends Controller
     {
         $user = auth()->user();
         $type = $request->query('type');
+        $serviceTemplates = ServiceTemplateCatalog::activeTemplates();
+        $allowedTypes = $serviceTemplates->pluck('slug')->all();
         $typeForView = $type;
         $reportSearch = trim((string) $request->input('legacy_report_number', ''));
         $hasReportSearch = $reportSearch !== '';
@@ -39,7 +42,7 @@ class EventController extends Controller
         $hasFilters = false;
         $searchMode = $request->boolean('search_mode');
 
-        if (in_array($type, ['casamento', 'batizado'], true)) {
+        if (in_array($type, $allowedTypes, true)) {
             $query = Event::query()->withCount('photos')->orderByDesc('id');
             if ($user && $user->role !== 'admin') {
                 $query->visibleTo($user);
@@ -196,6 +199,7 @@ class EventController extends Controller
             'selectedStaffIds' => $currentEvent
                 ? $currentEvent->staff()->pluck('user_id')->all()
                 : (array) $request->input('staff_ids', []),
+            'serviceTemplates' => $serviceTemplates,
         ]);
     }
 
@@ -214,6 +218,10 @@ class EventController extends Controller
             'teamUsers' => $teamUsers,
             'teamUsersPayload' => $teamUsersPayload,
             'nextReportNumber' => $this->nextLegacyReportNumber(),
+            'serviceTemplates' => ServiceTemplateCatalog::activeTemplates(),
+            'customTemplates' => ServiceTemplateCatalog::activeTemplates()
+                ->reject(fn ($template) => in_array($template->slug, ['casamento', 'batizado'], true))
+                ->values(),
         ]);
     }
 
@@ -332,6 +340,7 @@ class EventController extends Controller
             'event' => $event,
             'staff' => $event->staff()->with('user')->get(),
             'users' => User::where('role', 'photographer')->orderBy('name')->get(),
+            'serviceTemplate' => ServiceTemplateCatalog::findByType($event->event_type),
             'folder' => $folder,
             'search' => $search,
             'photos' => $photos,
@@ -360,6 +369,11 @@ class EventController extends Controller
             'staffUsers' => User::where('role', 'photographer')->orderBy('name')->get(),
             'teamUsers' => User::whereNotNull('username')->orderBy('name')->get(),
             'selectedStaffIds' => $event->staff()->pluck('user_id')->all(),
+            'serviceTemplates' => ServiceTemplateCatalog::activeTemplates(),
+            'customTemplates' => ServiceTemplateCatalog::activeTemplates()
+                ->reject(fn ($template) => in_array($template->slug, ['casamento', 'batizado'], true))
+                ->values(),
+            'serviceTemplate' => ServiceTemplateCatalog::findByType($event->event_type),
         ]);
     }
 
@@ -679,23 +693,13 @@ class EventController extends Controller
 
     private function buildEventName($eventType, $eventDate, array $meta, ?string $fallback = null): string
     {
-        $typeLabel = $eventType ? Str::upper($eventType) : 'EVENTO';
-        $dateLabel = $eventDate ? Carbon::parse($eventDate)->format('Y-m-d') : null;
-        $names = '';
-        if ($eventType === 'casamento') {
-            $noivo = trim((string) ($meta['noivo_nome'] ?? ''));
-            $noiva = trim((string) ($meta['noiva_nome'] ?? ''));
-            if ($noivo && $noiva) {
-                $names = $noivo.' & '.$noiva;
-            } else {
-                $names = trim($noivo.' '.$noiva);
-            }
-        } elseif ($eventType === 'batizado') {
-            $names = trim((string) ($meta['bebe_nome'] ?? ''));
-        }
-
-        $parts = array_filter([$typeLabel, $names, $dateLabel]);
-        return $parts ? implode(' - ', $parts) : ($fallback ?: 'Evento');
+        return ServiceTemplateCatalog::buildEventName(
+            ServiceTemplateCatalog::findByType($eventType),
+            $eventType,
+            $eventDate,
+            $meta,
+            $fallback
+        );
     }
 
     private function ensureClientNumbers(Event $event): void
@@ -838,7 +842,8 @@ class EventController extends Controller
         if (str_contains($text, 'batizado') || str_contains($text, 'baptizado')) {
             return 'batizado';
         }
-        return null;
+        $slug = ServiceTemplateCatalog::normalizeSlug($text);
+        return $slug !== '' ? $slug : null;
     }
 
     private function nextLegacyReportNumber(): ?string

@@ -9,6 +9,7 @@ use App\Http\Controllers\Web\ClientController;
 use App\Http\Controllers\Web\OfflineSyncController as WebOfflineSyncController;
 use App\Http\Controllers\Web\OrderController;
 use App\Http\Controllers\Web\ProfileController;
+use App\Http\Controllers\Web\ServiceTemplateController;
 use App\Http\Controllers\Web\UploadController;
 use App\Http\Controllers\Web\UserController;
 use App\Models\Photo;
@@ -217,6 +218,15 @@ Route::middleware(['auth', 'nocache'])->group(function () {
     });
     Route::middleware('permission:users.delete')->group(function () {
         Route::delete('/users/{user}', [UserController::class, 'destroy'])->name('users.destroy');
+    });
+
+    Route::middleware('permission:service_templates.manage')->group(function () {
+        Route::get('/service-templates', [ServiceTemplateController::class, 'index'])->name('service-templates.index');
+        Route::get('/service-templates/create', [ServiceTemplateController::class, 'create'])->name('service-templates.create');
+        Route::post('/service-templates', [ServiceTemplateController::class, 'store'])->name('service-templates.store');
+        Route::get('/service-templates/{serviceTemplate}/edit', [ServiceTemplateController::class, 'edit'])->name('service-templates.edit');
+        Route::put('/service-templates/{serviceTemplate}', [ServiceTemplateController::class, 'update'])->name('service-templates.update');
+        Route::delete('/service-templates/{serviceTemplate}', [ServiceTemplateController::class, 'destroy'])->name('service-templates.destroy');
     });
 
     Route::middleware('permission:clients.list')->group(function () {

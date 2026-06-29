@@ -111,6 +111,19 @@
                             <span>Utilizadores</span>
                         </a>
                     @endif
+                    @if($user && $user->hasPermission('service_templates.manage'))
+                        <a href="{{ route('service-templates.index') }}" class="desk-nav-item {{ request()->routeIs('service-templates.*') ? 'is-active' : '' }}">
+                            <span class="desk-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <path d="M4 7h16"></path>
+                                    <path d="M4 12h16"></path>
+                                    <path d="M4 17h10"></path>
+                                    <path d="M18 17h2"></path>
+                                </svg>
+                            </span>
+                            <span>Tipos de serviço</span>
+                        </a>
+                    @endif
                     <a href="{{ route('settings.edit') }}" class="desk-nav-item {{ request()->routeIs('settings.*') ? 'is-active' : '' }}">
                         <span class="desk-icon">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">

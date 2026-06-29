@@ -9,13 +9,36 @@
 @section('content')
 <div class="event-shell">
 
+    @php($availableTypeSlugs = $serviceTemplates->pluck('slug')->all())
     <div class="flex gap-2 mb-4">
-        <a href="{{ route('events.index', ['type' => 'casamento']) }}" class="event-chip {{ ($type ?? null) === 'casamento' ? 'event-chip-active' : '' }}">CASAMENTO</a>
-        <a href="{{ route('events.index', ['type' => 'batizado']) }}" class="event-chip {{ ($type ?? null) === 'batizado' ? 'event-chip-active' : '' }}">BATIZADO</a>
+        @foreach($serviceTemplates as $serviceTemplate)
+            <a href="{{ route('events.index', ['type' => $serviceTemplate->slug]) }}" class="event-chip {{ ($type ?? null) === $serviceTemplate->slug ? 'event-chip-active' : '' }}">{{ strtoupper($serviceTemplate->name) }}</a>
+        @endforeach
     </div>
 
-@if(!in_array($type ?? '', ['casamento', 'batizado'], true))
+@if(!in_array($type ?? '', $availableTypeSlugs, true))
     <div class="text-sm text-gray-500">Escolhe o tipo de serviço para abrir o formulário.</div>
+@elseif(!in_array($type ?? '', ['casamento', 'batizado'], true))
+    @php($event = $currentEvent ?? null)
+    <div class="event-card space-y-4">
+        <div class="font-semibold">Tipo de serviço dinâmico</div>
+        <div class="text-sm text-gray-600">A edição completa desta ficha é feita no formulário dedicado do tipo de serviço.</div>
+        @if($event)
+            <div class="grid md:grid-cols-2 gap-3 text-sm">
+                <div><strong>Evento:</strong> {{ $event->name }}</div>
+                <div><strong>Reportagem:</strong> {{ $event->legacy_report_number ?? '—' }}</div>
+                <div><strong>Data:</strong> {{ optional($event->event_date)->format('d/m/Y') ?: '—' }}</div>
+                <div><strong>Preço base:</strong> {{ $event->base_price !== null ? number_format($event->base_price, 2).'€' : '—' }}</div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <a href="{{ route('events.edit', $event) }}" class="desk-btn">Editar ficha</a>
+                <a href="{{ route('events.show', $event) }}" class="desk-btn">Abrir dossier</a>
+                <a href="{{ route('events.pdf', $event) }}" class="desk-btn" target="_blank">PDF</a>
+            </div>
+        @else
+            <div class="text-sm text-gray-500">Sem resultados para este tipo.</div>
+        @endif
+    </div>
 @else
     @php
         $event = $currentEvent ?? null;

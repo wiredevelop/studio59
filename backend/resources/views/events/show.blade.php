@@ -45,7 +45,14 @@
     </div>
 </div>
 
-@if($event->event_meta)
+@if(($serviceTemplate ?? null) && !in_array($event->event_type ?? '', ['casamento', 'batizado'], true))
+    @include('events.partials.template-display', [
+        'serviceTemplate' => $serviceTemplate,
+        'event' => $event,
+        'meta' => $event->event_meta ?? [],
+        'forPdf' => false,
+    ])
+@elseif($event->event_meta)
 @php
     $type = $event->event_type ?? '';
     $commonFields = [
