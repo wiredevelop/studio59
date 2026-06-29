@@ -7535,11 +7535,28 @@ class DesktopEventsView extends ConsumerStatefulWidget {
 class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
   String _eventType = '';
   Future<List<StaffEvent>>? _future;
+  List<StaffServiceTemplate> _serviceTemplates = const [];
 
   @override
   void initState() {
     super.initState();
+    _loadServiceTemplates();
     _reload();
+  }
+
+  Future<void> _loadServiceTemplates() async {
+    try {
+      final templates = await ref
+          .read(apiProvider)
+          .staffServiceTemplates(widget.token);
+      if (!mounted) return;
+      templates.sort((a, b) {
+        final order = a.sortOrder.compareTo(b.sortOrder);
+        if (order != 0) return order;
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+      setState(() => _serviceTemplates = templates);
+    } catch (_) {}
   }
 
   void _reload() {
@@ -7554,6 +7571,22 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
 
   @override
   Widget build(BuildContext context) {
+    final availableTemplates = _serviceTemplates.isNotEmpty
+        ? _serviceTemplates
+        : [
+            StaffServiceTemplate(
+              id: 0,
+              slug: 'casamento',
+              name: 'Casamento',
+              fields: const [],
+            ),
+            StaffServiceTemplate(
+              id: 0,
+              slug: 'batizado',
+              name: 'Batizado',
+              fields: const [],
+            ),
+          ];
     return SingleChildScrollView(
       padding: const EdgeInsets.all(kDeskGutter),
       child: Column(
@@ -7572,24 +7605,21 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
                   _reload();
                 }),
               ),
-              _DeskStatusFilterChip(
-                label: 'Casamento',
-                selected: _eventType == 'casamento',
-                onTap: () => setState(() {
-                  _eventType = 'casamento';
-                  _reload();
-                }),
-              ),
-              _DeskStatusFilterChip(
-                label: 'Batizado',
-                selected: _eventType == 'batizado',
-                onTap: () => setState(() {
-                  _eventType = 'batizado';
-                  _reload();
-                }),
+              ...availableTemplates.map(
+                (template) => _DeskStatusFilterChip(
+                  label: template.name,
+                  selected: _eventType == template.slug,
+                  onTap: () => setState(() {
+                    _eventType = template.slug;
+                    _reload();
+                  }),
+                ),
               ),
               OutlinedButton.icon(
-                onPressed: () => setState(_reload),
+                onPressed: () => setState(() {
+                  _loadServiceTemplates();
+                  _reload();
+                }),
                 icon: const Icon(Icons.refresh),
                 label: const Text('Atualizar'),
               ),
@@ -8407,11 +8437,7 @@ class _DesktopPhotosViewState extends ConsumerState<DesktopPhotosView> {
                           itemCount: visible.length,
                           itemBuilder: (context, index) {
                             final event = visible[index];
-                            final typeLabel = event.eventType == 'casamento'
-                                ? 'Casamento'
-                                : event.eventType == 'batizado'
-                                ? 'Batizado'
-                                : event.eventType ?? '';
+                            final typeLabel = _eventTypeLabel(event);
                             final dateLabel = event.eventDate.trim().isNotEmpty
                                 ? event.eventDate.trim()
                                 : 'Sem data';
@@ -9859,7 +9885,8 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
   Future<List<StaffEvent>>? _future;
   String? _lastToken;
   String? _lastEventType;
-  String _eventType = 'casamento';
+  String _eventType = '';
+  List<StaffServiceTemplate> _serviceTemplates = const [];
   List<StaffEvent> _orderEvents(List<StaffEvent> events) {
     final ordered = List<StaffEvent>.from(events);
     ordered.sort((a, b) {
@@ -9882,6 +9909,7 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
   void initState() {
     super.initState();
     saveStaffLastRoute('events', userId: ref.read(staffUserProvider)?.id);
+    _loadServiceTemplates();
     _reload();
   }
 
@@ -9929,8 +9957,27 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
     _lastEventType = _eventType;
     _future = ref
         .read(apiProvider)
-        .staffEvents(token, eventType: _eventType, assignedOnly: assignedOnly);
+        .staffEvents(
+          token,
+          eventType: _eventType.isEmpty ? null : _eventType,
+          assignedOnly: assignedOnly,
+        );
     setState(() {});
+  }
+
+  Future<void> _loadServiceTemplates() async {
+    final token = ref.read(staffTokenProvider);
+    if (token == null) return;
+    try {
+      final templates = await ref.read(apiProvider).staffServiceTemplates(token);
+      if (!mounted) return;
+      templates.sort((a, b) {
+        final order = a.sortOrder.compareTo(b.sortOrder);
+        if (order != 0) return order;
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+      setState(() => _serviceTemplates = templates);
+    } catch (_) {}
   }
 
   @override
@@ -9954,10 +10001,27 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
           .read(apiProvider)
           .staffEvents(
             token,
-            eventType: _eventType,
+            eventType: _eventType.isEmpty ? null : _eventType,
             assignedOnly: assignedOnly,
           );
     }
+
+    final availableTemplates = _serviceTemplates.isNotEmpty
+        ? _serviceTemplates
+        : [
+            StaffServiceTemplate(
+              id: 0,
+              slug: 'casamento',
+              name: 'Casamento',
+              fields: const [],
+            ),
+            StaffServiceTemplate(
+              id: 0,
+              slug: 'batizado',
+              name: 'Batizado',
+              fields: const [],
+            ),
+          ];
 
     return Scaffold(
       appBar: AppBar(
@@ -10008,11 +10072,97 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
               );
             }
             final events = _orderEvents(_filterEventsForUser(snap.data!, user));
+            Widget filters() {
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ChoiceChip(
+                          label: const Text('TODOS'),
+                          selected: _eventType.isEmpty,
+                          onSelected: (v) {
+                            if (!v) return;
+                            setState(() => _eventType = '');
+                            _reload();
+                          },
+                          selectedColor: kBrandRose,
+                          labelStyle: TextStyle(
+                            color: _eventType.isEmpty
+                                ? kBrandBlack
+                                : kBrandRose,
+                          ),
+                          side: BorderSide(
+                            color: kBrandRose.withOpacity(0.8),
+                          ),
+                        ),
+                        ...availableTemplates.map(
+                          (template) => ChoiceChip(
+                            label: Text(template.name.toUpperCase()),
+                            selected: _eventType == template.slug,
+                            onSelected: (v) {
+                              if (!v) return;
+                              setState(() => _eventType = template.slug);
+                              _reload();
+                            },
+                            selectedColor: kBrandRose,
+                            labelStyle: TextStyle(
+                              color: _eventType == template.slug
+                                  ? kBrandBlack
+                                  : kBrandRose,
+                            ),
+                            side: BorderSide(
+                              color: kBrandRose.withOpacity(0.8),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            _loadServiceTemplates();
+                            _reload();
+                          },
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Atualizar'),
+                        ),
+                        if (isWide && user.hasPermission('events.create'))
+                          FilledButton.icon(
+                            onPressed: () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => StaffEventFormPage(
+                                    initialEventType: _eventType,
+                                  ),
+                                ),
+                              );
+                              _reload();
+                            },
+                            icon: const Icon(Icons.add),
+                            label: const Text('Novo'),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }
             if (events.isEmpty) {
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                children: const [
-                  Padding(
+                children: [
+                  filters(),
+                  const Padding(
                     padding: EdgeInsets.all(16),
                     child: Text('Sem eventos'),
                   ),
@@ -10024,84 +10174,7 @@ class _StaffEventsPageState extends ConsumerState<StaffEventsPage> {
               itemCount: events.length + 1,
               itemBuilder: (_, i) {
                 if (i == 0) {
-                  return Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            ChoiceChip(
-                              label: const Text('CASAMENTO'),
-                              selected: _eventType == 'casamento',
-                              onSelected: (v) {
-                                if (!v) return;
-                                setState(() => _eventType = 'casamento');
-                                _reload();
-                              },
-                              selectedColor: kBrandRose,
-                              labelStyle: TextStyle(
-                                color: _eventType == 'casamento'
-                                    ? kBrandBlack
-                                    : kBrandRose,
-                              ),
-                              side: BorderSide(
-                                color: kBrandRose.withOpacity(0.8),
-                              ),
-                            ),
-                            ChoiceChip(
-                              label: const Text('BATIZADO'),
-                              selected: _eventType == 'batizado',
-                              onSelected: (v) {
-                                if (!v) return;
-                                setState(() => _eventType = 'batizado');
-                                _reload();
-                              },
-                              selectedColor: kBrandRose,
-                              labelStyle: TextStyle(
-                                color: _eventType == 'batizado'
-                                    ? kBrandBlack
-                                    : kBrandRose,
-                              ),
-                              side: BorderSide(
-                                color: kBrandRose.withOpacity(0.8),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            OutlinedButton.icon(
-                              onPressed: _reload,
-                              icon: const Icon(Icons.refresh),
-                              label: const Text('Atualizar'),
-                            ),
-                            if (isWide && user.hasPermission('events.create'))
-                              FilledButton.icon(
-                                onPressed: () async {
-                                  await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => StaffEventFormPage(
-                                        initialEventType: _eventType,
-                                      ),
-                                    ),
-                                  );
-                                  _reload();
-                                },
-                                icon: const Icon(Icons.add),
-                                label: const Text('Novo'),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  );
+                  return filters();
                 }
                 final e = events[i - 1];
                 final report = _displayReportNumber(e);
@@ -10948,6 +11021,12 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   late final TextEditingController basePriceCtrl;
   late final TextEditingController dateCtrl;
   late final TextEditingController timeCtrl;
+  late final TextEditingController locationCtrl;
+  late final TextEditingController cityCtrl;
+  late final TextEditingController addressCtrl;
+  late final TextEditingController address2Ctrl;
+  late final TextEditingController deliveryDateEventCtrl;
+  late final TextEditingController guestCountEventCtrl;
   late final TextEditingController pinCtrl;
   late final TextEditingController priceCtrl;
   late final TextEditingController notesCtrl;
@@ -11017,6 +11096,8 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
   List<StaffUser> _matchedTeamUsers = [];
   List<String> _unknownTeamTokens = [];
   int _teamCount = 0;
+  List<StaffServiceTemplate> _serviceTemplates = const [];
+  final Map<String, TextEditingController> _dynamicControllers = {};
 
   @override
   void initState() {
@@ -11033,6 +11114,16 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     );
     dateCtrl = TextEditingController(text: widget.event?.eventDate ?? '');
     timeCtrl = TextEditingController(text: widget.event?.eventTime ?? '');
+    locationCtrl = TextEditingController(text: widget.event?.location ?? '');
+    cityCtrl = TextEditingController(text: widget.event?.city ?? '');
+    addressCtrl = TextEditingController(text: widget.event?.address ?? '');
+    address2Ctrl = TextEditingController(text: widget.event?.address2 ?? '');
+    deliveryDateEventCtrl = TextEditingController(
+      text: widget.event?.deliveryDate ?? '',
+    );
+    guestCountEventCtrl = TextEditingController(
+      text: widget.event?.guestCount?.toString() ?? '',
+    );
     pinCtrl = TextEditingController(
       text: widget.event?.accessPin?.isNotEmpty == true
           ? widget.event!.accessPin!
@@ -11198,6 +11289,7 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     servicoDrone = _metaFlag(meta, 'servico_drone');
     equipaTrabalhoCtrl.addListener(_updateTeamPreview);
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadTeamUsers());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadServiceTemplates());
     if (widget.event == null) {
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _loadNextReportNumber(),
@@ -11262,6 +11354,182 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
       if (!mounted) return;
       _updateTeamPreview();
     }
+  }
+
+  Future<void> _loadServiceTemplates() async {
+    final token = ref.read(staffTokenProvider);
+    if (token == null) return;
+    try {
+      final templates = await ref.read(apiProvider).staffServiceTemplates(token);
+      if (!mounted) return;
+      templates.sort((a, b) {
+        final order = a.sortOrder.compareTo(b.sortOrder);
+        if (order != 0) return order;
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+      _serviceTemplates = templates;
+      if (eventType.isEmpty && templates.isNotEmpty) {
+        eventType = widget.initialEventType ?? templates.first.slug;
+      }
+      _primeDynamicControllers();
+      _updateTeamPreview();
+      setState(() {});
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {});
+    }
+  }
+
+  static const Set<String> _legacyTemplateSlugs = {'casamento', 'batizado'};
+
+  bool get _isLegacyEventType => _legacyTemplateSlugs.contains(eventType);
+
+  StaffServiceTemplate? get _activeTemplate {
+    for (final template in _serviceTemplates) {
+      if (template.slug == eventType) return template;
+    }
+    return null;
+  }
+
+  void _primeDynamicControllers() {
+    final template = _activeTemplate;
+    if (template == null) return;
+    for (final field in template.fields.where((f) => f.showInForm)) {
+      _controllerForTemplateField(field);
+    }
+  }
+
+  TextEditingController _controllerForTemplateField(StaffServiceTemplateField field) {
+    final existing = _knownControllerForKey(field.key);
+    if (existing != null) return existing;
+    return _dynamicControllers.putIfAbsent(field.key, () {
+      final initial = field.source == 'event'
+          ? _eventSourceValue(field.key)
+          : _metaSourceValue(field.key);
+      return TextEditingController(text: initial);
+    });
+  }
+
+  TextEditingController? _knownControllerForKey(String key) {
+    switch (key) {
+      case 'noivo_nome':
+        return noivoNomeCtrl;
+      case 'noiva_nome':
+        return noivaNomeCtrl;
+      case 'noivo_contacto':
+        return noivoContactoCtrl;
+      case 'noiva_contacto':
+        return noivaContactoCtrl;
+      case 'noivo_profissao':
+        return noivoProfissaoCtrl;
+      case 'noiva_profissao':
+        return noivaProfissaoCtrl;
+      case 'noivo_morada':
+        return noivoMoradaCtrl;
+      case 'noiva_morada':
+        return noivaMoradaCtrl;
+      case 'noivo_instagram':
+        return noivoInstagramCtrl;
+      case 'noiva_instagram':
+        return noivaInstagramCtrl;
+      case 'noivo_filho_de_1':
+        return noivoFilhoDe1Ctrl;
+      case 'noivo_filho_de_2':
+        return noivoFilhoDe2Ctrl;
+      case 'noiva_filho_de_1':
+        return noivaFilhoDe1Ctrl;
+      case 'noiva_filho_de_2':
+        return noivaFilhoDe2Ctrl;
+      case 'noivo_coordenadas':
+        return noivoCoordenadasCtrl;
+      case 'noiva_coordenadas':
+        return noivaCoordenadasCtrl;
+      case 'missa_hora':
+        return missaHoraCtrl;
+      case 'igreja_localidade':
+        return igrejaLocalidadeCtrl;
+      case 'almoco_localidade':
+        return almocoLocalidadeCtrl;
+      case 'numero_convidados':
+        return numeroConvidadosCtrl;
+      case 'instagram_pais':
+        return instagramPaisCtrl;
+      case 'casa_noivo_chegada':
+        return casaNoivoChegadaCtrl;
+      case 'casa_noivo_saida':
+        return casaNoivoSaidaCtrl;
+      case 'casa_noiva_chegada':
+        return casaNoivaChegadaCtrl;
+      case 'casa_noiva_saida':
+        return casaNoivaSaidaCtrl;
+      case 'data_entrega':
+        return dataEntregaCtrl;
+      case 'equipa_de_trabalho':
+        return equipaTrabalhoCtrl;
+      case 'servico_num_profissionais':
+        return teamCountCtrl;
+      case 'bebe_nome':
+        return bebeNomeCtrl;
+      case 'pai_nome':
+        return paiNomeCtrl;
+      case 'mae_nome':
+        return maeNomeCtrl;
+      case 'padrinho_nome':
+        return padrinhoNomeCtrl;
+      case 'madrinha_nome':
+        return madrinhaNomeCtrl;
+      case 'contacto_pais':
+        return contactoPaisCtrl;
+      case 'morada':
+        return batizadoMoradaCtrl;
+      case 'servico_tela':
+        return servicoTelaCtrl;
+      case 'servico_usb':
+        return servicoUsbCtrl;
+      case 'servico_condicoes_minimas':
+        return servicoCondicoesCtrl;
+      case 'servico_musicas':
+        return servicoMusicasCtrl;
+      case 'servico_extras':
+        return servicoExtrasCtrl;
+      case 'location':
+        return locationCtrl;
+      case 'city':
+        return cityCtrl;
+      case 'address':
+        return addressCtrl;
+      case 'address2':
+        return address2Ctrl;
+      case 'delivery_date':
+        return deliveryDateEventCtrl;
+      case 'guest_count':
+        return guestCountEventCtrl;
+    }
+    return null;
+  }
+
+  String _metaSourceValue(String key) {
+    final meta = widget.event?.eventMeta ?? {};
+    return meta[key]?.toString() ?? '';
+  }
+
+  String _eventSourceValue(String key) {
+    final event = widget.event;
+    switch (key) {
+      case 'location':
+        return event?.location ?? '';
+      case 'city':
+        return event?.city ?? '';
+      case 'address':
+        return event?.address ?? '';
+      case 'address2':
+        return event?.address2 ?? '';
+      case 'delivery_date':
+        return event?.deliveryDate ?? '';
+      case 'guest_count':
+        return event?.guestCount?.toString() ?? '';
+    }
+    return '';
   }
 
   void _updateTeamPreview() {
@@ -11364,6 +11632,12 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     basePriceCtrl.dispose();
     dateCtrl.dispose();
     timeCtrl.dispose();
+    locationCtrl.dispose();
+    cityCtrl.dispose();
+    addressCtrl.dispose();
+    address2Ctrl.dispose();
+    deliveryDateEventCtrl.dispose();
+    guestCountEventCtrl.dispose();
     pinCtrl.dispose();
     priceCtrl.dispose();
     notesCtrl.dispose();
@@ -11407,6 +11681,9 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     servicoCondicoesCtrl.dispose();
     servicoMusicasCtrl.dispose();
     servicoExtrasCtrl.dispose();
+    for (final controller in _dynamicControllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -11602,6 +11879,35 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
           );
         }
 
+        final activeTemplate = _activeTemplate;
+        final groupedTemplateFields = <String, List<StaffServiceTemplateField>>{};
+        if (!_isLegacyEventType && activeTemplate != null) {
+          final fields = activeTemplate.fields
+              .where((field) => field.showInForm)
+              .toList()
+            ..sort((a, b) {
+              final sectionCompare = a.sectionOrder.compareTo(b.sectionOrder);
+              if (sectionCompare != 0) return sectionCompare;
+              return a.order.compareTo(b.order);
+            });
+          for (final field in fields) {
+            final key = '${field.sectionOrder}|${field.section}';
+            groupedTemplateFields.putIfAbsent(key, () => []).add(field);
+          }
+        }
+
+        double fieldWidthFor(String width) {
+          if (!isWide) return maxContentWidth;
+          switch (width) {
+            case 'full':
+              return maxContentWidth;
+            case 'third':
+              return (maxContentWidth - spacing * 2) / 3;
+            default:
+              return (maxContentWidth - spacing) / 2;
+          }
+        }
+
         final teamPreview =
             _matchedTeamUsers.isEmpty && _unknownTeamTokens.isEmpty
             ? const SizedBox.shrink()
@@ -11633,6 +11939,134 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                 ],
               );
 
+        Widget buildTemplateField(StaffServiceTemplateField field) {
+          final controller = _controllerForTemplateField(field);
+          final width = fieldWidthFor(field.width);
+          final label = field.label;
+          final isTeamField = field.key == 'equipa_de_trabalho';
+          final isTeamCountField = field.key == 'servico_num_profissionais';
+
+          Widget child;
+          switch (field.type) {
+            case 'textarea':
+              child = TextField(
+                controller: controller,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  labelText: label,
+                  hintText: field.placeholder,
+                  border: const OutlineInputBorder(),
+                ),
+              );
+              break;
+            case 'select':
+              child = DropdownButtonFormField<String>(
+                value: controller.text.trim().isEmpty ? null : controller.text.trim(),
+                decoration: InputDecoration(
+                  labelText: label,
+                  border: const OutlineInputBorder(),
+                ),
+                items: field.options
+                    .map((option) => DropdownMenuItem(
+                          value: option,
+                          child: Text(option),
+                        ))
+                    .toList(),
+                onChanged: (value) {
+                  setState(() => controller.text = value ?? '');
+                },
+              );
+              break;
+            case 'checkbox':
+              child = CheckboxListTile(
+                value: controller.text == '1' || controller.text.toLowerCase() == 'true',
+                onChanged: (value) {
+                  setState(() => controller.text = value == true ? '1' : '');
+                },
+                title: Text(label),
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+              );
+              break;
+            case 'date':
+              child = TextField(
+                controller: controller,
+                readOnly: true,
+                onTap: () => _pickDateInto(controller),
+                decoration: InputDecoration(
+                  labelText: label,
+                  hintText: field.placeholder,
+                  border: const OutlineInputBorder(),
+                  suffixIcon: const Icon(Icons.calendar_today),
+                ),
+              );
+              break;
+            case 'time':
+              child = TextField(
+                controller: controller,
+                readOnly: true,
+                onTap: () => _pickTimeInto(controller),
+                decoration: InputDecoration(
+                  labelText: label,
+                  hintText: field.placeholder,
+                  border: const OutlineInputBorder(),
+                  suffixIcon: const Icon(Icons.access_time),
+                ),
+              );
+              break;
+            default:
+              child = TextField(
+                controller: controller,
+                readOnly: isTeamCountField,
+                keyboardType: field.type == 'number'
+                    ? const TextInputType.numberWithOptions(decimal: false)
+                    : (field.type == 'email'
+                        ? TextInputType.emailAddress
+                        : TextInputType.text),
+                decoration: InputDecoration(
+                  labelText: label,
+                  hintText: field.placeholder,
+                  border: const OutlineInputBorder(),
+                ),
+              );
+          }
+
+          if (isTeamField) {
+            return SizedBox(
+              width: width,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  child,
+                  if (_matchedTeamUsers.isNotEmpty ||
+                      _unknownTeamTokens.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    teamPreview,
+                  ],
+                ],
+              ),
+            );
+          }
+
+          return SizedBox(width: width, child: child);
+        }
+
+        List<Widget> buildTemplateSections() {
+          return groupedTemplateFields.entries.map((entry) {
+            final fields = entry.value;
+            final title = fields.first.section;
+            return sectionCard(
+              title,
+              Wrap(
+                spacing: spacing,
+                runSpacing: 12,
+                children: fields.map(buildTemplateField).toList(),
+              ),
+            );
+          }).toList();
+        }
+
         return SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Align(
@@ -11651,17 +12085,34 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                           labelText: 'Tipo Evento',
                           border: OutlineInputBorder(),
                         ),
-                        items: const [
-                          DropdownMenuItem(
-                            value: 'casamento',
-                            child: Text('CASAMENTO'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'batizado',
-                            child: Text('BATIZADO'),
-                          ),
-                        ],
-                        onChanged: (v) => setState(() => eventType = v ?? ''),
+                        items: (_serviceTemplates.isNotEmpty
+                                ? _serviceTemplates
+                                : [
+                                    StaffServiceTemplate(
+                                      id: 0,
+                                      slug: 'casamento',
+                                      name: 'Casamento',
+                                      fields: const [],
+                                    ),
+                                    StaffServiceTemplate(
+                                      id: 0,
+                                      slug: 'batizado',
+                                      name: 'Batizado',
+                                      fields: const [],
+                                    ),
+                                  ])
+                            .map(
+                              (template) => DropdownMenuItem(
+                                value: template.slug,
+                                child: Text(template.name.toUpperCase()),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (v) => setState(() {
+                          eventType = v ?? '';
+                          _primeDynamicControllers();
+                          _updateTeamPreview();
+                        }),
                       ),
                       TextField(
                         controller: dateCtrl,
@@ -11723,120 +12174,122 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                       ),
                     ], columns: 3),
                   ),
-                  sectionCard(
-                    'Missa e locais',
-                    wrapFields([
-                      TextField(
-                        controller: missaHoraCtrl,
-                        readOnly: true,
-                        onTap: () => _pickTimeInto(missaHoraCtrl),
-                        decoration: const InputDecoration(
-                          labelText: 'Hora da missa',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      DropdownButtonFormField<String>(
-                        value: igrejaTipo.isEmpty ? null : igrejaTipo,
-                        decoration: const InputDecoration(
-                          labelText: 'Cerimónia',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: const [
-                          DropdownMenuItem(
-                            value: 'Igreja',
-                            child: Text('Igreja'),
+                  if (_isLegacyEventType) ...[
+                    sectionCard(
+                      'Missa e locais',
+                      wrapFields([
+                        TextField(
+                          controller: missaHoraCtrl,
+                          readOnly: true,
+                          onTap: () => _pickTimeInto(missaHoraCtrl),
+                          decoration: const InputDecoration(
+                            labelText: 'Hora da missa',
+                            border: OutlineInputBorder(),
                           ),
-                          DropdownMenuItem(
-                            value: 'Civil',
-                            child: Text('Civil'),
-                          ),
-                        ],
-                        onChanged: (v) => setState(() => igrejaTipo = v ?? ''),
-                      ),
-                      TextField(
-                        controller: igrejaLocalidadeCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Nome da igreja/local',
-                          border: OutlineInputBorder(),
                         ),
-                      ),
-                      DropdownButtonFormField<String>(
-                        value: refeicaoTipo.isEmpty ? null : refeicaoTipo,
-                        decoration: const InputDecoration(
-                          labelText: 'Refeição',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: const [
-                          DropdownMenuItem(
-                            value: 'Almoço',
-                            child: Text('Almoço'),
+                        DropdownButtonFormField<String>(
+                          value: igrejaTipo.isEmpty ? null : igrejaTipo,
+                          decoration: const InputDecoration(
+                            labelText: 'Cerimónia',
+                            border: OutlineInputBorder(),
                           ),
-                          DropdownMenuItem(
-                            value: 'Jantar',
-                            child: Text('Jantar'),
-                          ),
-                        ],
-                        onChanged: (v) =>
-                            setState(() => refeicaoTipo = v ?? ''),
-                      ),
-                      TextField(
-                        controller: almocoLocalidadeCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Nome da quinta/restaurante',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ], columns: 3),
-                  ),
-                  sectionCard(
-                    'Entrega e equipa',
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        wrapFields([
-                          TextField(
-                            controller: numeroConvidadosCtrl,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              labelText: 'Número de convidados',
-                              border: OutlineInputBorder(),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'Igreja',
+                              child: Text('Igreja'),
                             ),
-                          ),
-                          TextField(
-                            controller: dataEntregaCtrl,
-                            readOnly: true,
-                            onTap: () => _pickDateInto(dataEntregaCtrl),
-                            decoration: const InputDecoration(
-                              labelText: 'Data de entrega',
-                              border: OutlineInputBorder(),
-                              suffixIcon: Icon(Icons.calendar_today),
+                            DropdownMenuItem(
+                              value: 'Civil',
+                              child: Text('Civil'),
                             ),
+                          ],
+                          onChanged: (v) => setState(() => igrejaTipo = v ?? ''),
+                        ),
+                        TextField(
+                          controller: igrejaLocalidadeCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Nome da igreja/local',
+                            border: OutlineInputBorder(),
                           ),
-                          TextField(
-                            controller: equipaTrabalhoCtrl,
-                            decoration: const InputDecoration(
-                              labelText: 'Equipa de trabalho',
-                              border: OutlineInputBorder(),
+                        ),
+                        DropdownButtonFormField<String>(
+                          value: refeicaoTipo.isEmpty ? null : refeicaoTipo,
+                          decoration: const InputDecoration(
+                            labelText: 'Refeição',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'Almoço',
+                              child: Text('Almoço'),
                             ),
-                          ),
-                          TextField(
-                            controller: teamCountCtrl,
-                            readOnly: true,
-                            decoration: const InputDecoration(
-                              labelText: 'Nº de profissionais',
-                              border: OutlineInputBorder(),
+                            DropdownMenuItem(
+                              value: 'Jantar',
+                              child: Text('Jantar'),
                             ),
+                          ],
+                          onChanged: (v) =>
+                              setState(() => refeicaoTipo = v ?? ''),
+                        ),
+                        TextField(
+                          controller: almocoLocalidadeCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Nome da quinta/restaurante',
+                            border: OutlineInputBorder(),
                           ),
-                        ], columns: 2),
-                        if (_matchedTeamUsers.isNotEmpty ||
-                            _unknownTeamTokens.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          teamPreview,
-                        ],
-                      ],
+                        ),
+                      ], columns: 3),
                     ),
-                  ),
-                  if (eventType == 'casamento') ...[
+                    sectionCard(
+                      'Entrega e equipa',
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          wrapFields([
+                            TextField(
+                              controller: numeroConvidadosCtrl,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: 'Número de convidados',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                            TextField(
+                              controller: dataEntregaCtrl,
+                              readOnly: true,
+                              onTap: () => _pickDateInto(dataEntregaCtrl),
+                              decoration: const InputDecoration(
+                                labelText: 'Data de entrega',
+                                border: OutlineInputBorder(),
+                                suffixIcon: Icon(Icons.calendar_today),
+                              ),
+                            ),
+                            TextField(
+                              controller: equipaTrabalhoCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'Equipa de trabalho',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                            TextField(
+                              controller: teamCountCtrl,
+                              readOnly: true,
+                              decoration: const InputDecoration(
+                                labelText: 'Nº de profissionais',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                          ], columns: 2),
+                          if (_matchedTeamUsers.isNotEmpty ||
+                              _unknownTeamTokens.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            teamPreview,
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                  if (_isLegacyEventType && eventType == 'casamento') ...[
                     sectionCard(
                       'Dados do casamento',
                       isWide
@@ -12181,7 +12634,7 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                             ),
                     ),
                   ],
-                  if (eventType == 'batizado') ...[
+                  if (_isLegacyEventType && eventType == 'batizado') ...[
                     sectionCard(
                       'Dados do batizado',
                       wrapFields([
@@ -12244,145 +12697,148 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                       ], columns: 2),
                     ),
                   ],
-                  sectionCard(
-                    'Serviços',
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        wrapFields([
-                          serviceCheck(
-                            'Save the Date',
-                            servicoSaveTheDate,
-                            (v) => servicoSaveTheDate = v,
-                          ),
-                          serviceCheck(
-                            'Fotos Love Story',
-                            servicoFotosLoveStory,
-                            (v) => servicoFotosLoveStory = v,
-                          ),
-                          serviceCheck(
-                            'Vídeo Love Story',
-                            servicoVideoLoveStory,
-                            (v) => servicoVideoLoveStory = v,
-                          ),
-                          serviceCheck(
-                            'Projectar Love Story',
-                            servicoProjectarLoveStory,
-                            (v) => servicoProjectarLoveStory = v,
-                          ),
-                          serviceCheck(
-                            'Combo beleza Love Story',
-                            servicoComboBelezaLoveStory,
-                            (v) => servicoComboBelezaLoveStory = v,
-                          ),
-                          serviceCheck(
-                            'Álbum digital 30x5',
-                            servicoAlbumDigital305,
-                            (v) => servicoAlbumDigital305 = v,
-                          ),
-                          serviceCheck(
-                            'Combo beleza TTD',
-                            servicoComboBelezaTtd,
-                            (v) => servicoComboBelezaTtd = v,
-                          ),
-                          serviceCheck(
-                            'Álbum digital',
-                            servicoAlbumDigital,
-                            (v) => servicoAlbumDigital = v,
-                          ),
-                          serviceCheck(
-                            'Álbum convidados',
-                            servicoAlbumConvidados,
-                            (v) => servicoAlbumConvidados = v,
-                          ),
-                          serviceCheck(
-                            'Álbuns 40x20',
-                            servicoAlbuns4020,
-                            (v) => servicoAlbuns4020 = v,
-                          ),
-                          serviceCheck(
-                            'Same Day Edit',
-                            servicoSameDayEdit,
-                            (v) => servicoSameDayEdit = v,
-                          ),
-                          serviceCheck(
-                            'Projectar Same Day Edit',
-                            servicoProjectarSameDayEdit,
-                            (v) => servicoProjectarSameDayEdit = v,
-                          ),
-                          serviceCheck(
-                            'Galeria digital convidados',
-                            servicoGaleriaDigitalConvidados,
-                            (v) => servicoGaleriaDigitalConvidados = v,
-                          ),
-                          serviceCheck(
-                            'Foto lembrança QR',
-                            servicoFotoLembrancaQr,
-                            (v) => servicoFotoLembrancaQr = v,
-                          ),
-                          serviceCheck(
-                            'Impressão 100 11x22,7',
-                            servicoImpressao100,
-                            (v) => servicoImpressao100 = v,
-                          ),
-                          serviceCheck(
-                            'Vídeo depois do sim',
-                            servicoVideoDepoisDoSim,
-                            (v) => servicoVideoDepoisDoSim = v,
-                          ),
-                          serviceCheck(
-                            'Drone',
-                            servicoDrone,
-                            (v) => servicoDrone = v,
-                          ),
-                        ], columns: 3),
-                        const SizedBox(height: 8),
-                        wrapFields([
-                          TextField(
-                            controller: servicoTelaCtrl,
-                            decoration: const InputDecoration(
-                              labelText: 'Tela',
-                              border: OutlineInputBorder(),
+                  if (_isLegacyEventType)
+                    sectionCard(
+                      'Serviços',
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          wrapFields([
+                            serviceCheck(
+                              'Save the Date',
+                              servicoSaveTheDate,
+                              (v) => servicoSaveTheDate = v,
                             ),
-                          ),
-                          TextField(
-                            controller: servicoUsbCtrl,
-                            decoration: const InputDecoration(
-                              labelText: 'USB',
-                              border: OutlineInputBorder(),
+                            serviceCheck(
+                              'Fotos Love Story',
+                              servicoFotosLoveStory,
+                              (v) => servicoFotosLoveStory = v,
                             ),
-                          ),
-                        ]),
-                        const SizedBox(height: 8),
-                        wrapFields([
-                          TextField(
-                            controller: servicoCondicoesCtrl,
-                            maxLines: 2,
-                            decoration: const InputDecoration(
-                              labelText: 'Condições mínimas',
-                              border: OutlineInputBorder(),
+                            serviceCheck(
+                              'Vídeo Love Story',
+                              servicoVideoLoveStory,
+                              (v) => servicoVideoLoveStory = v,
                             ),
-                          ),
-                          TextField(
-                            controller: servicoMusicasCtrl,
-                            maxLines: 2,
-                            decoration: const InputDecoration(
-                              labelText: 'Músicas',
-                              border: OutlineInputBorder(),
+                            serviceCheck(
+                              'Projectar Love Story',
+                              servicoProjectarLoveStory,
+                              (v) => servicoProjectarLoveStory = v,
                             ),
-                          ),
-                          TextField(
-                            controller: servicoExtrasCtrl,
-                            maxLines: 2,
-                            decoration: const InputDecoration(
-                              labelText: 'Extras',
-                              border: OutlineInputBorder(),
+                            serviceCheck(
+                              'Combo beleza Love Story',
+                              servicoComboBelezaLoveStory,
+                              (v) => servicoComboBelezaLoveStory = v,
                             ),
-                          ),
-                        ], columns: 1),
-                      ],
+                            serviceCheck(
+                              'Álbum digital 30x5',
+                              servicoAlbumDigital305,
+                              (v) => servicoAlbumDigital305 = v,
+                            ),
+                            serviceCheck(
+                              'Combo beleza TTD',
+                              servicoComboBelezaTtd,
+                              (v) => servicoComboBelezaTtd = v,
+                            ),
+                            serviceCheck(
+                              'Álbum digital',
+                              servicoAlbumDigital,
+                              (v) => servicoAlbumDigital = v,
+                            ),
+                            serviceCheck(
+                              'Álbum convidados',
+                              servicoAlbumConvidados,
+                              (v) => servicoAlbumConvidados = v,
+                            ),
+                            serviceCheck(
+                              'Álbuns 40x20',
+                              servicoAlbuns4020,
+                              (v) => servicoAlbuns4020 = v,
+                            ),
+                            serviceCheck(
+                              'Same Day Edit',
+                              servicoSameDayEdit,
+                              (v) => servicoSameDayEdit = v,
+                            ),
+                            serviceCheck(
+                              'Projectar Same Day Edit',
+                              servicoProjectarSameDayEdit,
+                              (v) => servicoProjectarSameDayEdit = v,
+                            ),
+                            serviceCheck(
+                              'Galeria digital convidados',
+                              servicoGaleriaDigitalConvidados,
+                              (v) => servicoGaleriaDigitalConvidados = v,
+                            ),
+                            serviceCheck(
+                              'Foto lembrança QR',
+                              servicoFotoLembrancaQr,
+                              (v) => servicoFotoLembrancaQr = v,
+                            ),
+                            serviceCheck(
+                              'Impressão 100 11x22,7',
+                              servicoImpressao100,
+                              (v) => servicoImpressao100 = v,
+                            ),
+                            serviceCheck(
+                              'Vídeo depois do sim',
+                              servicoVideoDepoisDoSim,
+                              (v) => servicoVideoDepoisDoSim = v,
+                            ),
+                            serviceCheck(
+                              'Drone',
+                              servicoDrone,
+                              (v) => servicoDrone = v,
+                            ),
+                          ], columns: 3),
+                          const SizedBox(height: 8),
+                          wrapFields([
+                            TextField(
+                              controller: servicoTelaCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'Tela',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                            TextField(
+                              controller: servicoUsbCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'USB',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                          ]),
+                          const SizedBox(height: 8),
+                          wrapFields([
+                            TextField(
+                              controller: servicoCondicoesCtrl,
+                              maxLines: 2,
+                              decoration: const InputDecoration(
+                                labelText: 'Condições mínimas',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                            TextField(
+                              controller: servicoMusicasCtrl,
+                              maxLines: 2,
+                              decoration: const InputDecoration(
+                                labelText: 'Músicas',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                            TextField(
+                              controller: servicoExtrasCtrl,
+                              maxLines: 2,
+                              decoration: const InputDecoration(
+                                labelText: 'Extras',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                          ], columns: 1),
+                        ],
+                      ),
                     ),
-                  ),
+                  if (!_isLegacyEventType && activeTemplate != null)
+                    ...buildTemplateSections(),
                   if (widget.event != null &&
                       _isTodayOrPast(dateCtrl.text)) ...[
                     const SizedBox(height: 12),
@@ -12455,109 +12911,151 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                               'instagram_pais',
                             ];
 
-                            setMetaValue('missa_hora', missaHoraCtrl.text);
-                            setMetaValue('igreja_local', igrejaTipo);
-                            setMetaValue(
+                            const legacyCommonKeys = [
+                              'missa_hora',
+                              'igreja_local',
                               'igreja_localidade',
-                              igrejaLocalidadeCtrl.text,
-                            );
-                            setMetaValue('quinta_local', refeicaoTipo);
-                            setMetaValue(
+                              'quinta_local',
                               'almoco_localidade',
-                              almocoLocalidadeCtrl.text,
-                            );
-                            setMetaValue(
                               'numero_convidados',
-                              numeroConvidadosCtrl.text,
-                            );
-                            setMetaValue('data_entrega', dataEntregaCtrl.text);
-                            setMetaValue(
+                              'data_entrega',
                               'equipa_de_trabalho',
-                              equipaTrabalhoCtrl.text,
-                            );
-                            setMetaValue(
                               'servico_num_profissionais',
-                              _teamCount == 0 ? '' : _teamCount.toString(),
-                            );
-                            setMetaBool(
                               'servico_save_the_date',
-                              servicoSaveTheDate,
-                            );
-                            setMetaBool(
                               'servico_fotos_love_story',
-                              servicoFotosLoveStory,
-                            );
-                            setMetaBool(
                               'servico_video_love_story',
-                              servicoVideoLoveStory,
-                            );
-                            setMetaBool(
                               'servico_projectar_love_story',
-                              servicoProjectarLoveStory,
-                            );
-                            setMetaBool(
                               'servico_combo_beleza_love_story',
-                              servicoComboBelezaLoveStory,
-                            );
-                            setMetaBool(
                               'servico_album_digital_30_5',
-                              servicoAlbumDigital305,
-                            );
-                            setMetaBool(
                               'servico_combo_beleza_ttd',
-                              servicoComboBelezaTtd,
-                            );
-                            setMetaBool(
                               'servico_album_digital',
-                              servicoAlbumDigital,
-                            );
-                            setMetaBool(
                               'servico_album_convidados',
-                              servicoAlbumConvidados,
-                            );
-                            setMetaBool(
                               'servico_albuns_40_20',
-                              servicoAlbuns4020,
-                            );
-                            setMetaBool(
                               'servico_same_day_edit',
-                              servicoSameDayEdit,
-                            );
-                            setMetaBool(
                               'servico_projectar_same_day_edit',
-                              servicoProjectarSameDayEdit,
-                            );
-                            setMetaBool(
                               'servico_galeria_digital_convidados',
-                              servicoGaleriaDigitalConvidados,
-                            );
-                            setMetaBool(
                               'servico_foto_lembranca_qr',
-                              servicoFotoLembrancaQr,
-                            );
-                            setMetaBool(
                               'servico_impressao_100_11x22_7',
-                              servicoImpressao100,
-                            );
-                            setMetaBool(
                               'servico_video_depois_do_sim',
-                              servicoVideoDepoisDoSim,
-                            );
-                            setMetaBool('servico_drone', servicoDrone);
-                            setMetaValue('servico_tela', servicoTelaCtrl.text);
-                            setMetaValue('servico_usb', servicoUsbCtrl.text);
-                            setMetaValue(
+                              'servico_drone',
+                              'servico_tela',
+                              'servico_usb',
                               'servico_condicoes_minimas',
-                              servicoCondicoesCtrl.text,
-                            );
-                            setMetaValue(
                               'servico_musicas',
-                              servicoMusicasCtrl.text,
-                            );
-                            setMetaValue(
                               'servico_extras',
-                              servicoExtrasCtrl.text,
-                            );
+                            ];
+
+                            if (_isLegacyEventType) {
+                              setMetaValue('missa_hora', missaHoraCtrl.text);
+                              setMetaValue('igreja_local', igrejaTipo);
+                              setMetaValue(
+                                'igreja_localidade',
+                                igrejaLocalidadeCtrl.text,
+                              );
+                              setMetaValue('quinta_local', refeicaoTipo);
+                              setMetaValue(
+                                'almoco_localidade',
+                                almocoLocalidadeCtrl.text,
+                              );
+                              setMetaValue(
+                                'numero_convidados',
+                                numeroConvidadosCtrl.text,
+                              );
+                              setMetaValue(
+                                'data_entrega',
+                                dataEntregaCtrl.text,
+                              );
+                              setMetaValue(
+                                'equipa_de_trabalho',
+                                equipaTrabalhoCtrl.text,
+                              );
+                              setMetaValue(
+                                'servico_num_profissionais',
+                                _teamCount == 0 ? '' : _teamCount.toString(),
+                              );
+                              setMetaBool(
+                                'servico_save_the_date',
+                                servicoSaveTheDate,
+                              );
+                              setMetaBool(
+                                'servico_fotos_love_story',
+                                servicoFotosLoveStory,
+                              );
+                              setMetaBool(
+                                'servico_video_love_story',
+                                servicoVideoLoveStory,
+                              );
+                              setMetaBool(
+                                'servico_projectar_love_story',
+                                servicoProjectarLoveStory,
+                              );
+                              setMetaBool(
+                                'servico_combo_beleza_love_story',
+                                servicoComboBelezaLoveStory,
+                              );
+                              setMetaBool(
+                                'servico_album_digital_30_5',
+                                servicoAlbumDigital305,
+                              );
+                              setMetaBool(
+                                'servico_combo_beleza_ttd',
+                                servicoComboBelezaTtd,
+                              );
+                              setMetaBool(
+                                'servico_album_digital',
+                                servicoAlbumDigital,
+                              );
+                              setMetaBool(
+                                'servico_album_convidados',
+                                servicoAlbumConvidados,
+                              );
+                              setMetaBool(
+                                'servico_albuns_40_20',
+                                servicoAlbuns4020,
+                              );
+                              setMetaBool(
+                                'servico_same_day_edit',
+                                servicoSameDayEdit,
+                              );
+                              setMetaBool(
+                                'servico_projectar_same_day_edit',
+                                servicoProjectarSameDayEdit,
+                              );
+                              setMetaBool(
+                                'servico_galeria_digital_convidados',
+                                servicoGaleriaDigitalConvidados,
+                              );
+                              setMetaBool(
+                                'servico_foto_lembranca_qr',
+                                servicoFotoLembrancaQr,
+                              );
+                              setMetaBool(
+                                'servico_impressao_100_11x22_7',
+                                servicoImpressao100,
+                              );
+                              setMetaBool(
+                                'servico_video_depois_do_sim',
+                                servicoVideoDepoisDoSim,
+                              );
+                              setMetaBool('servico_drone', servicoDrone);
+                              setMetaValue(
+                                'servico_tela',
+                                servicoTelaCtrl.text,
+                              );
+                              setMetaValue('servico_usb', servicoUsbCtrl.text);
+                              setMetaValue(
+                                'servico_condicoes_minimas',
+                                servicoCondicoesCtrl.text,
+                              );
+                              setMetaValue(
+                                'servico_musicas',
+                                servicoMusicasCtrl.text,
+                              );
+                              setMetaValue(
+                                'servico_extras',
+                                servicoExtrasCtrl.text,
+                              );
+                            }
                             if (eventType == 'casamento') {
                               for (final key in baptKeys) {
                                 meta.remove(key);
@@ -12662,6 +13160,46 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                                 instagramPaisCtrl.text,
                               );
                             }
+                            if (!_isLegacyEventType) {
+                              for (final key in [
+                                ...legacyCommonKeys,
+                                ...weddingKeys,
+                                ...baptKeys,
+                                'location',
+                                'city',
+                                'address',
+                                'address2',
+                                'delivery_date',
+                                'guest_count',
+                              ]) {
+                                meta.remove(key);
+                              }
+                              if (activeTemplate != null) {
+                                for (final field in activeTemplate.fields.where(
+                                  (item) => item.showInForm,
+                                )) {
+                                  final controller =
+                                      _controllerForTemplateField(field);
+                                  if (field.source == 'event') {
+                                    meta.remove(field.key);
+                                    continue;
+                                  }
+                                  if (field.type == 'checkbox') {
+                                    setMetaBool(
+                                      field.key,
+                                      controller.text == '1' ||
+                                          controller.text.toLowerCase() ==
+                                              'true',
+                                    );
+                                  } else {
+                                    setMetaValue(field.key, controller.text);
+                                  }
+                                }
+                              }
+                            }
+                            final guestCount = int.tryParse(
+                              guestCountEventCtrl.text.trim(),
+                            );
                             final payload = StaffEventPayload(
                               name: null,
                               legacyReportNumber: reportNumberCtrl.text.trim(),
@@ -12670,6 +13208,23 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
                               pricePerPhoto: price,
                               basePrice: basePrice,
                               eventType: eventType,
+                              location: locationCtrl.text.trim().isEmpty
+                                  ? null
+                                  : locationCtrl.text.trim(),
+                              city: cityCtrl.text.trim().isEmpty
+                                  ? null
+                                  : cityCtrl.text.trim(),
+                              address: addressCtrl.text.trim().isEmpty
+                                  ? null
+                                  : addressCtrl.text.trim(),
+                              address2: address2Ctrl.text.trim().isEmpty
+                                  ? null
+                                  : address2Ctrl.text.trim(),
+                              deliveryDate:
+                                  deliveryDateEventCtrl.text.trim().isEmpty
+                                  ? null
+                                  : deliveryDateEventCtrl.text.trim(),
+                              guestCount: guestCount,
                               eventMeta: meta,
                               notes: notesCtrl.text.trim(),
                               isLocked: isLocked,
@@ -13856,11 +14411,7 @@ class _StaffPhotosPageState extends ConsumerState<StaffPhotosPage> {
               itemCount: events.length,
               itemBuilder: (context, index) {
                 final e = events[index];
-                final typeLabel = e.eventType == 'casamento'
-                    ? 'Casamento'
-                    : e.eventType == 'batizado'
-                    ? 'Batizado'
-                    : e.eventType ?? '';
+                final typeLabel = _eventTypeLabel(e);
                 return GestureDetector(
                   onTap: () => Navigator.push(
                     context,
@@ -18318,6 +18869,22 @@ class ApiService {
     return next.toString();
   }
 
+  Future<List<StaffServiceTemplate>> staffServiceTemplates(String token) async {
+    final r = await dio.get(
+      '/events/service-templates',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+    if (r.statusCode != 200) throw _errorFromResponse(r);
+    final list = ((r.data['data'] as List?) ?? const []);
+    return list
+        .map(
+          (item) => StaffServiceTemplate.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          ),
+        )
+        .toList();
+  }
+
   Future<Uint8List> staffEventPdf(String token, int eventId) async {
     final r = await dio.get(
       '/events/$eventId/pdf',
@@ -19224,6 +19791,11 @@ class StaffEvent {
     this.basePrice,
     required this.isActiveToday,
     this.location,
+    this.city,
+    this.address,
+    this.address2,
+    this.deliveryDate,
+    this.guestCount,
     this.eventType,
     this.eventMeta,
     this.qrToken,
@@ -19241,6 +19813,11 @@ class StaffEvent {
   final num? basePrice;
   final bool isActiveToday;
   final String? location;
+  final String? city;
+  final String? address;
+  final String? address2;
+  final String? deliveryDate;
+  final int? guestCount;
   final String? eventType;
   final Map<String, dynamic>? eventMeta;
   final String? qrToken;
@@ -19265,6 +19842,11 @@ class StaffEvent {
               : num.tryParse(j['base_price'].toString())),
     isActiveToday: j['is_active_today'] == true || j['is_active_today'] == 1,
     location: j['location'] as String?,
+    city: j['city'] as String?,
+    address: j['address'] as String?,
+    address2: j['address2'] as String?,
+    deliveryDate: j['delivery_date'] as String?,
+    guestCount: (j['guest_count'] as num?)?.toInt(),
     eventType: j['event_type'] as String?,
     eventMeta: j['event_meta'] is Map<String, dynamic>
         ? Map<String, dynamic>.from(j['event_meta'])
@@ -19305,6 +19887,12 @@ class StaffEventPayload {
     required this.pricePerPhoto,
     this.basePrice,
     required this.eventType,
+    this.location,
+    this.city,
+    this.address,
+    this.address2,
+    this.deliveryDate,
+    this.guestCount,
     required this.eventMeta,
     required this.notes,
     required this.isLocked,
@@ -19316,6 +19904,12 @@ class StaffEventPayload {
   final num pricePerPhoto;
   final num? basePrice;
   final String eventType;
+  final String? location;
+  final String? city;
+  final String? address;
+  final String? address2;
+  final String? deliveryDate;
+  final int? guestCount;
   final Map<String, dynamic> eventMeta;
   final String notes;
   final bool isLocked;
@@ -19329,10 +19923,106 @@ class StaffEventPayload {
     'price_per_photo': pricePerPhoto,
     if (basePrice != null) 'base_price': basePrice,
     'event_type': eventType.isEmpty ? null : eventType,
+    if (location != null && location!.trim().isNotEmpty) 'location': location!.trim(),
+    if (city != null && city!.trim().isNotEmpty) 'city': city!.trim(),
+    if (address != null && address!.trim().isNotEmpty) 'address': address!.trim(),
+    if (address2 != null && address2!.trim().isNotEmpty) 'address2': address2!.trim(),
+    if (deliveryDate != null && deliveryDate!.trim().isNotEmpty) 'delivery_date': deliveryDate!.trim(),
+    if (guestCount != null) 'guest_count': guestCount,
     'event_meta': eventMeta,
     if (notes.trim().isNotEmpty) 'notes': notes.trim(),
     if (isLocked) 'is_locked': true,
   };
+}
+
+class StaffServiceTemplate {
+  StaffServiceTemplate({
+    required this.id,
+    required this.slug,
+    required this.name,
+    required this.fields,
+    this.description,
+    this.sortOrder = 0,
+    this.settings = const {},
+  });
+
+  final int id;
+  final String slug;
+  final String name;
+  final String? description;
+  final int sortOrder;
+  final Map<String, dynamic> settings;
+  final List<StaffServiceTemplateField> fields;
+
+  factory StaffServiceTemplate.fromJson(Map<String, dynamic> j) =>
+      StaffServiceTemplate(
+        id: (j['id'] as num?)?.toInt() ?? 0,
+        slug: j['slug']?.toString() ?? '',
+        name: j['name']?.toString() ?? '',
+        description: j['description']?.toString(),
+        sortOrder: (j['sort_order'] as num?)?.toInt() ?? 0,
+        settings: j['settings'] is Map
+            ? Map<String, dynamic>.from(j['settings'] as Map)
+            : const {},
+        fields: ((j['fields'] as List?) ?? const [])
+            .map(
+              (item) => StaffServiceTemplateField.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            )
+            .toList(),
+      );
+}
+
+class StaffServiceTemplateField {
+  StaffServiceTemplateField({
+    required this.key,
+    required this.label,
+    required this.source,
+    required this.section,
+    required this.sectionOrder,
+    required this.order,
+    required this.type,
+    required this.width,
+    required this.required,
+    required this.showInForm,
+    required this.showInPdf,
+    required this.options,
+    this.placeholder,
+  });
+
+  final String key;
+  final String label;
+  final String source;
+  final String section;
+  final int sectionOrder;
+  final int order;
+  final String type;
+  final String width;
+  final bool required;
+  final bool showInForm;
+  final bool showInPdf;
+  final List<String> options;
+  final String? placeholder;
+
+  factory StaffServiceTemplateField.fromJson(Map<String, dynamic> j) =>
+      StaffServiceTemplateField(
+        key: j['key']?.toString() ?? '',
+        label: j['label']?.toString() ?? '',
+        source: j['source']?.toString() == 'event' ? 'event' : 'meta',
+        section: j['section']?.toString() ?? 'Ficha',
+        sectionOrder: (j['section_order'] as num?)?.toInt() ?? 100,
+        order: (j['order'] as num?)?.toInt() ?? 100,
+        type: j['type']?.toString() ?? 'text',
+        width: j['width']?.toString() ?? 'half',
+        required: j['required'] == true || j['required'] == 1,
+        showInForm: j['show_in_form'] != false,
+        showInPdf: j['show_in_pdf'] != false,
+        options: ((j['options'] as List?) ?? const [])
+            .map((item) => item.toString())
+            .toList(),
+        placeholder: j['placeholder']?.toString(),
+      );
 }
 
 class StaffPhoto {

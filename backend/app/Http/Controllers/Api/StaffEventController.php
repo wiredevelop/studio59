@@ -9,6 +9,7 @@ use App\Models\Event;
 use App\Support\Audit;
 use App\Support\EventPdf;
 use App\Support\EventInviteService;
+use App\Support\ServiceTemplateCatalog;
 use App\Support\TeamAssignment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -107,6 +108,11 @@ class StaffEventController extends Controller
             'base_price' => $event->base_price,
             'is_active_today' => $event->is_active_today,
             'location' => $event->location,
+            'city' => $event->city,
+            'address' => $event->address,
+            'address2' => $event->address2,
+            'delivery_date' => optional($event->delivery_date)->format('Y-m-d'),
+            'guest_count' => $event->guest_count,
             'event_type' => $event->event_type,
             'event_meta' => $event->event_meta,
             'qr_token' => $event->qr_token,
@@ -318,6 +324,25 @@ class StaffEventController extends Controller
     {
         return response()->json([
             'next_report_number' => $this->nextLegacyReportNumber(),
+        ]);
+    }
+
+    public function serviceTemplates()
+    {
+        $templates = ServiceTemplateCatalog::activeTemplates()->map(function ($template) {
+            return [
+                'id' => $template->id,
+                'slug' => $template->slug,
+                'name' => $template->name,
+                'description' => $template->description,
+                'sort_order' => $template->sort_order,
+                'settings' => is_array($template->settings) ? $template->settings : [],
+                'fields' => ServiceTemplateCatalog::fieldsFor($template),
+            ];
+        })->values();
+
+        return response()->json([
+            'data' => $templates,
         ]);
     }
 
@@ -899,23 +924,13 @@ class StaffEventController extends Controller
 
     private function buildEventName($eventType, $eventDate, array $meta, ?string $fallback = null): string
     {
-        $typeLabel = $eventType ? Str::upper($eventType) : 'EVENTO';
-        $dateLabel = $eventDate ? Carbon::parse($eventDate)->format('Y-m-d') : null;
-        $names = '';
-        if ($eventType === 'casamento') {
-            $noivo = trim((string) ($meta['noivo_nome'] ?? ''));
-            $noiva = trim((string) ($meta['noiva_nome'] ?? ''));
-            if ($noivo && $noiva) {
-                $names = $noivo.' & '.$noiva;
-            } else {
-                $names = trim($noivo.' '.$noiva);
-            }
-        } elseif ($eventType === 'batizado') {
-            $names = trim((string) ($meta['bebe_nome'] ?? ''));
-        }
-
-        $parts = array_filter([$typeLabel, $names, $dateLabel]);
-        return $parts ? implode(' - ', $parts) : ($fallback ?: 'Evento');
+        return ServiceTemplateCatalog::buildEventName(
+            ServiceTemplateCatalog::findByType($eventType),
+            $eventType,
+            $eventDate,
+            $meta,
+            $fallback
+        );
     }
 
     private function ensureClientNumbers(Event $event): void

@@ -47,6 +47,7 @@ Route::middleware(['auth:sanctum', 'role:admin,staff,photographer'])->group(func
     Route::middleware('permission:events.list,events.view')->group(function () {
         Route::get('/events', [StaffEventController::class, 'index'])->name('api.events.index');
         Route::get('/events/lookup', [StaffEventController::class, 'lookup']);
+        Route::get('/events/service-templates', [StaffEventController::class, 'serviceTemplates']);
     });
     Route::middleware('permission:events.view')->group(function () {
         Route::get('/events/{event}', [StaffEventController::class, 'show'])->name('api.events.show');
