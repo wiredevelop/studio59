@@ -79,6 +79,12 @@ def parse_date(val):
     s = str(val).strip()
     if not s:
         return None
+    iso_match = re.match(r'^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$', s)
+    if iso_match:
+        try:
+            return date(int(iso_match.group(1)), int(iso_match.group(2)), int(iso_match.group(3)))
+        except ValueError:
+            return None
     dt = pd.to_datetime(s, errors='coerce', dayfirst=True)
     if pd.isna(dt):
         return None
@@ -407,7 +413,19 @@ def merge_records(records):
     return merged
 
 
-def build_event_payload(record, used_pins, existing_codes, created_by, users):
+def preserve_existing_meta(meta, existing_event_meta):
+    if not existing_event_meta:
+        return
+    for key in [
+        'cliente_noivo_num',
+        'cliente_noiva_num',
+        'cliente_batizado_num',
+    ]:
+        if existing_event_meta.get(key) and not meta.get(key):
+            meta[key] = existing_event_meta[key]
+
+
+def build_event_payload(record, used_pins, existing_codes, created_by, users, existing_event=None):
     row = record['values']
     legacy_report = clip(to_str_number(row.get('REPORTAGEM Nº')), 50)
     legacy_client = clip(to_str_number(row.get('CLIENTE Nº')), 50)
@@ -467,10 +485,19 @@ def build_event_payload(record, used_pins, existing_codes, created_by, users):
         if baby:
             meta.setdefault('bebe_nome', baby)
 
+    existing_event_meta = {}
+    if existing_event and existing_event.get('event_meta'):
+        try:
+            existing_event_meta = json.loads(existing_event['event_meta']) or {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            existing_event_meta = {}
+    preserve_existing_meta(meta, existing_event_meta)
     make_client_numbers(event_type, event_date, meta)
 
     name = build_event_name(event_type, event_date, meta)
-    internal_code = generate_internal_code(event_type, event_date, name, existing_codes)
+    internal_code = existing_event.get('internal_code') if existing_event else None
+    if not internal_code:
+        internal_code = generate_internal_code(event_type, event_date, name, existing_codes)
 
     team_raw = str(meta.get('EQUIPA DE TRABALHO') or meta.get('equipa_de_trabalho') or '').strip()
     meta['equipa_de_trabalho'] = team_raw or meta.get('equipa_de_trabalho')
@@ -478,10 +505,13 @@ def build_event_payload(record, used_pins, existing_codes, created_by, users):
     legacy_price = sanitize_db_money(parse_money(row.get('PREÇO')))
     legacy_base_price = sanitize_db_money(parse_money(row.get('Preço Base')))
     legacy_total_price = sanitize_db_money(parse_money(row.get('VALOR CONTRATO'))) or legacy_price
+    qr_token = existing_event.get('qr_token') if existing_event else None
+    access_pin = existing_event.get('access_pin') if existing_event else None
+    created_by_value = existing_event.get('created_by') if existing_event and existing_event.get('created_by') else created_by
 
     payload = {
         'name': name,
-        'client_id': None,
+        'client_id': existing_event.get('client_id') if existing_event else None,
         'internal_code': internal_code,
         'legacy_report_number': legacy_report,
         'legacy_client_number': legacy_client,
@@ -500,12 +530,12 @@ def build_event_payload(record, used_pins, existing_codes, created_by, users):
         'bride_departure_time_raw': clip(normalize_time_text(row.get('sair noiva')), 20),
         'groom_departure_time_raw': clip(normalize_time_text(row.get('sair noivo')), 20),
         'notes': notes,
-        'status': 'scheduled',
-        'access_mode': 'both',
-        'qr_token': os.urandom(24).hex(),
-        'qr_enabled': 1,
-        'is_locked': 0,
-        'storage_path': None,
+        'status': existing_event.get('status') if existing_event and existing_event.get('status') else 'scheduled',
+        'access_mode': existing_event.get('access_mode') if existing_event and existing_event.get('access_mode') else 'both',
+        'qr_token': qr_token or os.urandom(24).hex(),
+        'qr_enabled': existing_event.get('qr_enabled') if existing_event and existing_event.get('qr_enabled') is not None else 1,
+        'is_locked': existing_event.get('is_locked') if existing_event and existing_event.get('is_locked') is not None else 0,
+        'storage_path': existing_event.get('storage_path') if existing_event else None,
         'event_meta': json.dumps(meta, ensure_ascii=False),
         'legacy_payload': json.dumps({
             'merged_row': row,
@@ -514,10 +544,10 @@ def build_event_payload(record, used_pins, existing_codes, created_by, users):
         'legacy_source_file': record['preferred']['file'],
         'legacy_source_sheet': record['preferred']['sheet'],
         'legacy_source_row': record['preferred']['row_number'],
-        'access_pin': generate_unique_pin(used_pins),
-        'is_active_today': 0,
-        'created_by': created_by,
-        'price_per_photo': legacy_price or 5.0,
+        'access_pin': access_pin or generate_unique_pin(used_pins),
+        'is_active_today': existing_event.get('is_active_today') if existing_event and existing_event.get('is_active_today') is not None else 0,
+        'created_by': created_by_value,
+        'price_per_photo': 5.0,
         'base_price': legacy_base_price or 0.0,
         'total_price': legacy_total_price,
         'bride_name': bride_name,
@@ -564,18 +594,42 @@ def main():
     cur.execute('SELECT id, username, name FROM users')
     users = cur.fetchall()
 
-    cur.execute('SELECT id, legacy_report_number, legacy_source_file, legacy_source_sheet, legacy_source_row FROM events')
+    cur.execute(
+        '''
+        SELECT
+            id, client_id, internal_code, legacy_report_number, legacy_source_file, legacy_source_sheet,
+            legacy_source_row, access_pin, qr_token, created_by, created_at, status, access_mode,
+            qr_enabled, is_locked, storage_path, is_active_today, event_meta
+        FROM events
+        '''
+    )
     existing = cur.fetchall()
     existing_by_report = {}
     existing_by_source = {}
+    existing_by_id = {}
     for row in existing:
+        existing_by_id[row['id']] = row
         if row['legacy_report_number']:
             existing_by_report[str(row['legacy_report_number'])] = row['id']
         key = (row['legacy_source_file'], row['legacy_source_sheet'], row['legacy_source_row'])
         if key[0] and key[1] and key[2]:
             existing_by_source[key] = row['id']
 
-    payloads = [build_event_payload(record, used_pins, existing_codes, created_by, users) for record in merged]
+    payloads = []
+    for record in merged:
+        report = clip(to_str_number(record['values'].get('REPORTAGEM Nº')), 50)
+        source_key = (record['preferred']['file'], record['preferred']['sheet'], record['preferred']['row_number'])
+        event_id = existing_by_report.get(report) if report else None
+        if not event_id:
+            event_id = existing_by_source.get(source_key)
+        payloads.append(build_event_payload(
+            record,
+            used_pins,
+            existing_codes,
+            created_by,
+            users,
+            existing_by_id.get(event_id),
+        ))
 
     to_insert = 0
     to_update = 0

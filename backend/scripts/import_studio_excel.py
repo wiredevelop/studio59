@@ -57,6 +57,12 @@ def parse_date(val):
     s = str(val).strip()
     if not s:
         return None
+    iso_match = re.match(r'^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$', s)
+    if iso_match:
+        try:
+            return date(int(iso_match.group(1)), int(iso_match.group(2)), int(iso_match.group(3)))
+        except ValueError:
+            return None
     dt = pd.to_datetime(s, errors='coerce', dayfirst=True)
     if pd.isna(dt):
         return None
