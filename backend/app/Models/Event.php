@@ -46,6 +46,10 @@ class Event extends Model
         'is_locked',
         'storage_path',
         'event_meta',
+        'legacy_payload',
+        'legacy_source_file',
+        'legacy_source_sheet',
+        'legacy_source_row',
         'access_pin',
         'is_active_today',
         'created_by',
@@ -72,6 +76,8 @@ class Event extends Model
         'base_price' => 'decimal:2',
         'total_price' => 'decimal:2',
         'event_meta' => 'array',
+        'legacy_payload' => 'array',
+        'legacy_source_row' => 'integer',
     ];
 
     public function getReportNumberAttribute(): ?string
@@ -103,10 +109,14 @@ class Event extends Model
         $meta = $this->setMetaIfMissing($meta, 'noiva_profissao', $meta['Profissão da Noiva'] ?? null);
         $meta = $this->setMetaIfMissing($meta, 'noivo_instagram', $meta['Instagram'] ?? null);
         $meta = $this->setMetaIfMissing($meta, 'noiva_instagram', $meta['Instagram2'] ?? null);
+        $meta = $this->setMetaIfMissing($meta, 'telemovel_noivo_2', $meta['telemóvel noivo 2'] ?? null);
+        $meta = $this->setMetaIfMissing($meta, 'telemovel_noiva_2', $meta['telemóvel noiva 2'] ?? null);
+        $meta = $this->setMetaIfMissing($meta, 'facebook', $meta['Facebook'] ?? null);
         $meta = $this->setMetaIfMissing($meta, 'noivo_filho_de_1', $meta['FILHO DE'] ?? null);
         $meta = $this->setMetaIfMissing($meta, 'noiva_filho_de_1', $meta['FILHA DE'] ?? null);
         $meta = $this->setMetaIfMissing($meta, 'noivo_morada', $this->address ?? ($meta['MORADA'] ?? null));
         $meta = $this->setMetaIfMissing($meta, 'noiva_morada', $this->address2 ?? ($meta['MORADA2'] ?? null));
+        $meta = $this->setMetaIfMissing($meta, 'residencia_apos_casamento', $meta['RESIDÊNCIA APÓS CASAMENTO'] ?? null);
         $meta = $this->setMetaIfMissing(
             $meta,
             'missa_hora',
@@ -171,6 +181,8 @@ class Event extends Model
         $meta = $this->setMetaIfMissing($meta, 'servico_musicas', $meta['Musicas'] ?? ($meta['Musicas2'] ?? null));
         $meta = $this->setMetaIfMissing($meta, 'servico_usb', $meta['Pen'] ?? null);
         $meta = $this->setMetaIfMissing($meta, 'servico_extras', $meta['Extras'] ?? ($meta['extra'] ?? ($meta['acrescimos'] ?? null)));
+        $meta = $this->setMetaIfMissing($meta, 'mesa_apoio_fotografos', $meta['Mesa de Apoio aos fotografos'] ?? null);
+        $meta = $this->setMetaIfMissing($meta, 'fotografos_almocam_na_quinta', $meta['fotografos almoçam na quinta'] ?? null);
 
         $meta = $this->setMetaIfMissing($meta, 'servico_save_the_date', $this->parseLegacyBool($meta['Save the Date 1'] ?? null));
         $meta = $this->setMetaIfMissing($meta, 'servico_projectar_love_story', $this->parseLegacyBool($meta['projectar love story'] ?? null));
@@ -205,17 +217,27 @@ class Event extends Model
         $meta = $this->setMetaIfMissing($meta, 'pai_nome', $this->groom_name ?? null);
         $meta = $this->setMetaIfMissing($meta, 'mae_nome', $this->bride_name ?? null);
         $meta = $this->setMetaIfMissing($meta, 'bebe_nome', $meta['BEBE'] ?? ($meta['BEBÉ'] ?? null));
+        $meta = $this->setMetaIfMissing($meta, 'pais_bebe_raw', $meta['PAIS BEBE'] ?? null);
+        $meta = $this->setMetaIfMissing($meta, 'padrinhos_raw', $meta['PADRINHOS'] ?? null);
+        $meta = $this->setMetaIfMissing($meta, 'avos_maternos', $meta['AVÓS MATERNOS'] ?? null);
+        $meta = $this->setMetaIfMissing($meta, 'avos_paternos', $meta['AVÓS PATERNOS'] ?? null);
+        $meta = $this->setMetaIfMissing($meta, 'email_pais', $meta['Email Pais'] ?? null);
+        $meta = $this->setMetaIfMissing($meta, 'telemovel_mae', $meta['Telemovel Mãe'] ?? null);
+        $meta = $this->setMetaIfMissing($meta, 'telemovel_pai', $meta['Telemovel Pai'] ?? null);
+        $meta = $this->setMetaIfMissing($meta, 'nome_livre', $meta['NOME'] ?? null);
 
         $contactoPai = $this->mergeContacts([
             $this->groom_phone ?? null,
             $meta['TELEF.'] ?? null,
             $meta['Telemovel noivo'] ?? null,
+            $meta['Telemovel Pai'] ?? null,
             $meta['contacto_pais'] ?? null,
         ]);
         $contactoMae = $this->mergeContacts([
             $this->bride_phone ?? null,
             $meta['TELEF2'] ?? null,
             $meta['Telemovel noiva'] ?? null,
+            $meta['Telemovel Mãe'] ?? null,
             $meta['contacto_pais_2'] ?? null,
         ]);
         $meta = $this->setMetaIfMissing($meta, 'contacto_pai', $contactoPai);

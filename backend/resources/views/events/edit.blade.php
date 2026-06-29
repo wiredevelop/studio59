@@ -80,6 +80,10 @@
                         <input name="event_meta[noivo_contacto]" value="{{ $meta['noivo_contacto'] ?? '' }}" class="border p-2 rounded w-full">
                     </div>
                     <div>
+                        <label class="block text-sm">Telemóvel 2</label>
+                        <input name="event_meta[telemovel_noivo_2]" value="{{ $meta['telemovel_noivo_2'] ?? '' }}" class="border p-2 rounded w-full">
+                    </div>
+                    <div>
                         <label class="block text-sm">Profissão</label>
                         <input name="event_meta[noivo_profissao]" value="{{ $meta['noivo_profissao'] ?? '' }}" class="border p-2 rounded w-full">
                     </div>
@@ -125,6 +129,10 @@
                         <input name="event_meta[noiva_contacto]" value="{{ $meta['noiva_contacto'] ?? '' }}" class="border p-2 rounded w-full">
                     </div>
                     <div>
+                        <label class="block text-sm">Telemóvel 2</label>
+                        <input name="event_meta[telemovel_noiva_2]" value="{{ $meta['telemovel_noiva_2'] ?? '' }}" class="border p-2 rounded w-full">
+                    </div>
+                    <div>
                         <label class="block text-sm">Profissão</label>
                         <input name="event_meta[noiva_profissao]" value="{{ $meta['noiva_profissao'] ?? '' }}" class="border p-2 rounded w-full">
                     </div>
@@ -155,19 +163,31 @@
                 </div>
             </div>
         </div>
+        <div class="grid md:grid-cols-2 gap-3">
+            <input name="event_meta[facebook]" value="{{ $meta['facebook'] ?? '' }}" placeholder="Facebook" class="border p-2 rounded w-full">
+            <input name="event_meta[residencia_apos_casamento]" value="{{ $meta['residencia_apos_casamento'] ?? '' }}" placeholder="Residência após casamento" class="border p-2 rounded w-full">
+        </div>
     </div>
 
     <div id="event-meta-batizado" class="hidden event-card space-y-4">
         <div class="font-semibold">Dados do Batizado</div>
         <div class="grid md:grid-cols-2 gap-3">
             <input name="event_meta[bebe_nome]" value="{{ $meta['bebe_nome'] ?? '' }}" placeholder="Nome do bebé" class="border p-2 rounded w-full md:col-span-2">
+            <input name="event_meta[nome_livre]" value="{{ $meta['nome_livre'] ?? '' }}" placeholder="Nome livre legado" class="border p-2 rounded w-full md:col-span-2">
             <input name="event_meta[pai_nome]" value="{{ $meta['pai_nome'] ?? '' }}" placeholder="Nome do pai" class="border p-2 rounded w-full">
             <input name="event_meta[mae_nome]" value="{{ $meta['mae_nome'] ?? '' }}" placeholder="Nome da mãe" class="border p-2 rounded w-full">
             <input name="event_meta[padrinho_nome]" value="{{ $meta['padrinho_nome'] ?? '' }}" placeholder="Nome do padrinho" class="border p-2 rounded w-full">
             <input name="event_meta[madrinha_nome]" value="{{ $meta['madrinha_nome'] ?? '' }}" placeholder="Nome da madrinha" class="border p-2 rounded w-full">
+            <input name="event_meta[padrinhos_raw]" value="{{ $meta['padrinhos_raw'] ?? '' }}" placeholder="Padrinhos (legado)" class="border p-2 rounded w-full md:col-span-2">
             <input name="event_meta[contacto_pai]" value="{{ $meta['contacto_pai'] ?? ($meta['contacto_pais'] ?? '') }}" placeholder="Contacto do pai" class="border p-2 rounded w-full">
             <input name="event_meta[contacto_mae]" value="{{ $meta['contacto_mae'] ?? '' }}" placeholder="Contacto da mãe" class="border p-2 rounded w-full">
+            <input name="event_meta[telemovel_pai]" value="{{ $meta['telemovel_pai'] ?? '' }}" placeholder="Telemóvel do pai (legado)" class="border p-2 rounded w-full">
+            <input name="event_meta[telemovel_mae]" value="{{ $meta['telemovel_mae'] ?? '' }}" placeholder="Telemóvel da mãe (legado)" class="border p-2 rounded w-full">
+            <input name="event_meta[email_pais]" value="{{ $meta['email_pais'] ?? '' }}" placeholder="Email dos pais" class="border p-2 rounded w-full md:col-span-2">
             <input name="event_meta[morada]" value="{{ $meta['morada'] ?? '' }}" placeholder="Morada" class="border p-2 rounded w-full md:col-span-2">
+            <input name="event_meta[pais_bebe_raw]" value="{{ $meta['pais_bebe_raw'] ?? '' }}" placeholder="Pais bebé (legado)" class="border p-2 rounded w-full md:col-span-2">
+            <input name="event_meta[avos_maternos]" value="{{ $meta['avos_maternos'] ?? '' }}" placeholder="Avós maternos" class="border p-2 rounded w-full">
+            <input name="event_meta[avos_paternos]" value="{{ $meta['avos_paternos'] ?? '' }}" placeholder="Avós paternos" class="border p-2 rounded w-full">
         </div>
     </div>
 
@@ -255,6 +275,10 @@
                 <label class="block text-sm">Nº de profissionais</label>
                 <input id="team-count" type="number" min="0" name="event_meta[servico_num_profissionais]" value="{{ $meta['servico_num_profissionais'] ?? '' }}" class="border p-2 rounded w-full bg-gray-100" readonly>
             </div>
+        </div>
+        <div class="grid md:grid-cols-2 gap-3">
+            <input name="event_meta[mesa_apoio_fotografos]" value="{{ $meta['mesa_apoio_fotografos'] ?? '' }}" class="border p-2 rounded w-full" placeholder="Mesa de apoio aos fotógrafos">
+            <input name="event_meta[fotografos_almocam_na_quinta]" value="{{ $meta['fotografos_almocam_na_quinta'] ?? '' }}" class="border p-2 rounded w-full" placeholder="Fotógrafos almoçam na quinta">
         </div>
     </div>
 

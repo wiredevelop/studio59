@@ -278,6 +278,10 @@ def main():
         'notes',
         'storage_path',
         'event_meta',
+        'legacy_payload',
+        'legacy_source_file',
+        'legacy_source_sheet',
+        'legacy_source_row',
         'access_pin',
         'base_price',
         'total_price',
@@ -300,8 +304,10 @@ def main():
     batch = []
     inserted = 0
     skipped = 0
+    source_file = EXCEL_PATH.name
+    source_sheet = 'Sheet1'
 
-    for _, r in df.iterrows():
+    for idx, r in df.iterrows():
         legacy_report = clip(to_str_number(r.get('REPORTAGEM Nº')), 50)
         legacy_client = clip(to_str_number(r.get('CLIENTE Nº')), 50)
         service_raw = r.get('SERVIÇO DE:')
@@ -391,6 +397,8 @@ def main():
         meta = {}
         if legacy_report:
             meta['legacy_report_number_raw'] = legacy_report
+        if legacy_client:
+            meta['legacy_client_number_raw'] = legacy_client
         for col in df.columns:
             if col in mapped_cols:
                 continue
@@ -419,17 +427,24 @@ def main():
         if event_date == date(1900, 1, 1):
             meta['event_date_missing'] = True
         event_meta = json.dumps(meta, ensure_ascii=False) if meta else None
+        legacy_payload = json.dumps({
+            str(col): to_jsonable(r.get(col))
+            for col in df.columns
+        }, ensure_ascii=False)
 
         access_pin = generate_unique_pin(used_pins)
 
-        legacy_report_generated = str(next_report_num).zfill(4)
-        next_report_num += 1
+        if legacy_report:
+            legacy_report_number = legacy_report
+        else:
+            legacy_report_number = str(next_report_num).zfill(4)
+            next_report_num += 1
 
         values = (
             name,
             None,
             None,
-            legacy_report_generated,
+            legacy_report_number,
             legacy_client,
             event_type,
             service_raw,
@@ -448,6 +463,10 @@ def main():
             notes,
             None,
             event_meta,
+            legacy_payload,
+            source_file,
+            source_sheet,
+            int(idx) + 2,
             access_pin,
             base_price,
             total_price,
