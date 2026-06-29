@@ -5592,7 +5592,7 @@ class _StaffAgendaPageState extends ConsumerState<StaffAgendaPage> {
       return StaffDesktopShell(
         user: user,
         token: token,
-        initialId: 'services',
+        initialId: 'agenda',
         overrideTitle: 'Agenda',
         overrideSubtitle: 'Agenda e atribuicoes',
         overrideShowSearch: false,
@@ -6162,6 +6162,8 @@ class DesktopNavItem {
 
 Widget _pageForDesktopSection(String id) {
   switch (id) {
+    case 'agenda':
+      return const StaffAgendaPage();
     case 'events':
       return const StaffEventsPage();
     case 'orders':
@@ -6261,6 +6263,16 @@ class _StaffDesktopShellState extends ConsumerState<StaffDesktopShell> {
           search: _searchValue,
         ),
         visibleWhen: (u) => u.hasPermission('dashboard.view'),
+      ),
+      DesktopNavItem(
+        id: 'agenda',
+        label: 'Agenda',
+        icon: Icons.calendar_month_outlined,
+        subtitle: 'Agenda e atribuicoes',
+        builder: (context, user, token) =>
+            DesktopServicesView(user: user, token: token),
+        visibleWhen: (u) =>
+            u.hasPermission('events.list') || u.hasPermission('events.view'),
       ),
       DesktopNavItem(
         id: 'events',
@@ -7632,6 +7644,26 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
               return FutureBuilder<List<StaffEvent>>(
                 future: _future,
                 builder: (context, snap) {
+                  if (!snap.hasData) {
+                    if (snap.hasError) {
+                      return _DeskCard(
+                        child: Text('Erro: ${snap.error}'),
+                      );
+                    }
+                    return const _DeskCard(
+                      child: SizedBox(
+                        height: 180,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(),
+                            SizedBox(height: 12),
+                            Text('A carregar eventos...'),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
                   final events = snap.data ?? const <StaffEvent>[];
                   final filtered = _filterEventsForUser(events, widget.user);
                   final search = value.trim().toLowerCase();
@@ -7841,6 +7873,7 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
   Future<List<OrderListItem>>? _future;
   Future<List<StaffEvent>>? _eventsFuture;
   String? _lastOrdersKey;
+  String? _lastEventsDateKey;
 
   @override
   void initState() {
@@ -7850,7 +7883,11 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
 
   Future<List<StaffEvent>> _loadEvents() => ref
       .read(apiProvider)
-      .staffEvents(widget.token, assignedOnly: !_canSeeAllEvents(widget.user));
+      .staffEvents(
+        widget.token,
+        assignedOnly: !_canSeeAllEvents(widget.user),
+        eventDate: _dateKey(_selectedDate),
+      );
 
   String _dateKey(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
@@ -7884,6 +7921,11 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
 
   @override
   Widget build(BuildContext context) {
+    final selectedDateKey = _dateKey(_selectedDate);
+    if (_eventsFuture == null || _lastEventsDateKey != selectedDateKey) {
+      _lastEventsDateKey = selectedDateKey;
+      _eventsFuture = _loadEvents();
+    }
     return FutureBuilder<List<StaffEvent>>(
       future: _eventsFuture,
       builder: (context, eventSnap) {
@@ -7894,12 +7936,25 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
               child: _DeskCard(child: Text('Erro: ${eventSnap.error}')),
             );
           }
-          return const Center(child: CircularProgressIndicator());
+          return Padding(
+            padding: const EdgeInsets.all(kDeskGutter),
+            child: _DeskCard(
+              child: SizedBox(
+                height: 180,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: const [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 12),
+                    Text('A carregar eventos desta data...'),
+                  ],
+                ),
+              ),
+            ),
+          );
         }
         final events = _filterEventsForUser(eventSnap.data!, widget.user);
-        final eventsForDate = events
-            .where((e) => e.eventDate == _dateKey(_selectedDate))
-            .toList();
+        final eventsForDate = events;
         final hasSelectedEvent = eventsForDate.any(
           (e) => e.id == _selectedEventId,
         );
@@ -7938,8 +7993,10 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                             setState(() {
                               _selectedDate = _startOfDay(picked);
                               _selectedEventId = null;
+                              _eventsFuture = _loadEvents();
                               _future = null;
                               _lastOrdersKey = null;
+                              _lastEventsDateKey = null;
                             });
                           },
                           child: Text('Data: ${_dateLabel(_selectedDate)}'),
@@ -7986,6 +8043,7 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                             _eventsFuture = _loadEvents();
                             _future = null;
                             _lastOrdersKey = null;
+                            _lastEventsDateKey = null;
                           }),
                           icon: const Icon(Icons.refresh),
                           label: const Text('Atualizar'),
@@ -8037,6 +8095,26 @@ class _DesktopOrdersViewState extends ConsumerState<DesktopOrdersView> {
                   return FutureBuilder<List<OrderListItem>>(
                     future: _future,
                     builder: (context, snap) {
+                      if (!snap.hasData) {
+                        if (snap.hasError) {
+                          return _DeskCard(
+                            child: Text('Erro: ${snap.error}'),
+                          );
+                        }
+                        return const _DeskCard(
+                          child: SizedBox(
+                            height: 180,
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                CircularProgressIndicator(),
+                                SizedBox(height: 12),
+                                Text('A carregar pedidos...'),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
                       final orders = snap.data ?? const <OrderListItem>[];
                       final query = value.trim().toLowerCase();
                       final isPhotographer = _isPhotographerRole(
@@ -8376,10 +8454,17 @@ class DesktopPhotosView extends ConsumerStatefulWidget {
 
 class _DesktopPhotosViewState extends ConsumerState<DesktopPhotosView> {
   Future<List<StaffEvent>>? _future;
+  bool _historyAll = false;
 
   Future<List<StaffEvent>> _loadEvents() => ref
       .read(apiProvider)
-      .staffEvents(widget.token, assignedOnly: !_canSeeAllEvents(widget.user));
+      .staffEvents(
+        widget.token,
+        assignedOnly: !_canSeeAllEvents(widget.user),
+        fromDate: _historyAll
+            ? null
+            : '${DateTime.now().year.toString().padLeft(4, '0')}-01-01',
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -8397,7 +8482,26 @@ class _DesktopPhotosViewState extends ConsumerState<DesktopPhotosView> {
                   child: _DeskCard(child: Text('Erro: ${snap.error}')),
                 );
               }
-              return const Center(child: CircularProgressIndicator());
+              return Padding(
+                padding: const EdgeInsets.all(kDeskGutter),
+                child: _DeskCard(
+                  child: SizedBox(
+                    height: 180,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 12),
+                        Text(
+                          _historyAll
+                              ? 'A carregar galeria completa...'
+                              : 'A carregar galeria do ano atual...',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
             }
             final query = value.trim().toLowerCase();
             final events = _filterEventsForUser(snap.data!, widget.user);
@@ -8412,6 +8516,36 @@ class _DesktopPhotosViewState extends ConsumerState<DesktopPhotosView> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const _DeskSectionHeader('Galeria'),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _DeskStatusFilterChip(
+                        label: 'Ano atual',
+                        selected: !_historyAll,
+                        onTap: () => setState(() {
+                          _historyAll = false;
+                          _future = _loadEvents();
+                        }),
+                      ),
+                      _DeskStatusFilterChip(
+                        label: 'Histórico completo',
+                        selected: _historyAll,
+                        onTap: () => setState(() {
+                          _historyAll = true;
+                          _future = _loadEvents();
+                        }),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => setState(() {
+                          _future = _loadEvents();
+                        }),
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Atualizar'),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 12),
                   if (visible.isEmpty)
                     const _DeskCard(child: Text('Sem eventos com fotos.'))
@@ -9297,9 +9431,16 @@ class DesktopUsersView extends ConsumerStatefulWidget {
 
 class _DesktopUsersViewState extends ConsumerState<DesktopUsersView> {
   Future<List<StaffUser>>? _future;
+  final TextEditingController _queryCtrl = TextEditingController();
 
   Future<List<StaffUser>> _loadUsers() =>
       ref.read(apiProvider).staffUsers(widget.token);
+
+  @override
+  void dispose() {
+    _queryCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -9317,55 +9458,18 @@ class _DesktopUsersViewState extends ConsumerState<DesktopUsersView> {
           return const Center(child: CircularProgressIndicator());
         }
         final users = snap.data!;
-        final rows = users
-            .map(
-              (staffUser) => <Widget>[
-                Text(staffUser.name),
-                Text(
-                  staffUser.username?.trim().isNotEmpty == true
-                      ? staffUser.username!
-                      : '-',
-                ),
-                Text(staffUser.email),
-                Text(staffUser.role),
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    if (widget.user.hasPermission('users.update'))
-                      TextButton(
-                        onPressed: () async {
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  StaffUserFormPage(user: staffUser),
-                            ),
-                          );
-                          if (mounted) setState(() => _future = null);
-                        },
-                        child: const Text('Editar'),
-                      ),
-                    if (widget.user.hasPermission('users.delete'))
-                      TextButton(
-                        onPressed: () async {
-                          final ok = await _confirm(
-                            context,
-                            'Apagar utilizador?',
-                            staffUser.email,
-                          );
-                          if (!ok) return;
-                          await ref
-                              .read(apiProvider)
-                              .deleteUser(widget.token, staffUser.id);
-                          if (mounted) setState(() => _future = null);
-                        },
-                        child: const Text('Apagar'),
-                      ),
-                  ],
-                ),
-              ],
-            )
-            .toList();
+        final query = _queryCtrl.text.trim().toLowerCase();
+        final visible = query.isEmpty
+            ? users
+            : users.where((staffUser) {
+                final blob = [
+                  staffUser.name,
+                  staffUser.username ?? '',
+                  staffUser.email,
+                  staffUser.role,
+                ].join(' ').toLowerCase();
+                return blob.contains(query);
+              }).toList();
         return SingleChildScrollView(
           padding: const EdgeInsets.all(kDeskGutter),
           child: Column(
@@ -9391,19 +9495,120 @@ class _DesktopUsersViewState extends ConsumerState<DesktopUsersView> {
                 ],
               ),
               const SizedBox(height: 12),
+              TextField(
+                controller: _queryCtrl,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search),
+                  hintText: 'Pesquisar nome, email, username ou role',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
               if (users.isEmpty)
                 const _DeskCard(child: Text('Sem utilizadores.'))
+              else if (visible.isEmpty)
+                const _DeskCard(child: Text('Sem resultados.'))
               else
-                _DeskTable(
-                  columns: const [
-                    _DeskTableColumn('Nome', flex: 2),
-                    _DeskTableColumn('Username', flex: 2),
-                    _DeskTableColumn('Email', flex: 2),
-                    _DeskTableColumn('Role', flex: 1),
-                    _DeskTableColumn('Ações', flex: 2),
-                  ],
-                  rows: rows,
-                ),
+                ...visible.map((staffUser) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _DeskCard(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          CircleAvatar(
+                            backgroundColor: kBrandRose.withOpacity(0.18),
+                            foregroundColor: kBrandRose,
+                            child: Text(
+                              _initialsFromName(staffUser.name).toUpperCase(),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  staffUser.name,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    if ((staffUser.username ?? '')
+                                        .trim()
+                                        .isNotEmpty)
+                                      _DeskStatusBadge(
+                                        '@${staffUser.username!.trim()}',
+                                      ),
+                                    _DeskStatusBadge(
+                                      staffUser.role.toUpperCase(),
+                                      color: Colors.lightBlueAccent,
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                SelectableText(
+                                  staffUser.email,
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.72),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              if (widget.user.hasPermission('users.update'))
+                                _MobileActionChip(
+                                  label: 'Editar',
+                                  color: kBrandRose,
+                                  onTap: () async {
+                                    await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            StaffUserFormPage(user: staffUser),
+                                      ),
+                                    );
+                                    if (mounted) setState(() => _future = null);
+                                  },
+                                ),
+                              if (widget.user.hasPermission('users.delete'))
+                                _MobileActionChip(
+                                  label: 'Apagar',
+                                  color: Colors.redAccent,
+                                  onTap: () async {
+                                    final ok = await _confirm(
+                                      context,
+                                      'Apagar utilizador?',
+                                      staffUser.email,
+                                    );
+                                    if (!ok) return;
+                                    await ref
+                                        .read(apiProvider)
+                                        .deleteUser(widget.token, staffUser.id);
+                                    if (mounted) {
+                                      setState(() => _future = null);
+                                    }
+                                  },
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
             ],
           ),
         );
@@ -18811,13 +19016,17 @@ class ApiService {
     String token, {
     String? eventType,
     bool assignedOnly = false,
+    String? eventDate,
     String? fromDate,
+    String? q,
   }) async {
     final params = <String, dynamic>{};
     final type = eventType?.trim() ?? '';
     if (type.isNotEmpty) params['event_type'] = type;
     if (assignedOnly) params['assigned_only'] = 1;
+    if (eventDate != null && eventDate.isNotEmpty) params['event_date'] = eventDate;
     if (fromDate != null && fromDate.isNotEmpty) params['from_date'] = fromDate;
+    if (q != null && q.trim().isNotEmpty) params['q'] = q.trim();
     params['per_page'] = 200;
     var page = 1;
     var lastPage = 1;
@@ -20315,6 +20524,7 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
   List<StaffEvent> _events = [];
   int? _eventId;
   bool _loading = false;
+  bool _loadingEvents = false;
   String? _jsonPath;
   List<String> _photoPaths = const [];
   String? _photoSourceLabel;
@@ -20366,20 +20576,37 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
     final token = ref.read(staffTokenProvider);
     final user = ref.read(staffUserProvider);
     if (token == null || user == null) return;
-    if (!await _ensureOnlineApi()) {
-      if (!mounted) return;
-      setState(() {
-        _statusMessage =
-            'Sem ligação ao servidor online. Fecha a sessão offline ou verifica a internet.';
-      });
-      return;
+    if (mounted) {
+      setState(() => _loadingEvents = true);
     }
-    final events = await ref
-        .read(apiProvider)
-        .staffEvents(token, assignedOnly: !_canSeeAllEvents(user));
-    final visibleEvents = _filterEventsForUser(events, user);
-    if (!mounted) return;
+    try {
+      if (!await _ensureOnlineApi()) {
+        if (!mounted) return;
+        setState(() {
+          _loadingEvents = false;
+          _statusMessage =
+              'Sem ligação ao servidor online. Fecha a sessão offline ou verifica a internet.';
+        });
+        return;
+      }
+      final events = await ref
+          .read(apiProvider)
+          .staffEvents(token, assignedOnly: !_canSeeAllEvents(user));
+      final visibleEvents = _filterEventsForUser(events, user);
+      if (!mounted) return;
+      visibleEvents.sort((a, b) {
+        final aNum = _numericReportNumberValue(a);
+        final bNum = _numericReportNumberValue(b);
+        if (aNum != bNum) return bNum.compareTo(aNum);
+        final aDate = _parseEventDate(a.eventDate);
+        final bDate = _parseEventDate(b.eventDate);
+        if (aDate != null && bDate != null) {
+          return bDate.compareTo(aDate);
+        }
+        return b.id.compareTo(a.id);
+      });
       setState(() {
+        _loadingEvents = false;
         _events = visibleEvents;
         _eventId ??= visibleEvents.isNotEmpty ? visibleEvents.first.id : null;
         if (_eventId != null && _summaryEventId != _eventId) {
@@ -20387,7 +20614,112 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
           _summaryFuture = _loadSummary(token, _eventId!);
         }
       });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingEvents = false;
+        _statusMessage = 'Erro ao carregar eventos: ${formatUiError(e)}';
+      });
     }
+  }
+
+  StaffEvent? _selectedEvent() {
+    for (final event in _events) {
+      if (event.id == _eventId) return event;
+    }
+    return null;
+  }
+
+  String _eventPickerLabel(StaffEvent event) {
+    final report = _displayReportNumber(event);
+    final pieces = <String>[
+      if (report != null && report.isNotEmpty) '#$report',
+      event.name,
+      if (event.eventDate.trim().isNotEmpty) event.eventDate.trim(),
+    ];
+    return pieces.join(' • ');
+  }
+
+  Future<void> _pickEventFromSearch() async {
+    final result = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) {
+        final searchCtrl = TextEditingController();
+        var query = '';
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final visible = query.isEmpty
+                ? _events
+                : _events.where((event) {
+                    return _eventSearchBlob(event).contains(query);
+                  }).toList();
+            return AlertDialog(
+              title: const Text('Selecionar evento'),
+              content: SizedBox(
+                width: 640,
+                height: 420,
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: searchCtrl,
+                      autofocus: true,
+                      onChanged: (value) => setDialogState(() {
+                        query = value.trim().toLowerCase();
+                      }),
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.search),
+                        hintText: 'Pesquisar evento, reportagem ou nome',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: visible.isEmpty
+                          ? const Center(child: Text('Sem resultados.'))
+                          : ListView.separated(
+                              itemCount: visible.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final event = visible[index];
+                                return ListTile(
+                                  title: Text(
+                                    event.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  subtitle: Text(
+                                    _eventPickerLabel(event),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  onTap: () =>
+                                      Navigator.of(dialogContext).pop(event.id),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Fechar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _eventId = result;
+      _summaryFuture = null;
+      _summaryEventId = null;
+    });
+  }
 
   Future<void> _pickJsonFile() async {
     final picked = await FilePicker.platform.pickFiles(
@@ -20953,25 +21285,42 @@ class _OfflineSyncPanelState extends ConsumerState<OfflineSyncPanel> {
           const _DeskSectionHeader('Sincronizacao offline'),
           const SizedBox(height: 12),
         ],
-        DropdownButtonFormField<int>(
-          value: _eventId,
-          decoration: const InputDecoration(
-            labelText: '1. Evento',
-            border: OutlineInputBorder(),
-          ),
-          items: _events
-              .map(
-                (event) =>
-                    DropdownMenuItem(value: event.id, child: Text(event.name)),
-              )
-              .toList(),
-          onChanged: _loading
+        InkWell(
+          onTap: _loading || _loadingEvents || _events.isEmpty
               ? null
-              : (value) => setState(() {
-                  _eventId = value;
-                  _summaryFuture = null;
-                  _summaryEventId = null;
-                }),
+              : _pickEventFromSearch,
+          borderRadius: BorderRadius.circular(12),
+          child: InputDecorator(
+            decoration: InputDecoration(
+              labelText: '1. Evento',
+              helperText: _loadingEvents
+                  ? 'A carregar eventos...'
+                  : 'Pesquisa por nome, reportagem ou data',
+              border: const OutlineInputBorder(),
+              suffixIcon: _loadingEvents
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : const Icon(Icons.search),
+            ),
+            child: Text(
+              _selectedEvent() != null
+                  ? _eventPickerLabel(_selectedEvent()!)
+                  : 'Selecionar evento',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: _selectedEvent() != null
+                    ? Colors.white
+                    : Colors.white.withOpacity(0.55),
+              ),
+            ),
+          ),
         ),
         const SizedBox(height: 12),
         OutlinedButton.icon(
