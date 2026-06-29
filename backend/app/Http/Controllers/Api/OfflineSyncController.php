@@ -17,6 +17,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class OfflineSyncController extends Controller
@@ -122,15 +124,16 @@ class OfflineSyncController extends Controller
 
         try {
             $data = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+            $this->ensurePayloadMatchesEvent($event, $data);
             $photoMap = $this->importPhotos($event, $request->file('photos', []), $data['photos'] ?? []);
             $orders = $data['orders'] ?? [];
             $clients = $data['clients'] ?? [];
             $selections = $data['selections'] ?? [];
             $orderUpdates = $data['order_updates'] ?? [];
             $emailsToSend = [];
-            $supportsCashColumns = $this->supportsOrderCashColumns();
+            $cashColumns = $this->orderCashColumns();
 
-            DB::transaction(function () use ($event, $orders, $clients, $selections, $orderUpdates, $photoMap, &$emailsToSend, $supportsCashColumns) {
+            DB::transaction(function () use ($event, $orders, $clients, $selections, $orderUpdates, $photoMap, &$emailsToSend, $cashColumns) {
                 foreach ($clients as $clientPayload) {
                     $email = $clientPayload['email'] ?? null;
                     $phone = $clientPayload['phone'] ?? null;
@@ -178,12 +181,7 @@ class OfflineSyncController extends Controller
                         'created_at' => $orderPayload['created_at'] ?? now(),
                         'updated_at' => $orderPayload['updated_at'] ?? now(),
                     ];
-                    if ($supportsCashColumns) {
-                        $attributes['cash_received_amount'] = $orderPayload['cash_received_amount'] ?? null;
-                        $attributes['cash_change_amount'] = $orderPayload['cash_change_amount'] ?? null;
-                        $attributes['cash_change_given'] = $orderPayload['cash_change_given'] ?? ((float) ($orderPayload['cash_change_amount'] ?? 0) <= 0);
-                        $attributes['cash_due_amount'] = $orderPayload['cash_due_amount'] ?? null;
-                    }
+                    $attributes = $this->fillCashAttributes($attributes, $orderPayload, $cashColumns);
                     $order = Order::query()->updateOrCreate(
                         ['order_code' => $orderPayload['order_code']],
                         $attributes
@@ -238,12 +236,7 @@ class OfflineSyncController extends Controller
                     $updatePayload = [
                         'status' => $update['status'],
                     ];
-                    if ($supportsCashColumns) {
-                        $updatePayload['cash_received_amount'] = $update['cash_received_amount'] ?? null;
-                        $updatePayload['cash_change_amount'] = $update['cash_change_amount'] ?? null;
-                        $updatePayload['cash_change_given'] = $update['cash_change_given'] ?? ((float) ($update['cash_change_amount'] ?? 0) <= 0);
-                        $updatePayload['cash_due_amount'] = $update['cash_due_amount'] ?? null;
-                    }
+                    $updatePayload = $this->fillCashAttributes($updatePayload, $update, $cashColumns);
                     if (array_key_exists('notes', $update)) {
                         $updatePayload['notes'] = $update['notes'];
                     }
@@ -375,6 +368,76 @@ class OfflineSyncController extends Controller
         }
 
         return is_array($decoded) ? $decoded : [];
+    }
+
+    private function ensurePayloadMatchesEvent(Event $event, array $data): void
+    {
+        $payloadEvent = $data['event'] ?? null;
+        if (! is_array($payloadEvent)) {
+            return;
+        }
+
+        $errors = [];
+        $payloadType = $this->normalizeImportedEventType($payloadEvent['event_type'] ?? null);
+        $eventType = $this->normalizeImportedEventType($event->event_type);
+        if ($payloadType && $eventType && $payloadType !== $eventType) {
+            $errors[] = 'tipo do evento';
+        }
+
+        $payloadDate = $this->normalizeImportedEventDate($payloadEvent['event_date'] ?? null);
+        $eventDate = $event->event_date?->format('Y-m-d');
+        if ($payloadDate && $eventDate && $payloadDate !== $eventDate) {
+            $errors[] = 'data do evento';
+        }
+
+        if ($errors === []) {
+            return;
+        }
+
+        $payloadLabel = trim(collect([
+            $payloadType ? strtoupper($payloadType) : null,
+            $payloadDate,
+            $payloadEvent['name'] ?? null,
+        ])->filter(fn ($value) => is_string($value) && trim($value) !== '')->implode(' / '));
+
+        $targetLabel = trim(collect([
+            $eventType ? strtoupper($eventType) : null,
+            $eventDate,
+            $event->name,
+        ])->filter(fn ($value) => is_string($value) && trim($value) !== '')->implode(' / '));
+
+        throw ValidationException::withMessages([
+            'payload' => 'JSON pertence a outro evento. Importação bloqueada. Origem: '.$payloadLabel.'. Destino: '.$targetLabel.'.',
+        ]);
+    }
+
+    private function normalizeImportedEventType(?string $value): ?string
+    {
+        $type = Str::of((string) $value)->lower()->ascii()->trim()->toString();
+        if ($type === '') {
+            return null;
+        }
+        if (str_contains($type, 'casamento')) {
+            return 'casamento';
+        }
+        if (str_contains($type, 'batizado')) {
+            return 'batizado';
+        }
+
+        return $type;
+    }
+
+    private function normalizeImportedEventDate(mixed $value): ?string
+    {
+        if (! is_string($value) || trim($value) === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($value)->format('Y-m-d');
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     private function extractPhotoUploads(Request $request): array
@@ -533,11 +596,31 @@ class OfflineSyncController extends Controller
         return null;
     }
 
-    private function supportsOrderCashColumns(): bool
+    private function orderCashColumns(): array
     {
-        return Schema::hasColumn('orders', 'cash_received_amount')
-            && Schema::hasColumn('orders', 'cash_change_amount')
-            && Schema::hasColumn('orders', 'cash_change_given')
-            && Schema::hasColumn('orders', 'cash_due_amount');
+        return [
+            'cash_received_amount' => Schema::hasColumn('orders', 'cash_received_amount'),
+            'cash_change_amount' => Schema::hasColumn('orders', 'cash_change_amount'),
+            'cash_change_given' => Schema::hasColumn('orders', 'cash_change_given'),
+            'cash_due_amount' => Schema::hasColumn('orders', 'cash_due_amount'),
+        ];
+    }
+
+    private function fillCashAttributes(array $attributes, array $payload, array $cashColumns): array
+    {
+        if ($cashColumns['cash_received_amount'] ?? false) {
+            $attributes['cash_received_amount'] = $payload['cash_received_amount'] ?? null;
+        }
+        if ($cashColumns['cash_change_amount'] ?? false) {
+            $attributes['cash_change_amount'] = $payload['cash_change_amount'] ?? null;
+        }
+        if ($cashColumns['cash_change_given'] ?? false) {
+            $attributes['cash_change_given'] = $payload['cash_change_given'] ?? ((float) ($payload['cash_change_amount'] ?? 0) <= 0);
+        }
+        if ($cashColumns['cash_due_amount'] ?? false) {
+            $attributes['cash_due_amount'] = $payload['cash_due_amount'] ?? null;
+        }
+
+        return $attributes;
     }
 }

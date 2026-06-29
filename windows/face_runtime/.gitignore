@@ -1,0 +1,7 @@
+python/
+downloads/
+wheelhouse/
+logs/
+!README.md
+!requirements.txt
+!prepare_runtime.ps1

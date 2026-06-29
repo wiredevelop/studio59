@@ -27,7 +27,17 @@ class OfflineSyncController extends Controller
         $event = Event::findOrFail($validated['event_id']);
 
         $request->merge(['device_id' => 'web-upload']);
-        app(\App\Http\Controllers\Api\OfflineSyncController::class)->import($request, $event);
+        $response = app(\App\Http\Controllers\Api\OfflineSyncController::class)->import($request, $event);
+
+        if ($response->getStatusCode() >= 400) {
+            $payload = json_decode($response->getContent(), true);
+
+            return redirect()
+                ->back()
+                ->withErrors([
+                    'payload' => $payload['detail'] ?? $payload['message'] ?? 'Falha ao importar ficheiro.',
+                ]);
+        }
 
         return redirect()->route('offline.index')->with('ok', 'Ficheiro importado.');
     }

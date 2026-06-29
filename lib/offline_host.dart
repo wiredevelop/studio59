@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:mime/mime.dart';
 import 'package:path_provider/path_provider.dart';
@@ -1721,6 +1722,11 @@ class OfflineHostServer {
   }
 
   Future<String?> _resolveFaceSearchScriptPath() async {
+    final bundled = await _ensureBundledFaceSearchScript();
+    if (bundled != null) {
+      return bundled;
+    }
+
     final candidates = <String>{
       _pathJoin(Directory.current.path, 'backend/scripts/face_search.py'),
       _pathJoin(Directory.current.path, 'scripts/face_search.py'),
@@ -1737,8 +1743,35 @@ class OfflineHostServer {
     return null;
   }
 
+  Future<String?> _ensureBundledFaceSearchScript() async {
+    try {
+      final source = await rootBundle.loadString(
+        'backend/scripts/face_search.py',
+        cache: false,
+      );
+      if (source.trim().isEmpty) {
+        return null;
+      }
+      final root = await _offlineFaceSearchRootDirectory();
+      final scriptsDir = Directory(_pathJoin(root.path, 'scripts'));
+      await scriptsDir.create(recursive: true);
+      final file = File(_pathJoin(scriptsDir.path, 'face_search.py'));
+      if (await file.exists()) {
+        final existing = await file.readAsString();
+        if (existing == source) {
+          return file.path;
+        }
+      }
+      await file.writeAsString(source, flush: true);
+      return file.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<_OfflinePythonCommand?> _resolveOfflinePythonCommand() async {
     final attempts = <_OfflinePythonCommand>[
+      ..._bundledOfflinePythonCandidates(),
       if (Platform.isWindows) const _OfflinePythonCommand('py', ['-3']),
       const _OfflinePythonCommand('python3'),
       const _OfflinePythonCommand('python'),
@@ -1754,6 +1787,25 @@ class OfflineHostServer {
       } catch (_) {}
     }
     return null;
+  }
+
+  List<_OfflinePythonCommand> _bundledOfflinePythonCandidates() {
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final candidates = <String>[
+      if (Platform.isWindows) _pathJoin(exeDir, 'python\\python.exe'),
+      if (Platform.isWindows)
+        _pathJoin(exeDir, 'data\\face_runtime\\python\\python.exe'),
+      if (Platform.isWindows) _pathJoin(exeDir, 'data\\python\\python.exe'),
+      _pathJoin(exeDir, 'python/bin/python3'),
+      _pathJoin(exeDir, 'data/face_runtime/python/bin/python3'),
+      _pathJoin(exeDir, 'data/python/bin/python3'),
+    ];
+
+    return candidates
+        .map((path) => File(path))
+        .where((file) => file.existsSync())
+        .map((file) => _OfflinePythonCommand(file.path))
+        .toList();
   }
 
   Future<File?> _saveMultipartSelfie(

@@ -8,6 +8,7 @@ use App\Models\Order;
 use App\Models\Photo;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Tests\TestCase;
 
 class ApiFlowTest extends TestCase
@@ -184,6 +185,46 @@ class ApiFlowTest extends TestCase
         $this->withHeader('Authorization', 'Bearer abc123')
             ->getJson('/api/public/events/'.$event->id.'/photos')
             ->assertOk();
+    }
+
+    public function test_offline_import_blocks_payload_from_another_event(): void
+    {
+        $user = User::factory()->create(['role' => 'admin']);
+        $event = Event::create([
+            'name' => 'BATIZADO - 2026-07-02',
+            'event_type' => 'batizado',
+            'event_date' => '2026-07-02',
+            'price_per_photo' => 5,
+            'created_by' => $user->id,
+        ]);
+
+        $payload = json_encode([
+            'event' => [
+                'name' => 'CASAMENTO - 2026-06-28',
+                'event_type' => 'casamento',
+                'event_date' => '2026-06-28',
+            ],
+            'orders' => [
+                [
+                    'order_code' => 'S59-BLOCKME',
+                    'customer_name' => 'Miguel',
+                    'payment_method' => 'cash',
+                    'status' => 'paid',
+                    'total_amount' => 10,
+                    'items' => [],
+                ],
+            ],
+        ], JSON_THROW_ON_ERROR);
+
+        $file = UploadedFile::fake()->createWithContent('payload.json', $payload);
+
+        $response = $this->actingAs($user)->post('/offline/import', [
+            'event_id' => $event->id,
+            'payload' => $file,
+        ]);
+
+        $response->assertSessionHasErrors('payload');
+        $this->assertDatabaseMissing('orders', ['order_code' => 'S59-BLOCKME']);
     }
 
     private function createJpeg(string $path): void
