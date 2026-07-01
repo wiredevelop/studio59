@@ -39,7 +39,9 @@
             <div class="flex flex-wrap gap-2">
                 <a href="{{ route('events.edit', $event) }}" class="desk-btn">Editar ficha</a>
                 <a href="{{ route('events.show', $event) }}" class="desk-btn">Abrir dossier</a>
-                <a href="{{ route('events.pdf', $event) }}" class="desk-btn" target="_blank">PDF</a>
+                @if(auth()->user()->hasPermission('events.pdf.view'))
+                    <a href="{{ route('events.pdf', $event) }}" class="desk-btn" target="_blank">PDF</a>
+                @endif
             </div>
         @else
             <div class="text-sm text-gray-500">Sem resultados para este tipo.</div>
@@ -94,9 +96,13 @@
         @endif
         @if($event && ($type ?? null) === 'casamento')
             @if($canEdit)
-                <button class="{{ $actionBtn }}" type="submit" form="event-search-form" formaction="{{ route('events.update', $event) }}" formmethod="post" formtarget="_blank" name="print_pdf" value="1">IMPRIMIR</button>
+                @if(auth()->user()->hasPermission('events.pdf.view'))
+                    <button class="{{ $actionBtn }}" type="submit" form="event-search-form" formaction="{{ route('events.update', $event) }}" formmethod="post" formtarget="_blank" name="print_pdf" value="1">IMPRIMIR</button>
+                @endif
             @else
-                <a href="{{ route('events.pdf', $event) }}" class="{{ $actionBtn }}" target="_blank">IMPRIMIR</a>
+                @if(auth()->user()->hasPermission('events.pdf.view'))
+                    <a href="{{ route('events.pdf', $event) }}" class="{{ $actionBtn }}" target="_blank">IMPRIMIR</a>
+                @endif
             @endif
         @endif
         @if($event && $event->qr_token && $canViewInternal)

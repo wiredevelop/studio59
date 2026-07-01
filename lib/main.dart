@@ -432,6 +432,7 @@ const Map<String, String> kStaffPermissions = {
   'events.list': 'Ver calendário de eventos',
   'events.view': 'Ver detalhes dos eventos',
   'events.view.all': 'Ver todos os eventos (ignora equipa)',
+  'events.pdf.view': 'Abrir ficha PDF do serviço',
   'events.pricing.view': 'Ver preços do evento',
   'events.internal.view': 'Ver dados internos do evento',
   'events.create': 'Criar eventos',
@@ -10893,7 +10894,8 @@ class _EventActionCard extends ConsumerWidget {
               SizedBox(
                 width: fullWidth ? constraints.maxWidth : null,
                 child: FilledButton.tonalIcon(
-                  onPressed: token == null
+                  onPressed:
+                      token == null || user?.hasPermission('events.pdf.view') != true
                       ? null
                       : () => _openEventPdf(context, ref, token!, event),
                   icon: const Icon(Icons.picture_as_pdf_outlined),
@@ -10962,7 +10964,19 @@ class _EventMetaGroup {
 
   final String title;
   final IconData icon;
-  final List<MapEntry<String, String>> entries;
+  final List<_EventMetaEntryData> entries;
+}
+
+class _EventMetaEntryData {
+  const _EventMetaEntryData({
+    required this.key,
+    required this.label,
+    required this.value,
+  });
+
+  final String key;
+  final String label;
+  final String value;
 }
 
 class _EventMetaGroupCard extends StatelessWidget {
@@ -11000,7 +11014,7 @@ class _EventMetaGroupCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    entry.key,
+                    entry.label,
                     style: const TextStyle(
                       color: kDeskMuted,
                       fontSize: 12,
@@ -11008,7 +11022,7 @@ class _EventMetaGroupCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 3),
-                  Text(entry.value, style: const TextStyle(fontSize: 15)),
+                  _EventMetaEntryValue(entry: entry),
                 ],
               ),
             ),
@@ -11073,6 +11087,39 @@ class _EventInfoCard extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EventMetaEntryValue extends StatelessWidget {
+  const _EventMetaEntryValue({required this.entry});
+
+  final _EventMetaEntryData entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final action = _eventMetaActionForKey(entry.key);
+    if (action == null) {
+      return Text(entry.value, style: const TextStyle(fontSize: 15));
+    }
+
+    return InkWell(
+      onTap: () => _handleEventMetaAction(context, entry, action),
+      borderRadius: BorderRadius.circular(8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: Text(entry.value, style: const TextStyle(fontSize: 15)),
+          ),
+          const SizedBox(width: 6),
+          Icon(
+            action == 'call' ? Icons.call_outlined : Icons.copy_outlined,
+            size: 16,
+            color: kBrandRose,
           ),
         ],
       ),
@@ -11159,7 +11206,7 @@ List<_EventMetaGroup> _eventMetaGroups(
   Map<String, dynamic> meta,
   StaffUser? user,
 ) {
-  final buckets = <String, List<MapEntry<String, String>>>{
+  final buckets = <String, List<_EventMetaEntryData>>{
     'Casal': [],
     'Família': [],
     'Locais': [],
@@ -11173,7 +11220,9 @@ List<_EventMetaGroup> _eventMetaGroups(
     final value = _normalizeEventMetaValue(entry.value);
     if (value == null) continue;
     final label = _prettyMetaKey(entry.key);
-    buckets[_eventMetaBucket(entry.key)]!.add(MapEntry(label, value));
+    buckets[_eventMetaBucket(entry.key)]!.add(
+      _EventMetaEntryData(key: entry.key, label: label, value: value),
+    );
   }
 
   const icons = <String, IconData>{
@@ -11195,6 +11244,50 @@ List<_EventMetaGroup> _eventMetaGroups(
         ),
       )
       .toList();
+}
+
+String? _eventMetaActionForKey(String key) {
+  final normalized = _normalizeEventMetaVisibilityKey(key);
+  if (normalized.contains('contacto') || normalized.contains('telemovel')) {
+    return 'call';
+  }
+  if (normalized.contains('morada') || normalized.contains('coordenadas')) {
+    return 'copy';
+  }
+  return null;
+}
+
+Future<void> _handleEventMetaAction(
+  BuildContext context,
+  _EventMetaEntryData entry,
+  String action,
+) async {
+  if (action == 'call') {
+    final phone = _extractCallablePhone(entry.value);
+    if (phone == null) return;
+    final opened = await launchUrl(Uri(scheme: 'tel', path: phone));
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Não foi possível iniciar a chamada.')),
+      );
+    }
+    return;
+  }
+
+  await Clipboard.setData(ClipboardData(text: entry.value));
+  if (!context.mounted) return;
+  ScaffoldMessenger.of(
+    context,
+  ).showSnackBar(SnackBar(content: Text('${entry.label} copiado.')));
+}
+
+String? _extractCallablePhone(String value) {
+  final match = RegExp(r'\+?\d[\d\s/()-]{5,}').firstMatch(value);
+  if (match == null) return null;
+  final raw = match.group(0) ?? '';
+  final cleaned = raw.replaceAll(RegExp(r'[^+\d]'), '');
+  if (cleaned.isEmpty) return null;
+  return cleaned;
 }
 
 bool _shouldShowEventMetaKey(String key, StaffUser? user) {

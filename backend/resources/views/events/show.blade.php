@@ -5,7 +5,9 @@
     @if(auth()->user()->hasPermission('uploads.list'))
         <a href="{{ route('uploads.index', $event) }}" class="desk-btn">Upload provas</a>
     @endif
-    <a href="{{ route('events.pdf', $event) }}" target="_blank" class="desk-btn">PDF</a>
+    @if(auth()->user()->hasPermission('events.pdf.view'))
+        <a href="{{ route('events.pdf', $event) }}" target="_blank" class="desk-btn">PDF</a>
+    @endif
     @if($canViewInternal)
         <a href="{{ route('events.qr', $event) }}" target="_blank" class="desk-btn">QR</a>
     @endif

@@ -5,6 +5,7 @@ return [
     'events.list' => 'Ver calendário de eventos',
     'events.view' => 'Ver detalhes dos eventos',
     'events.view.all' => 'Ver todos os eventos (ignora equipa)',
+    'events.pdf.view' => 'Abrir ficha PDF do serviço',
     'events.pricing.view' => 'Ver preços do evento',
     'events.internal.view' => 'Ver dados internos do evento',
     'events.create' => 'Criar eventos',

@@ -524,6 +524,7 @@ class EventController extends Controller
     public function pdf(Event $event)
     {
         $this->ensureEventAccess($event);
+        abort_unless(auth()->user()?->hasPermission('events.pdf.view'), 403);
         $path = EventPdf::generate(
             $event,
             auth()->user()?->canViewEventPricing() ?? false,

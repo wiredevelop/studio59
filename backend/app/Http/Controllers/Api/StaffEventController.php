@@ -364,6 +364,7 @@ class StaffEventController extends Controller
     public function pdf(Request $request, Event $event)
     {
         $this->ensureEventAccess($event);
+        abort_unless($request->user()?->hasPermission('events.pdf.view'), 403);
         $path = EventPdf::generate(
             $event,
             $request->user()?->canViewEventPricing() ?? false,
