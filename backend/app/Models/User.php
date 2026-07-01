@@ -120,6 +120,20 @@ class User extends Authenticatable
     public function permissionsList(): array
     {
         $permissions = $this->permissions ?? [];
-        return is_array($permissions) ? $permissions : [];
+        if (! is_array($permissions)) {
+            return [];
+        }
+        $validKeys = array_keys(config('permissions'));
+        return array_values(array_intersect($permissions, $validKeys));
+    }
+
+    public function canViewEventPricing(): bool
+    {
+        return $this->hasPermission('events.pricing.view');
+    }
+
+    public function canViewEventInternal(): bool
+    {
+        return $this->hasPermission('events.internal.view');
     }
 }

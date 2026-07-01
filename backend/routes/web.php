@@ -130,7 +130,7 @@ Route::middleware(['auth', 'nocache'])->group(function () {
         ->middleware('permission:photos.original')
         ->name('events.photos.original');
     Route::get('/events/{event}/qr', [EventController::class, 'qr'])
-        ->middleware('permission:events.view')
+        ->middleware('permission:events.internal.view')
         ->name('events.qr');
     Route::delete('/events/{event}/photos/{photo}', [EventController::class, 'destroyPhoto'])
         ->middleware('permission:photos.delete')

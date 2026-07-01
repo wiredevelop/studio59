@@ -90,10 +90,12 @@
                 <td class="val" style="width:70mm;">{{ $reportNo }}</td>
                 <td style="width:40mm;"></td>
                 <td style="width:50mm; text-align:right;">
-                    <div class="box small" style="margin-bottom:2mm;">
-                        <div class="lbl">Preço base</div>
-                        <div class="val">{{ $priceBase }}</div>
-                    </div>
+                    @if($showPricing)
+                        <div class="box small" style="margin-bottom:2mm;">
+                            <div class="lbl">Preço base</div>
+                            <div class="val">{{ $priceBase }}</div>
+                        </div>
+                    @endif
                 </td>
             </tr>
         </table>

@@ -458,6 +458,8 @@ const Map<String, String> kStaffPermissions = {
   'users.update': 'Editar utilizadores',
   'users.delete': 'Apagar utilizadores',
 
+  'service_templates.manage': 'Gerir tipos de serviço e fichas',
+
   'clients.list': 'Ver clientes',
   'clients.view': 'Ver detalhes do cliente',
   'clients.create': 'Criar clientes',
@@ -7581,6 +7583,33 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
         );
   }
 
+  List<StaffEvent> _sortEventsForDesktop(List<StaffEvent> events) {
+    final today = _startOfDay(DateTime.now());
+    final ordered = List<StaffEvent>.from(events);
+    ordered.sort((a, b) {
+      final aDate = _parseEventDate(a.eventDate);
+      final bDate = _parseEventDate(b.eventDate);
+      final aUpcoming = aDate != null && !aDate.isBefore(today);
+      final bUpcoming = bDate != null && !bDate.isBefore(today);
+      if (aUpcoming != bUpcoming) {
+        return aUpcoming ? -1 : 1;
+      }
+      if (aDate != null && bDate != null) {
+        final dateCompare = aUpcoming
+            ? aDate.compareTo(bDate)
+            : bDate.compareTo(aDate);
+        if (dateCompare != 0) return dateCompare;
+      } else if (aDate != null || bDate != null) {
+        return aDate != null ? -1 : 1;
+      }
+      final aReport = _numericReportNumberValue(a);
+      final bReport = _numericReportNumberValue(b);
+      if (aReport != bReport) return bReport.compareTo(aReport);
+      return b.id.compareTo(a.id);
+    });
+    return ordered;
+  }
+
   @override
   Widget build(BuildContext context) {
     final availableTemplates = _serviceTemplates.isNotEmpty
@@ -7599,219 +7628,251 @@ class _DesktopEventsViewState extends ConsumerState<DesktopEventsView> {
               fields: const [],
             ),
           ];
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(kDeskGutter),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              _DeskStatusFilterChip(
-                label: 'Todos',
-                selected: _eventType.isEmpty,
-                onTap: () => setState(() {
-                  _eventType = '';
-                  _reload();
-                }),
-              ),
-              ...availableTemplates.map(
-                (template) => _DeskStatusFilterChip(
-                  label: template.name,
-                  selected: _eventType == template.slug,
-                  onTap: () => setState(() {
-                    _eventType = template.slug;
-                    _reload();
-                  }),
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => setState(() {
-                  _loadServiceTemplates();
-                  _reload();
-                }),
-                icon: const Icon(Icons.refresh),
-                label: const Text('Atualizar'),
-              ),
-            ],
+    final canView = widget.user.hasPermission('events.view');
+    final canUpdate = widget.user.hasPermission('events.update');
+
+    Widget buildChips() => Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        _DeskStatusFilterChip(
+          label: 'Todos',
+          selected: _eventType.isEmpty,
+          onTap: () => setState(() {
+            _eventType = '';
+            _reload();
+          }),
+        ),
+        ...availableTemplates.map(
+          (template) => _DeskStatusFilterChip(
+            label: template.name,
+            selected: _eventType == template.slug,
+            onTap: () => setState(() {
+              _eventType = template.slug;
+              _reload();
+            }),
           ),
-          const SizedBox(height: 16),
-          ValueListenableBuilder<String>(
-            valueListenable: widget.search,
-            builder: (context, value, _) {
-              return FutureBuilder<List<StaffEvent>>(
-                future: _future,
-                builder: (context, snap) {
-                  if (!snap.hasData) {
-                    if (snap.hasError) {
-                      return _DeskCard(
-                        child: Text('Erro: ${snap.error}'),
-                      );
-                    }
-                    return const _DeskCard(
-                      child: SizedBox(
-                        height: 180,
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            CircularProgressIndicator(),
-                            SizedBox(height: 12),
-                            Text('A carregar eventos...'),
-                          ],
+        ),
+        OutlinedButton.icon(
+          onPressed: () => setState(() {
+            _loadServiceTemplates();
+            _reload();
+          }),
+          icon: const Icon(Icons.refresh),
+          label: const Text('Atualizar'),
+        ),
+      ],
+    );
+
+    return ValueListenableBuilder<String>(
+      valueListenable: widget.search,
+      builder: (context, searchValue, _) {
+        return FutureBuilder<List<StaffEvent>>(
+          future: _future,
+          builder: (context, snap) {
+            Widget contentSliver;
+            if (!snap.hasData) {
+              contentSliver = snap.hasError
+                  ? SliverToBoxAdapter(
+                      child: _DeskCard(child: Text('Erro: ${snap.error}')),
+                    )
+                  : const SliverToBoxAdapter(
+                      child: _DeskCard(
+                        child: SizedBox(
+                          height: 180,
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              CircularProgressIndicator(),
+                              SizedBox(height: 12),
+                              Text('A carregar eventos...'),
+                            ],
+                          ),
                         ),
                       ),
                     );
-                  }
-                  final events = snap.data ?? const <StaffEvent>[];
-                  final filtered = _filterEventsForUser(events, widget.user);
-                  final search = value.trim().toLowerCase();
-                  final visible = search.isEmpty
-                      ? filtered
-                      : filtered
-                            .where((e) => _eventSearchBlob(e).contains(search))
-                            .toList();
-                  if (visible.isEmpty) {
-                    return const _DeskCard(child: Text('Sem resultados.'));
-                  }
-                  return Column(
-                    children: visible.map((e) {
-                      final dateLabel = _formatEventDateTime(
-                        e.eventDate,
-                        e.eventTime,
-                      );
-                      final report = _displayReportNumber(e);
-                      final team = _eventTeamLabel(e);
-                      final canView = widget.user.hasPermission('events.view');
-                      final canUpdate = widget.user.hasPermission(
-                        'events.update',
-                      );
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        child: _DeskCard(
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(kDeskRadius),
-                            onTap: canView
-                                ? () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          StaffEventDetailPage(event: e),
+            } else {
+              final events = snap.data ?? const <StaffEvent>[];
+              final filtered = _filterEventsForUser(events, widget.user);
+              final search = searchValue.trim().toLowerCase();
+              final visible = _sortEventsForDesktop(
+                search.isEmpty
+                    ? filtered
+                    : filtered
+                          .where((e) => _eventSearchBlob(e).contains(search))
+                          .toList(),
+              );
+              if (visible.isEmpty) {
+                contentSliver = const SliverToBoxAdapter(
+                  child: _DeskCard(child: Text('Sem resultados.')),
+                );
+              } else {
+                contentSliver = SliverList.builder(
+                  itemCount: visible.length,
+                  itemBuilder: (context, index) {
+                    final e = visible[index];
+                    final dateLabel = _formatEventDateTime(
+                      e.eventDate,
+                      e.eventTime,
+                    );
+                    final report = _displayReportNumber(e);
+                    final team = _eventTeamLabel(e);
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      child: _DeskCard(
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(kDeskRadius),
+                          onTap: canView
+                              ? () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        StaffEventDetailPage(event: e),
+                                  ),
+                                )
+                              : null,
+                          child: Padding(
+                            padding: const EdgeInsets.all(2),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            e.name,
+                                            style: const TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 6),
+                                          Text(
+                                            dateLabel,
+                                            style: const TextStyle(
+                                              color: kDeskMuted,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  )
-                                : null,
-                            child: Padding(
-                              padding: const EdgeInsets.all(2),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              e.name,
-                                              style: const TextStyle(
-                                                fontSize: 18,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 6),
-                                            Text(
-                                              dateLabel,
-                                              style: const TextStyle(
-                                                color: kDeskMuted,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      _DeskStatusBadge(
-                                        _eventTypeLabel(e),
-                                        color: Colors.lightGreenAccent,
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Wrap(
-                                    spacing: 10,
-                                    runSpacing: 10,
-                                    children: [
-                                      _DeskStatusBadge(
-                                        report == null || report.isEmpty
-                                            ? 'Sem relatório'
-                                            : 'Rel. $report',
-                                      ),
-                                      _DeskStatusBadge(
-                                        'Fotos ${_eventPhotoCount(e)}',
-                                      ),
-                                      _DeskStatusBadge(
-                                        'Vendas €${_eventSalesTotal(e).toStringAsFixed(0)}',
-                                      ),
-                                      if (team.isNotEmpty)
-                                        _DeskStatusBadge('Equipa $team'),
-                                    ],
-                                  ),
-                                  if ((e.location ?? '').trim().isNotEmpty) ...[
-                                    const SizedBox(height: 10),
-                                    Text(
-                                      e.location!.trim(),
-                                      style: const TextStyle(color: kDeskMuted),
+                                    _DeskStatusBadge(
+                                      _eventTypeLabel(e),
+                                      color: Colors.lightGreenAccent,
                                     ),
                                   ],
-                                  const SizedBox(height: 12),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: [
-                                      if (canView)
-                                        _MobileActionChip(
-                                          label: 'Detalhe',
-                                          color: kBrandRose,
-                                          onTap: () => Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (_) =>
-                                                  StaffEventDetailPage(
-                                                    event: e,
-                                                  ),
-                                            ),
-                                          ),
-                                        ),
-                                      if (canUpdate)
-                                        _MobileActionChip(
-                                          label: 'Equipa',
-                                          color: Colors.lightBlueAccent,
-                                          onTap: () => Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (_) =>
-                                                  StaffEventStaffPage(event: e),
-                                            ),
-                                          ),
-                                        ),
-                                    ],
+                                ),
+                                const SizedBox(height: 12),
+                                Wrap(
+                                  spacing: 10,
+                                  runSpacing: 10,
+                                  children: [
+                                    _DeskStatusBadge(
+                                      report == null || report.isEmpty
+                                          ? 'Sem relatório'
+                                          : 'Rel. $report',
+                                    ),
+                                    _DeskStatusBadge(
+                                      'Fotos ${_eventPhotoCount(e)}',
+                                    ),
+                                    _DeskStatusBadge(
+                                      'Vendas €${_eventSalesTotal(e).toStringAsFixed(0)}',
+                                    ),
+                                    if (team.isNotEmpty)
+                                      _DeskStatusBadge('Equipa $team'),
+                                  ],
+                                ),
+                                if ((e.location ?? '').trim().isNotEmpty) ...[
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    e.location!.trim(),
+                                    style:
+                                        const TextStyle(color: kDeskMuted),
                                   ),
                                 ],
-                              ),
+                                const SizedBox(height: 12),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    if (canView)
+                                      _MobileActionChip(
+                                        label: 'Detalhe',
+                                        color: kBrandRose,
+                                        onTap: () => Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) =>
+                                                StaffEventDetailPage(
+                                                  event: e,
+                                                ),
+                                          ),
+                                        ),
+                                      ),
+                                    if (canUpdate)
+                                      _MobileActionChip(
+                                        label: 'Equipa',
+                                        color: Colors.lightBlueAccent,
+                                        onTap: () => Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) =>
+                                                StaffEventStaffPage(event: e),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                      );
-                    }).toList(),
-                  );
-                },
-              );
-            },
-          ),
-        ],
-      ),
+                      ),
+                    );
+                  },
+                );
+              }
+            }
+
+            return CustomScrollView(
+              slivers: [
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(
+                    kDeskGutter,
+                    kDeskGutter,
+                    kDeskGutter,
+                    0,
+                  ),
+                  sliver: SliverToBoxAdapter(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        buildChips(),
+                        const SizedBox(height: 16),
+                      ],
+                    ),
+                  ),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(
+                    kDeskGutter,
+                    0,
+                    kDeskGutter,
+                    kDeskGutter,
+                  ),
+                  sliver: contentSliver,
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -9880,13 +9941,16 @@ class _DesktopServicesViewState extends ConsumerState<DesktopServicesView> {
                     eventsByDay[selectedKey] ?? const <StaffEvent>[];
 
                 final weekStart = selectedKey.subtract(
-                  Duration(days: selectedKey.weekday - 1),
+                  Duration(days: selectedKey.weekday % 7),
                 );
                 final weekEnd = weekStart.add(const Duration(days: 6));
                 final weekCount = events.where((e) {
                   final date = _parseEventDate(e.eventDate);
                   if (date == null) return false;
-                  return !date.isBefore(weekStart) && !date.isAfter(weekEnd);
+                  return !date.isBefore(weekStart) &&
+                      !date.isAfter(weekEnd) &&
+                      date.month == selectedKey.month &&
+                      date.year == selectedKey.year;
                 }).length;
 
                 return Row(
@@ -10530,6 +10594,8 @@ class StaffEventDetailPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final meta = event.eventMeta ?? {};
     final user = ref.watch(staffUserProvider);
+    final canViewPricing = _canViewEventPricing(user);
+    final canViewInternal = _canViewEventInternal(user);
     final token = ref.watch(staffTokenProvider);
     if (useDesktopLayout(context) && user != null && token != null) {
       return StaffDesktopShell(
@@ -10539,7 +10605,11 @@ class StaffEventDetailPage extends ConsumerWidget {
         overrideTitle: 'Detalhe do Evento',
         overrideSubtitle: event.name,
         overrideShowSearch: false,
-        overrideContent: (ctx, u, t) => DesktopEventDetailView(event: event),
+        overrideContent: (ctx, u, t) => DesktopEventDetailView(
+          event: event,
+          canViewPricing: canViewPricing,
+          canViewInternal: canViewInternal,
+        ),
       );
     }
     return Scaffold(
@@ -10547,9 +10617,13 @@ class StaffEventDetailPage extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _EventHeroCard(event: event),
+          _EventHeroCard(event: event, canViewInternal: canViewInternal),
           const SizedBox(height: 16),
-          _EventStatsGrid(event: event),
+          _EventStatsGrid(
+            event: event,
+            canViewPricing: canViewPricing,
+            canViewInternal: canViewInternal,
+          ),
           if (event.notes != null && event.notes!.trim().isNotEmpty) ...[
             const SizedBox(height: 16),
             _DeskCard(
@@ -10579,8 +10653,15 @@ class StaffEventDetailPage extends ConsumerWidget {
 }
 
 class DesktopEventDetailView extends ConsumerWidget {
-  const DesktopEventDetailView({super.key, required this.event});
+  const DesktopEventDetailView({
+    super.key,
+    required this.event,
+    required this.canViewPricing,
+    required this.canViewInternal,
+  });
   final StaffEvent event;
+  final bool canViewPricing;
+  final bool canViewInternal;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -10595,11 +10676,15 @@ class DesktopEventDetailView extends ConsumerWidget {
         children: [
           _DeskSectionHeader('Resumo'),
           const SizedBox(height: 12),
-          _EventHeroCard(event: event),
+          _EventHeroCard(event: event, canViewInternal: canViewInternal),
           const SizedBox(height: 20),
           _DeskSectionHeader('Informação'),
           const SizedBox(height: 12),
-          _EventStatsGrid(event: event),
+          _EventStatsGrid(
+            event: event,
+            canViewPricing: canViewPricing,
+            canViewInternal: canViewInternal,
+          ),
           if (event.notes != null && event.notes!.trim().isNotEmpty) ...[
             const SizedBox(height: 20),
             _DeskSectionHeader('Notas'),
@@ -10623,9 +10708,13 @@ class DesktopEventDetailView extends ConsumerWidget {
 }
 
 class _EventHeroCard extends StatelessWidget {
-  const _EventHeroCard({required this.event});
+  const _EventHeroCard({
+    required this.event,
+    required this.canViewInternal,
+  });
 
   final StaffEvent event;
+  final bool canViewInternal;
 
   @override
   Widget build(BuildContext context) {
@@ -10644,7 +10733,7 @@ class _EventHeroCard extends StatelessWidget {
           icon: Icons.confirmation_number_outlined,
           label: 'Rpt. ${_displayReportNumber(event)}',
         ),
-      if ((event.accessPin ?? '').trim().isNotEmpty)
+      if (canViewInternal && (event.accessPin ?? '').trim().isNotEmpty)
         _EventBadge(
           icon: Icons.lock_outline,
           label: 'PIN ${event.accessPin!.trim()}',
@@ -10681,29 +10770,37 @@ class _EventHeroCard extends StatelessWidget {
 }
 
 class _EventStatsGrid extends StatelessWidget {
-  const _EventStatsGrid({required this.event});
+  const _EventStatsGrid({
+    required this.event,
+    required this.canViewPricing,
+    required this.canViewInternal,
+  });
 
   final StaffEvent event;
+  final bool canViewPricing;
+  final bool canViewInternal;
 
   @override
   Widget build(BuildContext context) {
     final cards = <_EventInfoCardData>[
-      _EventInfoCardData(
-        icon: Icons.sell_outlined,
-        title: 'Preço por foto',
-        value: _formatEventMoney(event.pricePerPhoto),
-      ),
-      if (event.basePrice != null)
+      if (canViewPricing)
+        _EventInfoCardData(
+          icon: Icons.sell_outlined,
+          title: 'Preço por foto',
+          value: _formatEventMoney(event.pricePerPhoto),
+        ),
+      if (canViewPricing && event.basePrice != null)
         _EventInfoCardData(
           icon: Icons.payments_outlined,
           title: 'Preço base',
           value: _formatEventMoney(event.basePrice!),
         ),
-      _EventInfoCardData(
-        icon: Icons.badge_outlined,
-        title: 'Estado',
-        value: event.isLocked ? 'Fechado' : 'Ativo',
-      ),
+      if (canViewInternal)
+        _EventInfoCardData(
+          icon: Icons.badge_outlined,
+          title: 'Estado',
+          value: event.isLocked ? 'Fechado' : 'Ativo',
+        ),
       _EventInfoCardData(
         icon: Icons.category_outlined,
         title: 'Tipo',
@@ -19911,6 +20008,12 @@ class StaffUser {
     return false;
   }
 }
+
+bool _canViewEventPricing(StaffUser? user) =>
+    user?.hasPermission('events.pricing.view') ?? false;
+
+bool _canViewEventInternal(StaffUser? user) =>
+    user?.hasPermission('events.internal.view') ?? false;
 
 class StaffUserPayload {
   StaffUserPayload({

@@ -11,14 +11,30 @@ use Illuminate\Support\Facades\Storage;
 
 class EventPdf
 {
-    public static function path(Event $event): string
+    public static function path(
+        Event $event,
+        bool $includePricing = true,
+        bool $includeInternal = true
+    ): string
     {
-        return 'events/'.$event->id.'/ficha.pdf';
+        if ($includePricing && $includeInternal) {
+            return 'events/'.$event->id.'/ficha.pdf';
+        }
+
+        return 'events/'.$event->id.'/ficha-'
+            .($includePricing ? 'pricing' : 'no-pricing')
+            .'-'
+            .($includeInternal ? 'internal' : 'no-internal')
+            .'.pdf';
     }
 
-    public static function ensure(Event $event): string
+    public static function ensure(
+        Event $event,
+        bool $includePricing = true,
+        bool $includeInternal = true
+    ): string
     {
-        $path = self::path($event);
+        $path = self::path($event, $includePricing, $includeInternal);
         if (Storage::disk('local')->exists($path)) {
             $lastModified = Storage::disk('local')->lastModified($path);
             $updatedAt = $event->updated_at?->timestamp;
@@ -26,12 +42,16 @@ class EventPdf
                 return $path;
             }
         }
-        self::generate($event);
+        self::generate($event, $includePricing, $includeInternal);
 
         return $path;
     }
 
-    public static function generate(Event $event): string
+    public static function generate(
+        Event $event,
+        bool $includePricing = true,
+        bool $includeInternal = true
+    ): string
     {
         $event->loadMissing('client', 'staff.user');
         $meta = $event->event_meta ?? [];
@@ -61,6 +81,8 @@ class EventPdf
             'namesLine' => $namesLine,
             'eventTypeLabel' => strtoupper($event->event_type ?: 'EVENTO'),
             'serviceTemplate' => ServiceTemplateCatalog::findByType($event->event_type),
+            'showPricing' => $includePricing,
+            'showInternal' => $includeInternal,
         ];
 
         $template = match ($event->event_type ?? '') {
@@ -78,7 +100,7 @@ class EventPdf
         $dompdf->setPaper('A4', 'portrait');
         $dompdf->render();
 
-        $path = self::path($event);
+        $path = self::path($event, $includePricing, $includeInternal);
         Storage::disk('local')->makeDirectory(dirname($path));
         Storage::disk('local')->put($path, $dompdf->output());
 

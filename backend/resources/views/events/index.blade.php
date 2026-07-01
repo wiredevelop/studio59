@@ -7,6 +7,10 @@
     @endif
 @endsection
 @section('content')
+@php
+    $canViewPricing = $canViewPricing ?? auth()->user()->hasPermission('events.pricing.view');
+    $canViewInternal = $canViewInternal ?? auth()->user()->hasPermission('events.internal.view');
+@endphp
 <div class="event-shell">
 
     @php($availableTypeSlugs = $serviceTemplates->pluck('slug')->all())
@@ -28,7 +32,9 @@
                 <div><strong>Evento:</strong> {{ $event->name }}</div>
                 <div><strong>Reportagem:</strong> {{ $event->legacy_report_number ?? '—' }}</div>
                 <div><strong>Data:</strong> {{ optional($event->event_date)->format('d/m/Y') ?: '—' }}</div>
-                <div><strong>Preço base:</strong> {{ $event->base_price !== null ? number_format($event->base_price, 2).'€' : '—' }}</div>
+                @if($canViewPricing)
+                    <div><strong>Preço base:</strong> {{ $event->base_price !== null ? number_format($event->base_price, 2).'€' : '—' }}</div>
+                @endif
             </div>
             <div class="flex flex-wrap gap-2">
                 <a href="{{ route('events.edit', $event) }}" class="desk-btn">Editar ficha</a>
@@ -93,7 +99,7 @@
                 <a href="{{ route('events.pdf', $event) }}" class="{{ $actionBtn }}" target="_blank">IMPRIMIR</a>
             @endif
         @endif
-        @if($event && $event->qr_token)
+        @if($event && $event->qr_token && $canViewInternal)
             <a href="{{ route('events.qr', $event) }}" class="{{ $actionBtn }}" target="_blank">QR CODE</a>
         @endif
         @if($firstUrl)
@@ -155,18 +161,22 @@
                     <label class="block text-sm">Hora (do serviço)</label>
                     <input type="time" name="event_time" value="{{ $baseValue('event_time') }}" class="border p-2 rounded w-full">
                 </div>
-                <div>
-                    <label class="block text-sm">Preço base</label>
-                    <input name="base_price" type="number" step="0.01" value="{{ $baseValue('base_price') }}" class="border p-2 rounded w-full">
-                </div>
-                <div>
-                    <label class="block text-sm">Preço por foto</label>
-                    <input name="price_per_photo" type="number" step="0.01" value="{{ $baseValue('price_per_photo') }}" class="border p-2 rounded w-full">
-                </div>
-                <div>
-                    <label class="block text-sm">Código do evento (PIN)</label>
-                    <input name="access_pin" value="{{ $baseValue('access_pin') }}" class="border p-2 rounded w-full {{ $searchMode ? '' : 'bg-gray-100' }}" {{ $searchMode ? '' : 'readonly' }} data-unlock-on-search="1">
-                </div>
+                @if($canViewPricing)
+                    <div>
+                        <label class="block text-sm">Preço base</label>
+                        <input name="base_price" type="number" step="0.01" value="{{ $baseValue('base_price') }}" class="border p-2 rounded w-full">
+                    </div>
+                    <div>
+                        <label class="block text-sm">Preço por foto</label>
+                        <input name="price_per_photo" type="number" step="0.01" value="{{ $baseValue('price_per_photo') }}" class="border p-2 rounded w-full">
+                    </div>
+                @endif
+                @if($canViewInternal)
+                    <div>
+                        <label class="block text-sm">Código do evento (PIN)</label>
+                        <input name="access_pin" value="{{ $baseValue('access_pin') }}" class="border p-2 rounded w-full {{ $searchMode ? '' : 'bg-gray-100' }}" {{ $searchMode ? '' : 'readonly' }} data-unlock-on-search="1">
+                    </div>
+                @endif
             </div>
             <div class="grid md:grid-cols-3 gap-3"></div>
         </div>

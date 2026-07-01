@@ -5,6 +5,8 @@ return [
     'events.list' => 'Ver calendário de eventos',
     'events.view' => 'Ver detalhes dos eventos',
     'events.view.all' => 'Ver todos os eventos (ignora equipa)',
+    'events.pricing.view' => 'Ver preços do evento',
+    'events.internal.view' => 'Ver dados internos do evento',
     'events.create' => 'Criar eventos',
     'events.update' => 'Editar eventos',
     'events.delete' => 'Eliminar eventos',
@@ -41,4 +43,6 @@ return [
 
     'offline.export' => 'Exportar dados offline',
     'offline.import' => 'Importar dados offline',
+
+    'dossie.view' => 'Ver Dossiê (arquivo por ano/mês/evento)',
 ];

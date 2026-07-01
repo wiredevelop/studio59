@@ -47,7 +47,9 @@ class StaffEventController extends Controller
         $paginator = $query->paginate($perPage);
 
         $paginator->setCollection(
-            $paginator->getCollection()->map(fn (Event $event) => $this->calendarEventPayload($event))
+            $paginator->getCollection()->map(
+                fn (Event $event) => $this->calendarEventPayload($event, $user)
+            )
         );
 
         return response()->json($paginator);
@@ -85,7 +87,7 @@ class StaffEventController extends Controller
         $nextId = $index < ($ids->count() - 1) ? (int) $ids[$index + 1] : null;
 
         $event = Event::find($currentId);
-        $eventPayload = $event ? $this->calendarEventPayload($event) : null;
+        $eventPayload = $event ? $this->calendarEventPayload($event, $user) : null;
 
         return response()->json([
             'event' => $eventPayload,
@@ -95,8 +97,11 @@ class StaffEventController extends Controller
         ]);
     }
 
-    private function calendarEventPayload(Event $event): array
+    private function calendarEventPayload(Event $event, ?User $user = null): array
     {
+        $canViewPricing = $user?->canViewEventPricing() ?? false;
+        $canViewInternal = $user?->canViewEventInternal() ?? false;
+
         return [
             'id' => $event->id,
             'name' => $event->name,
@@ -104,8 +109,8 @@ class StaffEventController extends Controller
             'report_number' => $event->report_number,
             'event_date' => optional($event->event_date)->format('Y-m-d'),
             'event_time' => $event->event_time,
-            'price_per_photo' => $event->price_per_photo,
-            'base_price' => $event->base_price,
+            'price_per_photo' => $canViewPricing ? $event->price_per_photo : null,
+            'base_price' => $canViewPricing ? $event->base_price : null,
             'is_active_today' => $event->is_active_today,
             'location' => $event->location,
             'city' => $event->city,
@@ -115,10 +120,10 @@ class StaffEventController extends Controller
             'guest_count' => $event->guest_count,
             'event_type' => $event->event_type,
             'event_meta' => $event->event_meta,
-            'qr_token' => $event->qr_token,
-            'access_pin' => $event->access_pin,
+            'qr_token' => $canViewInternal ? $event->qr_token : null,
+            'access_pin' => $canViewInternal ? $event->access_pin : null,
             'notes' => $event->notes,
-            'is_locked' => (bool) $event->is_locked,
+            'is_locked' => $canViewInternal ? (bool) $event->is_locked : false,
         ];
     }
 
@@ -136,6 +141,8 @@ class StaffEventController extends Controller
         $meta = $request->query('meta', []);
         $assignedOnly = $request->boolean('assigned_only');
         $user = $request->user();
+        $canViewPricing = $user?->canViewEventPricing() ?? false;
+        $canViewInternal = $user?->canViewEventInternal() ?? false;
         if ($user && $user->role !== 'admin' && ! $user->hasPermission('events.view.all')) {
             $assignedOnly = true;
         }
@@ -201,7 +208,7 @@ class StaffEventController extends Controller
                     ->orWhere('legacy_report_number', 'like', '%'.$internalCode.'%');
             });
         }
-        if ($accessPin !== '') {
+        if ($canViewInternal && $accessPin !== '') {
             $query->where('access_pin', 'like', '%'.$accessPin.'%');
         }
         if ($eventDate !== '') {
@@ -213,21 +220,23 @@ class StaffEventController extends Controller
         if ($eventTime !== '') {
             $query->where('event_time', 'like', '%'.$eventTime.'%');
         }
-        if ($pricePerPhoto !== '') {
+        if ($canViewPricing && $pricePerPhoto !== '') {
             $query->where('price_per_photo', $pricePerPhoto);
         }
-        if ($basePrice !== '') {
+        if ($canViewPricing && $basePrice !== '') {
             $query->where('base_price', $basePrice);
         }
         if ($q !== '') {
-            $query->where(function ($inner) use ($q) {
+            $query->where(function ($inner) use ($q, $canViewInternal) {
                 $inner->where('name', 'like', '%'.$q.'%')
                     ->orWhere('internal_code', 'like', '%'.$q.'%')
                     ->orWhere('legacy_report_number', 'like', '%'.$q.'%')
                     ->orWhere('service_raw', 'like', '%'.$q.'%')
                     ->orWhere('bride_name', 'like', '%'.$q.'%')
-                    ->orWhere('groom_name', 'like', '%'.$q.'%')
-                    ->orWhere('access_pin', 'like', '%'.$q.'%');
+                    ->orWhere('groom_name', 'like', '%'.$q.'%');
+                if ($canViewInternal) {
+                    $inner->orWhere('access_pin', 'like', '%'.$q.'%');
+                }
             });
         }
         if (is_array($meta)) {
@@ -346,16 +355,20 @@ class StaffEventController extends Controller
         ]);
     }
 
-    public function show(Event $event)
+    public function show(Request $request, Event $event)
     {
         $this->ensureEventAccess($event);
-        return response()->json($event);
+        return response()->json($this->calendarEventPayload($event, $request->user()));
     }
 
-    public function pdf(Event $event)
+    public function pdf(Request $request, Event $event)
     {
         $this->ensureEventAccess($event);
-        $path = EventPdf::generate($event);
+        $path = EventPdf::generate(
+            $event,
+            $request->user()?->canViewEventPricing() ?? false,
+            $request->user()?->canViewEventInternal() ?? false,
+        );
 
         return response()->file(Storage::disk('local')->path($path), [
             'Content-Type' => 'application/pdf',

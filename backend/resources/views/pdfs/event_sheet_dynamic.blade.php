@@ -31,9 +31,13 @@
             <div class="kv-row"><strong>Reportagem:</strong> {{ $event->legacy_report_number ?? '—' }}</div>
             <div class="kv-row"><strong>Data:</strong> {{ $event->event_date?->format('d/m/Y') ?? '—' }}</div>
             <div class="kv-row"><strong>Hora:</strong> {{ $event->event_time ?? '—' }}</div>
-            <div class="kv-row"><strong>Preço base:</strong> {{ $event->base_price !== null ? number_format($event->base_price, 2, ',', '.').' €' : '—' }}</div>
-            <div class="kv-row"><strong>Preço por foto:</strong> {{ $event->price_per_photo !== null ? number_format($event->price_per_photo, 2, ',', '.').' €' : '—' }}</div>
-            <div class="kv-row"><strong>PIN:</strong> {{ $event->access_pin ?? '—' }}</div>
+            @if($showPricing)
+                <div class="kv-row"><strong>Preço base:</strong> {{ $event->base_price !== null ? number_format($event->base_price, 2, ',', '.').' €' : '—' }}</div>
+                <div class="kv-row"><strong>Preço por foto:</strong> {{ $event->price_per_photo !== null ? number_format($event->price_per_photo, 2, ',', '.').' €' : '—' }}</div>
+            @endif
+            @if($showInternal)
+                <div class="kv-row"><strong>PIN:</strong> {{ $event->access_pin ?? '—' }}</div>
+            @endif
         </div>
     </div>
 

@@ -25,6 +25,8 @@ class EventController extends Controller
     public function index(Request $request)
     {
         $user = auth()->user();
+        $canViewPricing = $user?->canViewEventPricing() ?? false;
+        $canViewInternal = $user?->canViewEventInternal() ?? false;
         $type = $request->query('type');
         $serviceTemplates = ServiceTemplateCatalog::activeTemplates();
         $allowedTypes = $serviceTemplates->pluck('slug')->all();
@@ -56,12 +58,16 @@ class EventController extends Controller
 
             $baseFilters = $request->only([
                 'legacy_report_number',
-                'access_pin',
                 'event_date',
                 'event_time',
-                'base_price',
-                'price_per_photo',
             ]);
+            if ($canViewInternal) {
+                $baseFilters['access_pin'] = $request->input('access_pin');
+            }
+            if ($canViewPricing) {
+                $baseFilters['base_price'] = $request->input('base_price');
+                $baseFilters['price_per_photo'] = $request->input('price_per_photo');
+            }
             foreach ($baseFilters as $field => $value) {
                 if ($value === null || $value === '') {
                     continue;
@@ -200,6 +206,8 @@ class EventController extends Controller
                 ? $currentEvent->staff()->pluck('user_id')->all()
                 : (array) $request->input('staff_ids', []),
             'serviceTemplates' => $serviceTemplates,
+            'canViewPricing' => $canViewPricing,
+            'canViewInternal' => $canViewInternal,
         ]);
     }
 
@@ -323,6 +331,9 @@ class EventController extends Controller
     public function show(Request $request, Event $event)
     {
         $this->ensureEventAccess($event);
+        $user = $request->user();
+        $canViewPricing = $user?->canViewEventPricing() ?? false;
+        $canViewInternal = $user?->canViewEventInternal() ?? false;
 
         $folder = $request->query('folder', 'previews');
         if (! in_array($folder, ['previews', 'provas'], true)) {
@@ -344,9 +355,11 @@ class EventController extends Controller
             'folder' => $folder,
             'search' => $search,
             'photos' => $photos,
-            'totalPhotos' => $event->photos()->count(),
-            'previewReady' => $event->photos()->whereNotNull('preview_path')->count(),
-            'previewFailed' => $event->photos()->where('preview_status', 'failed')->count(),
+            'totalPhotos' => $canViewInternal ? $event->photos()->count() : null,
+            'previewReady' => $canViewInternal ? $event->photos()->whereNotNull('preview_path')->count() : null,
+            'previewFailed' => $canViewInternal ? $event->photos()->where('preview_status', 'failed')->count() : null,
+            'canViewPricing' => $canViewPricing,
+            'canViewInternal' => $canViewInternal,
         ]);
     }
 
@@ -477,6 +490,11 @@ class EventController extends Controller
                 app(EventInviteService::class)->sendForEvent($event, 'updated');
             }
             if ($printPdf) {
+                $pdfPath = EventPdf::generate(
+                    $event,
+                    auth()->user()?->canViewEventPricing() ?? false,
+                    auth()->user()?->canViewEventInternal() ?? false,
+                );
                 return response()->file(Storage::disk('local')->path($pdfPath), [
                     'Content-Type' => 'application/pdf',
                     'Content-Disposition' => 'inline; filename="evento-'.$event->id.'.pdf"',
@@ -506,7 +524,11 @@ class EventController extends Controller
     public function pdf(Event $event)
     {
         $this->ensureEventAccess($event);
-        $path = EventPdf::generate($event);
+        $path = EventPdf::generate(
+            $event,
+            auth()->user()?->canViewEventPricing() ?? false,
+            auth()->user()?->canViewEventInternal() ?? false,
+        );
 
         return response()->file(Storage::disk('local')->path($path), [
             'Content-Type' => 'application/pdf',

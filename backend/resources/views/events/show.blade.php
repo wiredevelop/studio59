@@ -6,44 +6,53 @@
         <a href="{{ route('uploads.index', $event) }}" class="desk-btn">Upload provas</a>
     @endif
     <a href="{{ route('events.pdf', $event) }}" target="_blank" class="desk-btn">PDF</a>
+    @if($canViewInternal)
+        <a href="{{ route('events.qr', $event) }}" target="_blank" class="desk-btn">QR</a>
+    @endif
     <a href="{{ route('events.index') }}" class="desk-btn">Voltar</a>
 @endsection
 @section('content')
 
-<div class="grid md:grid-cols-4 gap-3 mb-4">
-    <div class="bg-white border rounded p-3">
-        <div class="text-xs text-gray-500">Total de fotos</div>
-        <div class="text-xl font-semibold">{{ $totalPhotos }}</div>
+@if($canViewInternal)
+    <div class="grid md:grid-cols-4 gap-3 mb-4">
+        <div class="bg-white border rounded p-3">
+            <div class="text-xs text-gray-500">Total de fotos</div>
+            <div class="text-xl font-semibold">{{ $totalPhotos }}</div>
+        </div>
+        <div class="bg-white border rounded p-3">
+            <div class="text-xs text-gray-500">Previews prontas</div>
+            <div class="text-xl font-semibold">{{ $previewReady }}</div>
+        </div>
+        <div class="bg-white border rounded p-3">
+            <div class="text-xs text-gray-500">Previews com falha</div>
+            <div class="text-xl font-semibold">{{ $previewFailed }}</div>
+        </div>
+        <div class="bg-white border rounded p-3">
+            <div class="text-xs text-gray-500">PIN do evento</div>
+            <div class="text-xl font-semibold">{{ $event->access_pin ?? '—' }}</div>
+        </div>
     </div>
-    <div class="bg-white border rounded p-3">
-        <div class="text-xs text-gray-500">Previews prontas</div>
-        <div class="text-xl font-semibold">{{ $previewReady }}</div>
-    </div>
-    <div class="bg-white border rounded p-3">
-        <div class="text-xs text-gray-500">Previews com falha</div>
-        <div class="text-xl font-semibold">{{ $previewFailed }}</div>
-    </div>
-    <div class="bg-white border rounded p-3">
-        <div class="text-xs text-gray-500">PIN do evento</div>
-        <div class="text-xl font-semibold">{{ $event->access_pin ?? '—' }}</div>
-    </div>
-</div>
+@endif
 
-<div class="bg-white border rounded p-4 mb-4">
-    <div class="text-sm font-semibold mb-2">QR do Evento</div>
-    <div class="text-sm break-all">
-        {{ url('/api/public/events/qr/'.$event->qr_token) }}
+@if($canViewInternal)
+    <div class="bg-white border rounded p-4 mb-4">
+        <div class="text-sm font-semibold mb-2">QR do Evento</div>
+        <div class="text-sm break-all">
+            {{ url('/api/public/events/qr/'.$event->qr_token) }}
+        </div>
+        <div class="text-xs text-gray-500 mt-2">QR ativo: {{ $event->qr_enabled ? 'Sim' : 'Não' }} | Bloqueado: {{ $event->is_locked ? 'Sim' : 'Não' }}</div>
     </div>
-    <div class="text-xs text-gray-500 mt-2">QR ativo: {{ $event->qr_enabled ? 'Sim' : 'Não' }} | Bloqueado: {{ $event->is_locked ? 'Sim' : 'Não' }}</div>
-</div>
+@endif
 
-<div class="bg-white border rounded p-4 mb-4">
-    <div class="text-sm font-semibold mb-2">Preços</div>
-    <div class="grid md:grid-cols-2 gap-2 text-sm">
-        <div><strong>Preço base:</strong> {{ $event->base_price !== null ? number_format($event->base_price, 2).'€' : '—' }}</div>
-        <div><strong>Preço por foto:</strong> {{ number_format($event->price_per_photo, 2).'€' }}</div>
+@if($canViewPricing)
+    <div class="bg-white border rounded p-4 mb-4">
+        <div class="text-sm font-semibold mb-2">Preços</div>
+        <div class="grid md:grid-cols-2 gap-2 text-sm">
+            <div><strong>Preço base:</strong> {{ $event->base_price !== null ? number_format($event->base_price, 2).'€' : '—' }}</div>
+            <div><strong>Preço por foto:</strong> {{ number_format($event->price_per_photo, 2).'€' }}</div>
+        </div>
     </div>
-</div>
+@endif
 
 @if(($serviceTemplate ?? null) && !in_array($event->event_type ?? '', ['casamento', 'batizado'], true))
     @include('events.partials.template-display', [
