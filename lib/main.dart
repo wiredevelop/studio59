@@ -11211,6 +11211,9 @@ bool _shouldShowEventMetaKey(String key, StaffUser? user) {
     'mae',
     'padrinho',
     'madrinha',
+    'clientenoivonum',
+    'clientenoivanum',
+    'clientebatizadonum',
   };
 
   if (hiddenForEveryone.contains(normalized)) {
@@ -11224,9 +11227,6 @@ bool _shouldShowEventMetaKey(String key, StaffUser? user) {
 
     const hiddenForPhotographers = {
       'cliente',
-      'clientenoivonum',
-      'clientenoivanum',
-      'clientebatizadonum',
       'dataentrega',
       'extra',
       'preco',
