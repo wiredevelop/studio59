@@ -10891,17 +10891,15 @@ class _EventActionCard extends ConsumerWidget {
                     label: const Text('Abrir sessão offline'),
                   ),
                 ),
-              SizedBox(
-                width: fullWidth ? constraints.maxWidth : null,
-                child: FilledButton.tonalIcon(
-                  onPressed:
-                      token == null || user?.hasPermission('events.pdf.view') != true
-                      ? null
-                      : () => _openEventPdf(context, ref, token!, event),
-                  icon: const Icon(Icons.picture_as_pdf_outlined),
-                  label: const Text('Abrir PDF'),
+              if (token != null && user?.hasPermission('events.pdf.view') == true)
+                SizedBox(
+                  width: fullWidth ? constraints.maxWidth : null,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () => _openEventPdf(context, ref, token, event),
+                    icon: const Icon(Icons.picture_as_pdf_outlined),
+                    label: const Text('Abrir PDF'),
+                  ),
                 ),
-              ),
             ],
           );
         },
@@ -13752,7 +13750,7 @@ class _StaffEventFormPageState extends ConsumerState<StaffEventFormPage> {
     final eventActions = <Widget>[
       if (widget.event != null &&
           user != null &&
-          user.hasPermission('events.view'))
+          user.hasPermission('events.pdf.view'))
         IconButton(
           icon: const Icon(Icons.picture_as_pdf_outlined),
           tooltip: 'Gerar PDF',
