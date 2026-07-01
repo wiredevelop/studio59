@@ -93,6 +93,8 @@ class User extends Authenticatable
                 'dashboard.view',
                 'events.list',
                 'events.view',
+                'events.pricing.view',
+                'events.internal.view',
                 'uploads.list',
                 'uploads.create',
                 'orders.list',
