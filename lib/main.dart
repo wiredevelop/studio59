@@ -10647,8 +10647,8 @@ class StaffEventDetailPage extends ConsumerWidget {
           const SizedBox(height: 16),
           _EventActionCard(event: event, user: user, token: token),
           const SizedBox(height: 16),
-          if (_eventMetaEntries(meta).isNotEmpty) ...[
-            _DeskCard(child: _EventMetaSection(meta: meta)),
+          if (_eventMetaEntries(meta, user).isNotEmpty) ...[
+            _DeskCard(child: _EventMetaSection(meta: meta, user: user)),
           ],
         ],
       ),
@@ -10699,11 +10699,11 @@ class DesktopEventDetailView extends ConsumerWidget {
           _DeskSectionHeader('Ações'),
           const SizedBox(height: 12),
           _EventActionCard(event: event, user: user, token: token),
-          if (_eventMetaEntries(meta).isNotEmpty) ...[
+          if (_eventMetaEntries(meta, user).isNotEmpty) ...[
             const SizedBox(height: 20),
             _DeskSectionHeader('Detalhes'),
             const SizedBox(height: 12),
-            _DeskCard(child: _EventMetaSection(meta: meta)),
+            _DeskCard(child: _EventMetaSection(meta: meta, user: user)),
           ],
         ],
       ),
@@ -10909,13 +10909,14 @@ class _EventActionCard extends ConsumerWidget {
 }
 
 class _EventMetaSection extends StatelessWidget {
-  const _EventMetaSection({required this.meta});
+  const _EventMetaSection({required this.meta, required this.user});
 
   final Map<String, dynamic> meta;
+  final StaffUser? user;
 
   @override
   Widget build(BuildContext context) {
-    final groups = _eventMetaGroups(meta);
+    final groups = _eventMetaGroups(meta, user);
     if (groups.isEmpty) {
       return const Text('Sem detalhes adicionais.');
     }
@@ -11139,9 +11140,13 @@ Future<void> _openEventPdf(
   }
 }
 
-List<MapEntry<String, String>> _eventMetaEntries(Map<String, dynamic> meta) {
+List<MapEntry<String, String>> _eventMetaEntries(
+  Map<String, dynamic> meta,
+  StaffUser? user,
+) {
   return meta.entries
       .map((entry) {
+        if (!_shouldShowEventMetaKey(entry.key, user)) return null;
         final value = _normalizeEventMetaValue(entry.value);
         if (value == null) return null;
         return MapEntry(_prettyMetaKey(entry.key), value);
@@ -11150,7 +11155,10 @@ List<MapEntry<String, String>> _eventMetaEntries(Map<String, dynamic> meta) {
       .toList();
 }
 
-List<_EventMetaGroup> _eventMetaGroups(Map<String, dynamic> meta) {
+List<_EventMetaGroup> _eventMetaGroups(
+  Map<String, dynamic> meta,
+  StaffUser? user,
+) {
   final buckets = <String, List<MapEntry<String, String>>>{
     'Casal': [],
     'Família': [],
@@ -11161,6 +11169,7 @@ List<_EventMetaGroup> _eventMetaGroups(Map<String, dynamic> meta) {
   };
 
   for (final entry in meta.entries) {
+    if (!_shouldShowEventMetaKey(entry.key, user)) continue;
     final value = _normalizeEventMetaValue(entry.value);
     if (value == null) continue;
     final label = _prettyMetaKey(entry.key);
@@ -11186,6 +11195,64 @@ List<_EventMetaGroup> _eventMetaGroups(Map<String, dynamic> meta) {
         ),
       )
       .toList();
+}
+
+bool _shouldShowEventMetaKey(String key, StaffUser? user) {
+  final normalized = _normalizeEventMetaVisibilityKey(key);
+
+  const hiddenForEveryone = {
+    'sourcefiles',
+    'servicode',
+    'serviceraw',
+    'noivo',
+    'noiva',
+    'bebe',
+    'pai',
+    'mae',
+    'padrinho',
+    'madrinha',
+  };
+
+  if (hiddenForEveryone.contains(normalized)) {
+    return false;
+  }
+
+  if (user != null && !_isAdminRole(user.role)) {
+    if (normalized.contains('raw')) {
+      return false;
+    }
+
+    const hiddenForPhotographers = {
+      'cliente',
+      'clientenoivonum',
+      'clientenoivanum',
+      'clientebatizadonum',
+      'dataentrega',
+      'extra',
+      'preco',
+      'precobase',
+      'valorcontrato',
+      'reportagemn',
+    };
+
+    if (hiddenForPhotographers.contains(normalized)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+String _normalizeEventMetaVisibilityKey(String key) {
+  final lower = key.trim().toLowerCase();
+  final stripped = lower
+      .replaceAll(RegExp(r'[áàâãä]'), 'a')
+      .replaceAll(RegExp(r'[éèêë]'), 'e')
+      .replaceAll(RegExp(r'[íìîï]'), 'i')
+      .replaceAll(RegExp(r'[óòôõö]'), 'o')
+      .replaceAll(RegExp(r'[úùûü]'), 'u')
+      .replaceAll('ç', 'c');
+  return stripped.replaceAll(RegExp(r'[^a-z0-9]'), '');
 }
 
 String _eventMetaBucket(String key) {
