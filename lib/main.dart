@@ -10895,7 +10895,7 @@ class _EventActionCard extends ConsumerWidget {
                 SizedBox(
                   width: fullWidth ? constraints.maxWidth : null,
                   child: FilledButton.tonalIcon(
-                    onPressed: () => _openEventPdf(context, ref, token, event),
+                    onPressed: () => _openEventPdf(context, ref, token!, event),
                     icon: const Icon(Icons.picture_as_pdf_outlined),
                     label: const Text('Abrir PDF'),
                   ),
