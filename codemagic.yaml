@@ -19,9 +19,8 @@ workflows:
         script: xcode-project use-profiles
       - name: Build IPA
         script: |
-          BUILD_COUNTER="${CM_BUILD_NUMBER:-0}"
-          BUILD_SUFFIX=$(printf '%04d' $((BUILD_COUNTER % 10000)))
-          BUILD_NUMBER_OVERRIDE="$(date +%Y%m%d)${BUILD_SUFFIX}"
+          # Data e hora (UTC) da build: sempre maior do que a build anterior.
+          BUILD_NUMBER_OVERRIDE="$(date -u +%Y%m%d%H%M)"
           echo "Using build number: $BUILD_NUMBER_OVERRIDE"
           flutter build ipa --release --build-name=1.1.0 --build-number=$BUILD_NUMBER_OVERRIDE \
             --export-options-plist=/Users/builder/export_options.plist
