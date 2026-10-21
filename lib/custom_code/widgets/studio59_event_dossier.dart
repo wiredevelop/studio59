@@ -21,6 +21,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 /// Dossier do evento para administradores: resumo (PIN, QR, PDF), fotografias
@@ -63,6 +65,11 @@ class _Studio59EventDossierState extends State<Studio59EventDossier> {
   // Upload de provas
   final List<Map<String, dynamic>> _uploads = [];
   bool _uploading = false;
+
+  // Contrato
+  Map<String, dynamic>? _contract;
+  bool _contractLoading = false;
+  String? _contractError;
 
   // Exportações
   final _commission = TextEditingController(text: '15');
@@ -503,6 +510,176 @@ class _Studio59EventDossierState extends State<Studio59EventDossier> {
     }
   }
 
+  // ------------------------------------------------------------------ Contrato
+  Future<void> _loadContract({bool regenerate = false}) async {
+    if (regenerate &&
+        !await _confirm(
+            'Atualizar o contrato?',
+            'O texto do contrato é gerado de novo a partir do modelo e com os dados atuais da ficha.',
+            'Atualizar')) {
+      return;
+    }
+    setState(() {
+      _contractLoading = true;
+      _contractError = null;
+    });
+    try {
+      final uri = Uri.parse(
+          '$_api/events/$_eventId/contract${regenerate ? '/regenerate' : ''}');
+      final response = regenerate
+          ? await http
+              .post(uri, headers: _headers)
+              .timeout(const Duration(seconds: 30))
+          : await http
+              .get(uri, headers: _headers)
+              .timeout(const Duration(seconds: 30));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError(
+            _message(response, 'Não foi possível obter o contrato'));
+      }
+      final body = jsonDecode(response.body);
+      if (!mounted) return;
+      setState(() {
+        _contract = body is Map && body['data'] is Map
+            ? Map<String, dynamic>.from(body['data'] as Map)
+            : null;
+        _contractLoading = false;
+      });
+      if (regenerate) _snack('Contrato atualizado.');
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _contractLoading = false;
+          _contractError = error is StateError
+              ? error.message.toString()
+              : 'Não foi possível contactar o servidor.';
+        });
+      }
+    }
+  }
+
+  Future<Uint8List> _contractPdf() async {
+    final text = '${_contract?['body'] ?? ''}';
+    final heading = RegExp(r'^(\d+\.ª\s|[A-ZÁÉÍÓÚÂÊÔÇÃÕ0-9 ,.ºª-]{10,}$)');
+    final doc = pw.Document(title: 'Contrato - ${_event?['name'] ?? ''}');
+    doc.addPage(pw.MultiPage(
+      margin: const pw.EdgeInsets.fromLTRB(48, 48, 48, 56),
+      footer: (ctx) => pw.Align(
+          alignment: pw.Alignment.centerRight,
+          child: pw.Text('Página ${ctx.pageNumber} de ${ctx.pagesCount}',
+              style: const pw.TextStyle(fontSize: 8))),
+      build: (ctx) => [
+        for (final line in text.split('\n'))
+          line.trim().isEmpty
+              ? pw.SizedBox(height: 8)
+              : pw.Padding(
+                  padding: const pw.EdgeInsets.only(bottom: 3),
+                  child: pw.Text(line,
+                      style: pw.TextStyle(
+                          fontSize: 10.5,
+                          lineSpacing: 2,
+                          fontWeight: heading.hasMatch(line.trim())
+                              ? pw.FontWeight.bold
+                              : pw.FontWeight.normal))),
+      ],
+    ));
+    return doc.save();
+  }
+
+  Future<void> _printContract() async {
+    try {
+      await Printing.layoutPdf(
+          onLayout: (_) => _contractPdf(), name: '${_baseName}_contrato');
+    } catch (_) {
+      _snack('Não foi possível abrir a impressão.');
+    }
+  }
+
+  Future<void> _downloadContract() async {
+    try {
+      await _saveBytes(await _contractPdf(), '${_baseName}_contrato.pdf',
+          'Guardar contrato (PDF)');
+    } catch (_) {
+      _snack('Não foi possível gerar o PDF.');
+    }
+  }
+
+  Widget _contractTab() {
+    if (_contract == null && !_contractLoading && _contractError == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _contract == null && !_contractLoading) _loadContract();
+      });
+    }
+    final generated =
+        '${_contract?['generated_at'] ?? ''}'.replaceAll('T', ' ');
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      _card(
+          title: 'Contrato do evento',
+          trailing: IconButton(
+              onPressed: _contractLoading ? null : _loadContract,
+              icon: const Icon(Icons.refresh, color: _ink)),
+          children: [
+            const Text(
+                'Gerado a partir do modelo de contrato (Configurações › Modelo de contrato), com os dados da ficha deste evento.',
+                style: TextStyle(color: _muted)),
+            if (generated.isNotEmpty)
+              Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                      'Gerado em ${generated.length > 16 ? generated.substring(0, 16) : generated}',
+                      style: const TextStyle(color: _muted, fontSize: 12))),
+            const SizedBox(height: 12),
+            Wrap(spacing: 10, runSpacing: 10, children: [
+              FilledButton.icon(
+                  style: FilledButton.styleFrom(backgroundColor: _rose),
+                  onPressed: _contract == null ? null : _printContract,
+                  icon: const Icon(Icons.print_outlined, size: 18),
+                  label: const Text('Imprimir')),
+              OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                      foregroundColor: _rose,
+                      side: const BorderSide(color: _rose)),
+                  onPressed: _contract == null ? null : _downloadContract,
+                  icon: const Icon(Icons.download_outlined, size: 18),
+                  label: const Text('Descarregar PDF')),
+              TextButton.icon(
+                  onPressed: _contractLoading
+                      ? null
+                      : () => _loadContract(regenerate: true),
+                  icon: const Icon(Icons.autorenew, size: 18, color: _ink),
+                  label: const Text('Atualizar com os dados atuais',
+                      style: TextStyle(color: _ink))),
+            ]),
+          ]),
+      if (_contractLoading)
+        const Center(
+            child: Padding(
+                padding: EdgeInsets.all(20),
+                child: CircularProgressIndicator(color: _rose))),
+      if (_contractError != null)
+        _card(title: 'Erro', children: [
+          Text(_contractError!,
+              style: const TextStyle(color: Color(0xFF9B3D3D)))
+        ]),
+      if (_contract != null)
+        Container(
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFE3DCD9)),
+                boxShadow: const [
+                  BoxShadow(
+                      color: Color(0x14000000),
+                      blurRadius: 10,
+                      offset: Offset(0, 3))
+                ]),
+            child: SelectableText('${_contract!['body'] ?? ''}',
+                style:
+                    const TextStyle(color: _ink, fontSize: 14.5, height: 1.5))),
+    ]);
+  }
+
   // --------------------------------------------------------------- Exportações
   Future<void> _export(String key, String path, String fileName, String title,
       {Map<String, String>? query}) async {
@@ -934,6 +1111,7 @@ class _Studio59EventDossierState extends State<Studio59EventDossier> {
       'fotos': ('Fotografias', Icons.photo_library_outlined),
       'upload': ('Upload de provas', Icons.cloud_upload_outlined),
       'exportar': ('Pedidos e exportações', Icons.download_outlined),
+      'contrato': ('Contrato', Icons.description_outlined),
     };
     Widget body;
     if (_loading) {
@@ -950,6 +1128,7 @@ class _Studio59EventDossierState extends State<Studio59EventDossier> {
         'fotos' => _photosTab(),
         'upload' => _uploadTab(),
         'exportar' => _exportsTab(),
+        'contrato' => _contractTab(),
         _ => _summary(),
       };
     }

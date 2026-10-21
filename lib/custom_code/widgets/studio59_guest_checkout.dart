@@ -13,6 +13,8 @@ import 'package:flutter/material.dart' hide RepeatMode;
 import '/app_state.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class Studio59GuestCheckout extends StatefulWidget {
   const Studio59GuestCheckout({super.key, this.width, this.height});
@@ -34,6 +36,9 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
   final _phone = TextEditingController();
   final _email = TextEditingController();
   final _address = TextEditingController();
+  final _table = TextEditingController();
+  // Mesa: só letras (com acentos) e espaços, ou só números inteiros (1, 2, 3…).
+  static final _tableRule = RegExp(r'^(?:[\p{L}\p{M} ]+|\d+)$', unicode: true);
   String _productType = 'paper';
   String _deliveryType = 'pickup';
   bool _wantsFilm = false;
@@ -47,6 +52,7 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
     _phone.dispose();
     _email.dispose();
     _address.dispose();
+    _table.dispose();
     super.dispose();
   }
 
@@ -65,7 +71,12 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
   Future<void> _submit() async {
     if (_submitting || _uncertain) return;
     String? problem;
-    if (_name.text.trim().isEmpty)
+    final table = _table.text.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (table.isEmpty)
+      problem = 'Indique qual é a sua mesa.';
+    else if (!_tableRule.hasMatch(table))
+      problem = 'Na mesa use só letras (ex.: Noivos) ou só números (ex.: 12).';
+    else if (_name.text.trim().isEmpty)
       problem = 'Introduza o nome.';
     else if (_phone.text.trim().isEmpty)
       problem = 'Introduza o telefone.';
@@ -82,6 +93,11 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
       _submitting = true;
       _error = null;
     });
+    try {
+      // Lida pela ação que envia o pedido e pela página do ticket.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('studio59_table_label', table);
+    } catch (_) {}
     final items = FFAppState()
         .guestCart
         .map((item) => {'photo_id': item.photoId, 'quantity': item.quantity})
@@ -134,18 +150,26 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
       );
 
   Widget _field(TextEditingController controller, String label, IconData icon,
-          {TextInputType? keyboard, int maxLines = 1}) =>
+          {TextInputType? keyboard,
+          int maxLines = 1,
+          String? hint,
+          List<TextInputFormatter>? formatters}) =>
       Padding(
         padding: const EdgeInsets.only(bottom: 10),
         child: TextField(
           controller: controller,
           keyboardType: keyboard,
           maxLines: maxLines,
+          inputFormatters: formatters,
+          textCapitalization: formatters != null
+              ? TextCapitalization.words
+              : TextCapitalization.none,
           onChanged: (_) {
             if (_error != null) setState(() => _error = null);
           },
           decoration: InputDecoration(
             labelText: label,
+            hintText: hint,
             prefixIcon: Icon(icon, color: _muted, size: 20),
             filled: true,
             fillColor: const Color(0xFFFAF9F7),
@@ -267,6 +291,15 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
             _section(
                 'Os seus dados',
                 Column(children: [
+                  _field(_table, 'Qual é a sua mesa?',
+                      Icons.table_restaurant_outlined,
+                      hint: 'Ex.: 12 ou Noivos',
+                      maxLines: 1,
+                      formatters: [
+                        FilteringTextInputFormatter.allow(
+                            RegExp(r'[\p{L}\p{M} 0-9]', unicode: true)),
+                        LengthLimitingTextInputFormatter(40)
+                      ]),
                   _field(_name, 'Nome', Icons.person_outline),
                   _field(_phone, 'Telefone', Icons.phone_outlined,
                       keyboard: TextInputType.phone),

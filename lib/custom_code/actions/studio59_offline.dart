@@ -21,6 +21,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
+import 'package:onnxruntime_v2/onnxruntime_v2.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// Sessão offline Studio 59: servidor local de fotos/pedidos, deteção na rede
 /// e limpeza de sessões. Comandos: status, prepare, discover, inspect, start,
@@ -138,6 +140,8 @@ Future<Map<String, dynamic>> _s59Prepare(bool rescan) async {
       return {'mode': 'client', 'desktop': _s59Desktop, ...found};
   }
   final online = await _s59IsOnline();
+  // Com internet, o computador guarda os modelos do reconhecimento facial para as sessões offline.
+  if (online && _s59Desktop) unawaited(_S59FaceIndex.ensureModels());
   if (online && !rescan) {
     FFAppState().update(() => FFAppState().offlineApiBase = '');
     return {'mode': 'online', 'desktop': _s59Desktop};
@@ -260,6 +264,7 @@ class _S59Host {
   Future<void> _saving = Future.value();
   int _previewSlots = 2;
   final List<Completer<void>> _previewQueue = [];
+  final _faces = _S59FaceIndex();
 
   bool get running => _server != null;
   String get _qr =>
@@ -485,6 +490,7 @@ class _S59Host {
         null);
     await _save();
     unawaited(_warmPreviews());
+    unawaited(_faces.start(folder, () => _photos, _photoPaths));
     return status();
   }
 
@@ -494,6 +500,7 @@ class _S59Host {
     log('host', 'este computador', 'session.stop', 'Sessão offline terminada',
         null);
     await _save();
+    await _faces.stop();
     await _server?.close(force: true);
     _server = null;
     _guestTokens.clear();
@@ -651,6 +658,19 @@ class _S59Host {
       }
       final api = segments.sublist(1);
       final method = request.method;
+      // Pesquisa facial: o corpo é multipart (selfie), por isso é tratada antes da leitura JSON.
+      if (method == 'POST' &&
+          api.length == 4 &&
+          api[0] == 'public' &&
+          api[1] == 'events' &&
+          api[3] == 'face-search') {
+        final guestToken = _bearer(request);
+        if (guestToken == null || !_guestTokens.containsKey(guestToken)) {
+          return _json(
+              response, 401, {'message': 'Sessão do evento inválida.'});
+        }
+        return _faceSearch(request, response, _device(request));
+      }
       final body = method == 'POST' || method == 'PUT'
           ? await _readJson(request)
           : <String, dynamic>{};
@@ -985,6 +1005,9 @@ class _S59Host {
       'id': _orders.fold<int>(0, (m, o) => max(m, o['id'] as int? ?? 0)) + 1,
       'order_code': code,
       'customer_name': name,
+      'table_label': '${body['table_label'] ?? ''}'.trim().isEmpty
+          ? null
+          : '${body['table_label']}'.trim(),
       'customer_phone': phone,
       'customer_email': email,
       'product_type': productType,
@@ -1116,6 +1139,44 @@ class _S59Host {
     return _json(response, 200, {'data': _orderRow(order)});
   }
 
+  Future<void> _faceSearch(
+      HttpRequest request, HttpResponse response, String device) async {
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in request) {
+      builder.add(chunk);
+      if (builder.length > 12 * 1024 * 1024)
+        return _json(
+            response, 413, {'message': 'A selfie é demasiado grande.'});
+    }
+    final selfie = _s59MultipartFile(builder.takeBytes(),
+        request.headers.value('content-type') ?? '', 'selfie');
+    if (selfie == null || selfie.isEmpty)
+      return _json(response, 422, {'message': 'Envie uma selfie.'});
+    final result = await _faces.search(selfie, _photos);
+    final status = result['status'] as int;
+    if (status != 200)
+      return _json(response, status, {'message': result['message']});
+    final host = request.headers.host ?? _ip;
+    final port = request.headers.port ?? _s59Port;
+    final suggested = [
+      for (final match
+          in (result['matches'] as List).cast<Map<String, dynamic>>())
+        {
+          'id': match['photo']['id'],
+          'number': match['photo']['number'],
+          'filename': match['photo']['filename'],
+          'preview_url':
+              'http://$host:$port/offline/previews/${match['photo']['id']}?w=$_s59PreviewWidth',
+          'score': match['score'],
+        },
+    ];
+    log('guest', device, 'face.search',
+        'Pesquisa facial: ${suggested.length} fotografias sugeridas', null);
+    await _save();
+    return _json(
+        response, 200, {'suggested': suggested, 'pending': result['pending']});
+  }
+
   Future<void> _servePreview(HttpRequest request, int id) async {
     final response = request.response;
     final path = _photoPaths[id];
@@ -1194,4 +1255,547 @@ class _S59Host {
       await _preview(entry.key, entry.value, _s59PreviewWidth);
     }
   }
+}
+
+// ---- Reconhecimento facial offline (SCRFD det_10g + ArcFace w600k_mbf, ONNX) ----
+// Mesmo algoritmo do InsightFace (validado contra ele: semelhança 0,9999 nos embeddings).
+
+class _S59Face {
+  _S59Face(this.box, this.score, this.kps);
+  final List<double> box; // x1, y1, x2, y2 (píxeis da imagem descodificada)
+  final double score;
+  final List<double> kps; // 5 pontos (x, y)
+  double get area => max(0, box[2] - box[0]) * max(0, box[3] - box[1]);
+}
+
+class _S59Rgba {
+  _S59Rgba(this.bytes, this.width, this.height);
+  final Uint8List bytes;
+  final int width;
+  final int height;
+}
+
+class _S59FaceEngine {
+  _S59FaceEngine(this._det, this._rec);
+  final OrtSession _det;
+  final OrtSession _rec;
+
+  static const detSize = 640;
+  static const _arcDst = [
+    38.2946,
+    51.6963,
+    73.5318,
+    51.5014,
+    56.0252,
+    71.7366,
+    41.5493,
+    92.3655,
+    70.7299,
+    92.2041,
+  ];
+
+  static bool _envReady = false;
+
+  static Future<_S59FaceEngine> open(String detPath, String recPath) async {
+    if (!_envReady) {
+      OrtEnv.instance.init();
+      _envReady = true;
+    }
+    final options = OrtSessionOptions();
+    // fromBuffer: o fromFile do plugin falha com caminhos no Windows (codificação do caminho).
+    final det =
+        OrtSession.fromBuffer(await File(detPath).readAsBytes(), options);
+    final rec =
+        OrtSession.fromBuffer(await File(recPath).readAsBytes(), options);
+    return _S59FaceEngine(det, rec);
+  }
+
+  Future<void> close() async {
+    await _det.release();
+    await _rec.release();
+  }
+
+  /// Corre o modelo numa isolate própria (não bloqueia o ecrã) e devolve as saídas achatadas.
+  static Future<List<List<double>>> _run(
+      OrtSession session, Float32List data, List<int> shape) async {
+    final input = OrtValueTensor.createTensorWithDataList(data, shape);
+    final runOptions = OrtRunOptions();
+    try {
+      final outputs = await session.runAsyncWithTimeout(runOptions,
+              {session.inputNames.first: input}, const Duration(seconds: 60)) ??
+          const <OrtValue?>[];
+      final result = <List<double>>[];
+      for (final value in outputs) {
+        final flat = <double>[];
+        void walk(dynamic v) {
+          if (v is num) {
+            flat.add(v.toDouble());
+          } else if (v is List) {
+            for (final e in v) {
+              walk(e);
+            }
+          }
+        }
+
+        walk(value?.value);
+        result.add(flat);
+        value?.release();
+      }
+      return result;
+    } finally {
+      input.release();
+      runOptions.release();
+    }
+  }
+
+  /// Descodifica JPEG/PNG com o descodificador nativo, limitando o lado maior.
+  static Future<_S59Rgba?> decode(Uint8List encoded,
+      {int maxSide = 1280}) async {
+    final probe = await ui.ImmutableBuffer.fromUint8List(encoded);
+    final descriptor = await ui.ImageDescriptor.encoded(probe);
+    final w0 = descriptor.width, h0 = descriptor.height;
+    final scale = max(w0, h0) > maxSide ? maxSide / max(w0, h0) : 1.0;
+    final codec = await descriptor.instantiateCodec(
+        targetWidth: max(1, (w0 * scale).round()),
+        targetHeight: max(1, (h0 * scale).round()));
+    final frame = await codec.getNextFrame();
+    final image = frame.image;
+    final raw = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    final result = raw == null
+        ? null
+        : _S59Rgba(raw.buffer.asUint8List(), image.width, image.height);
+    image.dispose();
+    codec.dispose();
+    descriptor.dispose();
+    probe.dispose();
+    return result;
+  }
+
+  /// Entrada do detetor: 640x640, RGB, (v-127.5)/128, imagem no canto superior esquerdo.
+  static (Float32List, double) _detBlob(_S59Rgba img) {
+    final w = img.width, h = img.height;
+    int nw, nh;
+    if (h / w > 1) {
+      nh = detSize;
+      nw = (nh / (h / w)).floor();
+    } else {
+      nw = detSize;
+      nh = (nw * (h / w)).floor();
+    }
+    final scale = nh / h;
+    final plane = detSize * detSize;
+    final out = Float32List(3 * plane)
+      ..fillRange(0, 3 * plane, (0 - 127.5) / 128.0);
+    final sx = w / nw, sy = h / nh;
+    final src = img.bytes;
+    for (var y = 0; y < nh; y++) {
+      var fy = (y + 0.5) * sy - 0.5;
+      if (fy < 0) fy = 0;
+      var y0 = fy.floor();
+      if (y0 > h - 1) y0 = h - 1;
+      final y1 = y0 + 1 < h ? y0 + 1 : h - 1;
+      final wy = fy - y0;
+      for (var x = 0; x < nw; x++) {
+        var fx = (x + 0.5) * sx - 0.5;
+        if (fx < 0) fx = 0;
+        var x0 = fx.floor();
+        if (x0 > w - 1) x0 = w - 1;
+        final x1 = x0 + 1 < w ? x0 + 1 : w - 1;
+        final wx = fx - x0;
+        final i00 = (y0 * w + x0) * 4, i01 = (y0 * w + x1) * 4;
+        final i10 = (y1 * w + x0) * 4, i11 = (y1 * w + x1) * 4;
+        final o = y * detSize + x;
+        for (var c = 0; c < 3; c++) {
+          final top = src[i00 + c] * (1 - wx) + src[i01 + c] * wx;
+          final bottom = src[i10 + c] * (1 - wx) + src[i11 + c] * wx;
+          out[c * plane + o] = ((top * (1 - wy) + bottom * wy) - 127.5) / 128.0;
+        }
+      }
+    }
+    return (out, scale);
+  }
+
+  Future<List<_S59Face>> detect(_S59Rgba img,
+      {double threshold = 0.5, double nms = 0.4}) async {
+    final (blob, scale) = _detBlob(img);
+    final values = await _run(_det, blob, [1, 3, detSize, detSize]);
+    if (values.length < 9) return const [];
+    final faces = <_S59Face>[];
+    const strides = [8, 16, 32];
+    for (var i = 0; i < 3; i++) {
+      final stride = strides[i];
+      final scores = values[i], boxes = values[i + 3], kps = values[i + 6];
+      final fw = detSize ~/ stride;
+      for (var j = 0; j < scores.length; j++) {
+        if (scores[j] < threshold) continue;
+        final cell = j ~/ 2; // 2 âncoras por posição
+        final cx = (cell % fw) * stride.toDouble();
+        final cy = (cell ~/ fw) * stride.toDouble();
+        final b = j * 4, k = j * 10;
+        faces.add(_S59Face(
+            [
+              (cx - boxes[b] * stride) / scale,
+              (cy - boxes[b + 1] * stride) / scale,
+              (cx + boxes[b + 2] * stride) / scale,
+              (cy + boxes[b + 3] * stride) / scale,
+            ],
+            scores[j],
+            [
+              for (var t = 0; t < 5; t++) ...[
+                (cx + kps[k + 2 * t] * stride) / scale,
+                (cy + kps[k + 2 * t + 1] * stride) / scale,
+              ],
+            ]));
+      }
+    }
+    faces.sort((a, b) => b.score.compareTo(a.score));
+    final kept = <_S59Face>[];
+    double area(List<double> r) => (r[2] - r[0] + 1) * (r[3] - r[1] + 1);
+    for (final f in faces) {
+      var keep = true;
+      for (final k in kept) {
+        final iw = min(f.box[2], k.box[2]) - max(f.box[0], k.box[0]) + 1;
+        final ih = min(f.box[3], k.box[3]) - max(f.box[1], k.box[1]) + 1;
+        final inter = max(0.0, iw) * max(0.0, ih);
+        if (inter / (area(f.box) + area(k.box) - inter) > nms) {
+          keep = false;
+          break;
+        }
+      }
+      if (keep) kept.add(f);
+    }
+    return kept;
+  }
+
+  /// Alinha o rosto a 112x112 (semelhança pelos 5 pontos) e devolve o embedding normalizado.
+  Future<Float32List> embed(_S59Rgba img, _S59Face face) async {
+    // Transformação de semelhança src(kps) -> dst(template ArcFace), mínimos quadrados.
+    var mx = 0.0, my = 0.0, mu = 0.0, mv = 0.0;
+    for (var t = 0; t < 5; t++) {
+      mx += face.kps[2 * t];
+      my += face.kps[2 * t + 1];
+      mu += _arcDst[2 * t];
+      mv += _arcDst[2 * t + 1];
+    }
+    mx /= 5;
+    my /= 5;
+    mu /= 5;
+    mv /= 5;
+    var num1 = 0.0, num2 = 0.0, den = 0.0;
+    for (var t = 0; t < 5; t++) {
+      final x = face.kps[2 * t] - mx, y = face.kps[2 * t + 1] - my;
+      final u = _arcDst[2 * t] - mu, v = _arcDst[2 * t + 1] - mv;
+      num1 += x * u + y * v;
+      num2 += x * v - y * u;
+      den += x * x + y * y;
+    }
+    final a = num1 / den, b = num2 / den;
+    final tx = mu - (a * mx - b * my), ty = mv - (b * mx + a * my);
+    // Inversa: src = A^-1 (dst - t), com A = [[a,-b],[b,a]].
+    final det = a * a + b * b;
+    final ia = a / det, ib = b / det;
+    const size = 112, plane = size * size;
+    final out = Float32List(3 * plane);
+    final w = img.width, h = img.height, src = img.bytes;
+    for (var y = 0; y < size; y++) {
+      for (var x = 0; x < size; x++) {
+        final dx = x - tx, dy = y - ty;
+        final sx = ia * dx + ib * dy;
+        final sy = -ib * dx + ia * dy;
+        final x0 = sx.floor(), y0 = sy.floor();
+        final fx = sx - x0, fy = sy - y0;
+        final o = y * size + x;
+        for (var c = 0; c < 3; c++) {
+          var acc = 0.0;
+          for (var oy = 0; oy < 2; oy++) {
+            final yy = y0 + oy;
+            if (yy < 0 || yy >= h) continue;
+            final wy = oy == 0 ? 1 - fy : fy;
+            for (var ox = 0; ox < 2; ox++) {
+              final xx = x0 + ox;
+              if (xx < 0 || xx >= w) continue;
+              final wx = ox == 0 ? 1 - fx : fx;
+              acc += src[(yy * w + xx) * 4 + c] * wx * wy;
+            }
+          }
+          out[c * plane + o] = (acc - 127.5) / 127.5;
+        }
+      }
+    }
+    final raw = (await _run(_rec, out, [1, 3, size, size])).first;
+    var norm = 0.0;
+    for (final e in raw) {
+      norm += e * e;
+    }
+    norm = sqrt(norm);
+    return Float32List.fromList(
+        [for (final e in raw) norm == 0 ? 0 : e / norm]);
+  }
+
+  /// Todos os rostos de uma imagem (embeddings normalizados).
+  Future<List<Float32List>> faces(Uint8List encoded,
+      {bool foregroundOnly = false}) async {
+    final img = await decode(encoded);
+    if (img == null) return const [];
+    var found = await detect(img);
+    if (foregroundOnly && found.isNotEmpty) {
+      final largest = found.map((f) => f.area).reduce(max);
+      found = found
+          .where((f) => f.area >= largest * 0.25 && f.score >= 0.6)
+          .toList();
+    }
+    return [for (final f in found) await embed(img, f)];
+  }
+
+  static double similarity(List<double> a, List<double> b) {
+    var s = 0.0;
+    for (var i = 0; i < a.length && i < b.length; i++) {
+      s += a[i] * b[i];
+    }
+    return s;
+  }
+}
+
+// ---- Índice de rostos da sessão offline (no computador anfitrião) ----
+
+const _s59FaceModelsUrl = 'https://studio59.wiredevelop.pt/face-models';
+const _s59FaceModelFiles = {
+  'det_10g.onnx': 16923827,
+  'w600k_mbf.onnx': 13616099
+};
+const _s59FaceThreshold = 0.52;
+const _s59FaceIndexFile = '.studio59_rostos.json';
+
+class _S59FaceIndex {
+  _S59FaceEngine? _engine;
+  Future<void> _lock = Future.value();
+  bool _running = false;
+  bool _stopping = false;
+  String? _problem;
+  Directory? _folder;
+  // id da fotografia -> {mtime, e: [[512 valores], ...]}
+  Map<String, dynamic> _index = {};
+
+  static Future<Directory> _modelsDir() async {
+    final base = await getApplicationSupportDirectory();
+    return Directory(
+        '${base.path}${Platform.pathSeparator}studio59_face_models');
+  }
+
+  /// Descarrega os modelos (só com internet; ficam guardados para as sessões offline).
+  static Future<bool> ensureModels() async {
+    if (!_s59Desktop) return false;
+    try {
+      final dir = await _modelsDir();
+      await dir.create(recursive: true);
+      for (final entry in _s59FaceModelFiles.entries) {
+        final file = File('${dir.path}${Platform.pathSeparator}${entry.key}');
+        if (await file.exists() && await file.length() == entry.value) continue;
+        final response = await http
+            .get(Uri.parse('$_s59FaceModelsUrl/${entry.key}'))
+            .timeout(const Duration(minutes: 5));
+        if (response.statusCode != 200 ||
+            response.bodyBytes.length != entry.value) return false;
+        final temp = File('${file.path}.tmp');
+        await temp.writeAsBytes(response.bodyBytes, flush: true);
+        await temp.rename(file.path);
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> modelsReady() async {
+    try {
+      final dir = await _modelsDir();
+      for (final entry in _s59FaceModelFiles.entries) {
+        final file = File('${dir.path}${Platform.pathSeparator}${entry.key}');
+        if (!await file.exists() || await file.length() != entry.value)
+          return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<T> _exclusive<T>(Future<T> Function() task) {
+    final previous = _lock;
+    final done = Completer<void>();
+    _lock = done.future;
+    return previous.then((_) => task()).whenComplete(done.complete);
+  }
+
+  Future<_S59FaceEngine?> _openEngine() async {
+    if (_engine != null) return _engine;
+    if (!await modelsReady() && !await ensureModels()) {
+      _problem =
+          'O reconhecimento facial offline ainda não foi preparado: abra a app neste computador com internet uma vez para descarregar os modelos.';
+      return null;
+    }
+    final dir = await _modelsDir();
+    final sep = Platform.pathSeparator;
+    _engine = await _S59FaceEngine.open(
+        '${dir.path}${sep}det_10g.onnx', '${dir.path}${sep}w600k_mbf.onnx');
+    _problem = null;
+    return _engine;
+  }
+
+  File _indexFile(Directory folder) =>
+      File('${folder.path}${Platform.pathSeparator}$_s59FaceIndexFile');
+
+  Future<void> start(
+      Directory folder,
+      List<Map<String, dynamic>> Function() photos,
+      Map<int, String> paths) async {
+    _folder = folder;
+    _stopping = false;
+    try {
+      final file = _indexFile(folder);
+      if (await file.exists()) {
+        _index = Map<String, dynamic>.from(
+            jsonDecode(await file.readAsString()) as Map);
+      }
+    } catch (_) {
+      _index = {};
+    }
+    if (_running) return;
+    _running = true;
+    try {
+      while (!_stopping) {
+        final engine = await _openEngine();
+        if (engine == null) {
+          await Future.delayed(const Duration(minutes: 1));
+          continue;
+        }
+        var changed = 0;
+        for (final photo in List<Map<String, dynamic>>.from(photos())) {
+          if (_stopping) break;
+          final id = int.tryParse('${photo['id']}') ?? 0;
+          final path = paths[id];
+          if (path == null) continue;
+          final file = File(path);
+          int mtime;
+          try {
+            mtime = (await file.lastModified()).millisecondsSinceEpoch;
+          } catch (_) {
+            continue;
+          }
+          final entry = _index['$id'];
+          if (entry is Map && entry['mtime'] == mtime) continue;
+          try {
+            final bytes = await file.readAsBytes();
+            final faces = await _exclusive(() => engine.faces(bytes));
+            _index['$id'] = {
+              'mtime': mtime,
+              'e': [
+                for (final f in faces)
+                  [for (final v in f) double.parse(v.toStringAsFixed(5))]
+              ],
+            };
+          } catch (_) {
+            _index['$id'] = {'mtime': mtime, 'e': const []};
+          }
+          if (++changed % 20 == 0) await _saveIndex();
+        }
+        if (changed > 0) await _saveIndex();
+        // Volta a verificar fotografias novas de minuto a minuto.
+        for (var i = 0; i < 60 && !_stopping; i++) {
+          await Future.delayed(const Duration(seconds: 1));
+        }
+      }
+    } finally {
+      _running = false;
+    }
+  }
+
+  Future<void> _saveIndex() async {
+    final folder = _folder;
+    if (folder == null) return;
+    try {
+      final file = _indexFile(folder);
+      final temp = File('${file.path}.tmp');
+      await temp.writeAsString(jsonEncode(_index), flush: true);
+      await temp.rename(file.path);
+    } catch (_) {}
+  }
+
+  Future<void> stop() async {
+    _stopping = true;
+    await _saveIndex();
+  }
+
+  int pending(List<Map<String, dynamic>> photos) =>
+      photos.where((p) => !_index.containsKey('${p['id']}')).length;
+
+  /// Pesquisa por selfie: junta as fotografias de todas as pessoas em primeiro plano.
+  Future<Map<String, dynamic>> search(
+      Uint8List selfie, List<Map<String, dynamic>> photos) async {
+    final engine = await _openEngine();
+    if (engine == null) return {'status': 503, 'message': _problem};
+    final query =
+        await _exclusive(() => engine.faces(selfie, foregroundOnly: true));
+    if (query.isEmpty)
+      return {'status': 422, 'message': 'Nenhum rosto detetado.'};
+    final scored = <Map<String, dynamic>>[];
+    for (final photo in photos) {
+      final entry = _index['${photo['id']}'];
+      if (entry is! Map) continue;
+      var best = 0.0;
+      for (final e in (entry['e'] as List? ?? const [])) {
+        final vector =
+            (e as List).cast<num>().map((v) => v.toDouble()).toList();
+        for (final q in query) {
+          best = max(best, _S59FaceEngine.similarity(q, vector));
+        }
+      }
+      if (best >= _s59FaceThreshold)
+        scored.add({'photo': photo, 'score': best});
+    }
+    scored
+        .sort((a, b) => (b['score'] as double).compareTo(a['score'] as double));
+    return {
+      'status': 200,
+      'matches': scored.take(200).toList(),
+      'pending': pending(photos)
+    };
+  }
+}
+
+/// Lê o ficheiro de um campo multipart/form-data (sem dependências externas).
+Uint8List? _s59MultipartFile(Uint8List body, String contentType, String field) {
+  final match =
+      RegExp(r'boundary=(?:"([^"]+)"|([^;]+))').firstMatch(contentType);
+  if (match == null) return null;
+  final boundary =
+      utf8.encode('--${(match.group(1) ?? match.group(2))!.trim()}');
+  int indexOf(List<int> pattern, int from) {
+    outer:
+    for (var i = from; i <= body.length - pattern.length; i++) {
+      for (var j = 0; j < pattern.length; j++) {
+        if (body[i + j] != pattern[j]) continue outer;
+      }
+      return i;
+    }
+    return -1;
+  }
+
+  const headerEnd = [13, 10, 13, 10];
+  var start = indexOf(boundary, 0);
+  while (start >= 0) {
+    final headersStart = start + boundary.length + 2;
+    final headersStop = indexOf(headerEnd, headersStart);
+    if (headersStop < 0) return null;
+    final headers = latin1.decode(body.sublist(headersStart, headersStop));
+    final next = indexOf(boundary, headersStop + 4);
+    if (next < 0) return null;
+    if (RegExp('name="${RegExp.escape(field)}"').hasMatch(headers)) {
+      var end = next - 2; // \r\n antes da fronteira
+      if (end < headersStop + 4) end = headersStop + 4;
+      return Uint8List.sublistView(body, headersStop + 4, end);
+    }
+    start = next;
+  }
+  return null;
 }

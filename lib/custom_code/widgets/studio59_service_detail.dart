@@ -1238,6 +1238,9 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
             e.value.toString().trim().isNotEmpty &&
             e.value is! Map &&
             e.value is! List)
+        // Campos retirados da ficha (dados antigos importados): Facebook e Residência após casamento.
+        .where((e) =>
+            !RegExp(r'facebook|resid', caseSensitive: false).hasMatch(e.key))
         .toList();
     final groups = <String, List<MapEntry<String, dynamic>>>{
       'Noivo': [],

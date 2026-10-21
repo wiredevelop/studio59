@@ -78,6 +78,13 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
   int _managePage = 1;
   int _manageLastPage = 1;
   String _manageSearch = '';
+  String _serviceSearch = '';
+  String _serviceFilter = 'Próximos';
+  Map<String, dynamic>? _contractTpl;
+  bool _contractTplLoading = false;
+  String? _contractTplError;
+  final _contractName = TextEditingController();
+  final _contractBody = TextEditingController();
   String? _error;
   bool _loading = true;
   bool _expired = false;
@@ -111,6 +118,8 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
   @override
   void dispose() {
     _offlineRefresh?.cancel();
+    _contractName.dispose();
+    _contractBody.dispose();
     super.dispose();
   }
 
@@ -960,6 +969,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     final password = TextEditingController();
     final notes = TextEditingController(text: '${existing?['notes'] ?? ''}');
     var role = '${existing?['role'] ?? 'photographer'}';
+    var active = existing?['is_active'] != false;
     var saving = false;
     String? formError;
     await showDialog<void>(
@@ -1002,9 +1012,9 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                               value: role,
                               decoration:
                                   const InputDecoration(labelText: 'Perfil'),
-                              items: const ['admin', 'staff', 'photographer']
-                                  .map((v) => DropdownMenuItem(
-                                      value: v, child: Text(v)))
+                              items: _roleLabels.entries
+                                  .map((e) => DropdownMenuItem(
+                                      value: e.key, child: Text(e.value)))
                                   .toList(),
                               onChanged: (v) {
                                 if (v != null) update(() => role = v);
@@ -1016,6 +1026,15 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                                   labelText: existing == null
                                       ? 'Palavra-passe *'
                                       : 'Nova palavra-passe (opcional)')),
+                          if (existing != null)
+                            SwitchListTile(
+                                contentPadding: EdgeInsets.zero,
+                                value: active,
+                                activeColor: _rose,
+                                title: const Text('Ativo'),
+                                subtitle: const Text(
+                                    'Inativo: não consegue entrar na app nem ser atribuído a serviços.'),
+                                onChanged: (v) => update(() => active = v)),
                         ],
                         if (formError != null)
                           Padding(
@@ -1068,7 +1087,9 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                                                   ? existing!['permissions']
                                                   : <String>[],
                                           if (password.text.isNotEmpty)
-                                            'password': password.text
+                                            'password': password.text,
+                                          if (existing != null)
+                                            'is_active': active
                                         };
                                   final response = existing == null
                                       ? await client
@@ -1129,6 +1150,355 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     username.dispose();
     password.dispose();
     notes.dispose();
+  }
+
+  static const _roleLabels = {
+    'photographer': 'Fotógrafo',
+    'staff': 'Staff',
+    'backoffice': 'Backoffice',
+    'receptionist': 'Receção',
+    'admin': 'Administrador',
+  };
+  String _roleLabel(String role) => _roleLabels[role] ?? role;
+
+  Future<void> _setUserActive(Map<String, dynamic> row, bool active) async {
+    if (!active) {
+      final ok = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+                  title: Text('Inativar ${row['name'] ?? ''}?'),
+                  content: const Text(
+                      'Deixa de conseguir entrar na app (as sessões abertas terminam) e de ser atribuído a serviços. Os dados e o histórico ficam guardados; pode voltar a ativar quando quiser.'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(dialogContext, false),
+                        child: const Text('Cancelar')),
+                    FilledButton(
+                        style: FilledButton.styleFrom(backgroundColor: _rose),
+                        onPressed: () => Navigator.pop(dialogContext, true),
+                        child: const Text('Inativar'))
+                  ]));
+      if (ok != true) return;
+    }
+    final client = http.Client();
+    try {
+      final payload = {
+        'name': row['name'],
+        'email': row['email'],
+        'username': row['username'],
+        'role': row['role'],
+        'permissions':
+            row['permissions'] is List ? row['permissions'] : <String>[],
+        'is_active': active
+      };
+      final response = await client
+          .put(Uri.parse('$_base/users/${row['id']}'),
+              headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $_token'
+              },
+              body: jsonEncode(payload))
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        String message = 'Não foi possível alterar (${response.statusCode}).';
+        try {
+          final b = jsonDecode(response.body);
+          if (b is Map && b['message'] != null) message = '${b['message']}';
+        } catch (_) {}
+        throw StateError(message);
+      }
+      setState(() => row['is_active'] = active);
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(active
+                ? '${row['name']} está ativo.'
+                : '${row['name']} foi inativado.')));
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(error is StateError
+                ? error.message.toString()
+                : 'Não foi possível contactar o servidor.')));
+    } finally {
+      client.close();
+    }
+  }
+
+  void _openDossier(Map<String, dynamic> event) {
+    final id = int.tryParse('${event['id']}');
+    if (id == null || id <= 0) return;
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => Scaffold(
+            backgroundColor: const Color(0xFFFAF9F7),
+            body: SafeArea(child: Studio59EventDossier(eventId: id)))));
+  }
+
+  Widget _servicesTab() {
+    final today = DateTime.now();
+    final start = DateTime(today.year, today.month, today.day);
+    final query = _serviceSearch.trim().toLowerCase();
+    final list = _events.where((e) {
+      final date = _eventDate(e);
+      if (_serviceFilter == 'Próximos' && date != null && date.isBefore(start))
+        return false;
+      if (_serviceFilter == 'Passados' &&
+          (date == null || !date.isBefore(start))) return false;
+      return query.isEmpty || jsonEncode(e).toLowerCase().contains(query);
+    }).toList()
+      ..sort((a, b) {
+        final da = _eventDate(a) ?? DateTime(2100),
+            db = _eventDate(b) ?? DateTime(2100);
+        return _serviceFilter == 'Passados'
+            ? db.compareTo(da)
+            : da.compareTo(db);
+      });
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Row(children: [
+        const Expanded(
+            child: Text('Serviços',
+                style: TextStyle(
+                    color: _ink, fontSize: 20, fontWeight: FontWeight.w600))),
+        if (_can('events.create'))
+          FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: _rose),
+              onPressed: () => context.pushNamed('Studio59ServiceOnline',
+                      queryParameters: {
+                        'eventId': serializeParam(0, ParamType.int)
+                      }),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Novo serviço')),
+      ]),
+      const SizedBox(height: 4),
+      Text(
+          _isAdminRole
+              ? 'Abra a ficha para ver ou editar os dados, ou o dossier para fotografias, upload de provas, contrato e exportações.'
+              : 'Os serviços em que está atribuído.',
+          style: const TextStyle(color: _muted)),
+      const SizedBox(height: 12),
+      Wrap(spacing: 8, runSpacing: 8, children: [
+        for (final f in const ['Próximos', 'Passados', 'Todos'])
+          ChoiceChip(
+              label: Text(f),
+              selected: _serviceFilter == f,
+              selectedColor: const Color(0xFFF2E5E3),
+              onSelected: (_) => setState(() => _serviceFilter = f)),
+      ]),
+      const SizedBox(height: 10),
+      TextField(
+          decoration: const InputDecoration(
+              labelText: 'Pesquisar (nome, local, noivos, n.º)',
+              prefixIcon: Icon(Icons.search),
+              border: OutlineInputBorder()),
+          onChanged: (v) => setState(() => _serviceSearch = v)),
+      const SizedBox(height: 12),
+      if (list.isEmpty)
+        _card(const Text('Sem serviços neste filtro.',
+            style: TextStyle(color: _muted))),
+      for (final event in list.take(150))
+        Padding(
+            padding: const EdgeInsets.only(bottom: 9),
+            child: _card(Row(children: [
+              Expanded(
+                  child: InkWell(
+                      onTap: () => _openEvent(event),
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('${event['name'] ?? 'Serviço'}',
+                                style: const TextStyle(
+                                    color: _ink,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 4),
+                            Builder(builder: (_) {
+                              final date = _eventDate(event);
+                              return Text(
+                                  [
+                                    date == null
+                                        ? 'Data por definir'
+                                        : '${date.day} ${_months[date.month - 1]} ${date.year}',
+                                    if ('${event['event_time'] ?? ''}'
+                                        .isNotEmpty)
+                                      '${event['event_time']}'.substring(
+                                          0,
+                                          '${event['event_time']}'.length >= 5
+                                              ? 5
+                                              : '${event['event_time']}'
+                                                  .length),
+                                    if ('${event['location'] ?? ''}'.isNotEmpty)
+                                      '${event['location']}',
+                                  ].join(' · '),
+                                  style: const TextStyle(color: _muted));
+                            }),
+                          ]))),
+              const SizedBox(width: 8),
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                if (_can('events.view'))
+                  OutlinedButton.icon(
+                      onPressed: () => _openEvent(event),
+                      style: OutlinedButton.styleFrom(foregroundColor: _ink),
+                      icon: const Icon(Icons.article_outlined, size: 18),
+                      label: const Text('Ficha')),
+                if (_isAdminRole)
+                  FilledButton.icon(
+                      onPressed: () => _openDossier(event),
+                      style: FilledButton.styleFrom(backgroundColor: _rose),
+                      icon: const Icon(Icons.folder_open_outlined, size: 18),
+                      label: const Text('Dossier')),
+              ]),
+            ]))),
+      if (list.length > 150)
+        const Text(
+            'Mostram-se os primeiros 150. Use a pesquisa para encontrar outro.',
+            style: TextStyle(color: _muted)),
+    ]);
+  }
+
+  // ---- Configurações › Modelo de contrato ----
+  Future<void> _loadContractTpl() async {
+    setState(() {
+      _contractTplLoading = true;
+      _contractTplError = null;
+    });
+    final client = http.Client();
+    try {
+      final body = await _get(client, '/contract-template');
+      final data = body['data'] is Map ? _object(body['data']) : body;
+      if (!mounted) return;
+      setState(() {
+        _contractTpl = data;
+        _contractName.text = '${data['name'] ?? ''}';
+        _contractBody.text = '${data['body'] ?? ''}';
+        _contractTplLoading = false;
+      });
+    } catch (error) {
+      if (mounted)
+        setState(() {
+          _contractTplLoading = false;
+          _contractTplError = error is StateError
+              ? error.message.toString()
+              : 'Não foi possível contactar o servidor.';
+        });
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<void> _saveContractTpl() async {
+    if (_contractBody.text.trim().isEmpty) return;
+    setState(() => _contractTplLoading = true);
+    final client = http.Client();
+    try {
+      final response = await client
+          .put(Uri.parse('$_base/contract-template'),
+              headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $_token'
+              },
+              body: jsonEncode({
+                'name': _contractName.text.trim().isEmpty
+                    ? 'Contrato'
+                    : _contractName.text.trim(),
+                'body': _contractBody.text
+              }))
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300)
+        throw StateError('Não foi possível guardar (${response.statusCode}).');
+      if (mounted) {
+        setState(() => _contractTplLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'Modelo de contrato guardado. Os novos eventos usam este texto; nos existentes use «Atualizar com os dados atuais» no dossier.')));
+      }
+    } catch (error) {
+      if (mounted)
+        setState(() {
+          _contractTplLoading = false;
+          _contractTplError = error is StateError
+              ? error.message.toString()
+              : 'Não foi possível contactar o servidor.';
+        });
+    } finally {
+      client.close();
+    }
+  }
+
+  void _insertContractField(String key) {
+    final text = _contractBody.text;
+    final sel = _contractBody.selection;
+    final at = sel.isValid ? sel.start : text.length;
+    final end = sel.isValid ? sel.end : text.length;
+    final tag = '{{$key}}';
+    _contractBody.value = TextEditingValue(
+        text: text.replaceRange(at, end, tag),
+        selection: TextSelection.collapsed(offset: at + tag.length));
+  }
+
+  Widget _contractTemplateEditor() {
+    if (_contractTpl == null &&
+        !_contractTplLoading &&
+        _contractTplError == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _contractTpl == null && !_contractTplLoading)
+          _loadContractTpl();
+      });
+    }
+    final fields = (_contractTpl?['fields'] as List? ?? const [])
+        .whereType<Map>()
+        .toList();
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Row(children: [
+        IconButton(
+            onPressed: () => setState(() => _settingsSection = ''),
+            icon: const Icon(Icons.arrow_back, color: _ink)),
+        const Expanded(
+            child: Text('Modelo de contrato',
+                style: TextStyle(
+                    color: _ink, fontSize: 20, fontWeight: FontWeight.w600))),
+        FilledButton.icon(
+            onPressed: _contractTplLoading ? null : _saveContractTpl,
+            style: FilledButton.styleFrom(backgroundColor: _rose),
+            icon: const Icon(Icons.save_outlined, size: 18),
+            label: const Text('Guardar')),
+      ]),
+      const Padding(
+          padding: EdgeInsets.fromLTRB(8, 4, 8, 12),
+          child: Text(
+              'Cada evento novo recebe um contrato com este texto, preenchido com os dados da ficha. Toque num campo para o inserir onde está o cursor.',
+              style: TextStyle(color: _muted))),
+      if (_contractTplError != null)
+        _card(Text(_contractTplError!,
+            style: const TextStyle(color: Color(0xFF9B3D3D)))),
+      if (_contractTplLoading && _contractTpl == null)
+        const Center(child: CircularProgressIndicator(color: _rose)),
+      if (_contractTpl != null) ...[
+        TextField(
+            controller: _contractName,
+            decoration: const InputDecoration(
+                labelText: 'Nome do modelo', border: OutlineInputBorder())),
+        const SizedBox(height: 12),
+        Wrap(spacing: 6, runSpacing: 6, children: [
+          for (final f in fields)
+            ActionChip(
+                label:
+                    Text('${f['label']}', style: const TextStyle(fontSize: 12)),
+                tooltip: '{{${f['key']}}}',
+                onPressed: () => _insertContractField('${f['key']}')),
+        ]),
+        const SizedBox(height: 12),
+        TextField(
+            controller: _contractBody,
+            minLines: 18,
+            maxLines: 40,
+            style: const TextStyle(fontSize: 14, height: 1.45),
+            decoration: const InputDecoration(
+                labelText: 'Texto do contrato',
+                alignLabelWithHint: true,
+                border: OutlineInputBorder())),
+      ],
+    ]);
   }
 
   Future<void> _deleteManaged(String kind, Map<String, dynamic> row) async {
@@ -2984,6 +3354,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
   }
 
   Widget _settings() {
+    if (_settingsSection == 'contrato') return _contractTemplateEditor();
     if (_settingsSection == '') {
       return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         const Text('Configurações',
@@ -3011,6 +3382,55 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                     SizedBox(height: 3),
                     Text(
                         'Campos da ficha de cada tipo de serviço (uma ficha por tipo).',
+                        style: TextStyle(color: _muted)),
+                  ])),
+              Icon(Icons.chevron_right, color: _muted),
+            ]))),
+        const SizedBox(height: 10),
+        InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () {
+              setState(() => _settingsSection = 'contrato');
+              _loadContractTpl();
+            },
+            child: _card(const Row(children: [
+              Icon(Icons.description_outlined, color: _rose, size: 28),
+              SizedBox(width: 14),
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text('Modelo de contrato',
+                        style: TextStyle(
+                            color: _ink,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700)),
+                    SizedBox(height: 3),
+                    Text(
+                        'Texto base dos contratos, com os dados de cada evento preenchidos automaticamente.',
+                        style: TextStyle(color: _muted)),
+                  ])),
+              Icon(Icons.chevron_right, color: _muted),
+            ]))),
+        const SizedBox(height: 10),
+        InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () => context.pushNamed('Studio59SyncOnline'),
+            child: _card(const Row(children: [
+              Icon(Icons.cloud_sync_outlined, color: _rose, size: 28),
+              SizedBox(width: 14),
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text('Sincronização offline',
+                        style: TextStyle(
+                            color: _ink,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700)),
+                    SizedBox(height: 3),
+                    Text(
+                        'Enviar para o servidor os pedidos e fotografias de uma sessão offline.',
                         style: TextStyle(color: _muted)),
                   ])),
               Icon(Icons.chevron_right, color: _muted),
@@ -4157,48 +4577,41 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     final canDelete =
         _can(kind == 'Clientes' ? 'clients.delete' : 'users.delete');
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      const Text('Gestão',
+      const Text('Pessoas',
           style: TextStyle(
               color: _ink, fontSize: 20, fontWeight: FontWeight.w600)),
+      const SizedBox(height: 4),
+      const Text(
+          'Equipa (fotógrafos, backoffice, receção, administradores) e clientes.',
+          style: TextStyle(color: _muted)),
       const SizedBox(height: 12),
-      if (_can('offline.import'))
-        Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: OutlinedButton.icon(
-                onPressed: () => context.pushNamed('Studio59SyncOnline'),
-                icon: const Icon(Icons.sync),
-                label: const Text('Sincronização offline'))),
       Wrap(spacing: 8, runSpacing: 8, children: [
-        if (_can('events.list'))
+        if (_can('users.list'))
           ChoiceChip(
-              label: const Text('Serviços'),
-              selected: isEvents,
-              onSelected: (_) => setState(() {
-                    _manageKind = 'Serviços';
-                    _manageSearch = '';
-                  })),
+              avatar: const Icon(Icons.badge_outlined, size: 18),
+              label: const Text('Equipa'),
+              selected: kind == 'Utilizadores',
+              onSelected: (_) {
+                _manageSearch = '';
+                _loadManaged('Utilizadores');
+              }),
         if (_can('clients.list'))
           ChoiceChip(
+              avatar: const Icon(Icons.person_outline, size: 18),
               label: const Text('Clientes'),
               selected: kind == 'Clientes',
               onSelected: (_) {
                 _manageSearch = '';
                 _loadManaged('Clientes');
               }),
-        if (_can('users.list'))
-          ChoiceChip(
-              label: const Text('Utilizadores'),
-              selected: kind == 'Utilizadores',
-              onSelected: (_) {
-                _manageSearch = '';
-                _loadManaged('Utilizadores');
-              }),
       ]),
       const SizedBox(height: 12),
       TextField(
           key: ValueKey('manage-$kind'),
           decoration: InputDecoration(
-              labelText: 'Pesquisar $kind',
+              labelText: kind == 'Utilizadores'
+                  ? 'Pesquisar na equipa'
+                  : 'Pesquisar $kind',
               prefixIcon: const Icon(Icons.search),
               border: const OutlineInputBorder()),
           onChanged: (v) => setState(() => _manageSearch = v)),
@@ -4216,7 +4629,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                 icon: const Icon(Icons.add),
                 label: Text(isEvents
                     ? 'Adicionar serviço'
-                    : 'Adicionar ${kind == 'Clientes' ? 'cliente' : 'utilizador'}'))),
+                    : 'Adicionar ${kind == 'Clientes' ? 'cliente' : 'pessoa à equipa'}'))),
       if (_manageLoading && !isEvents)
         const Center(child: CircularProgressIndicator(color: _rose)),
       if (_manageError != null && !isEvents)
@@ -4233,12 +4646,44 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  Text('${row['name'] ?? ''}',
-                      style: const TextStyle(
-                          color: _ink, fontWeight: FontWeight.w600)),
-                  Text('${row['email'] ?? row['phone'] ?? ''}',
+                  Row(children: [
+                    Flexible(
+                        child: Text('${row['name'] ?? ''}',
+                            style: TextStyle(
+                                color:
+                                    row['is_active'] == false ? _muted : _ink,
+                                fontWeight: FontWeight.w600))),
+                    if (kind == 'Utilizadores' && row['is_active'] == false)
+                      Container(
+                          margin: const EdgeInsets.only(left: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                              color: const Color(0xFFF1E4E4),
+                              borderRadius: BorderRadius.circular(10)),
+                          child: const Text('Inativo',
+                              style: TextStyle(
+                                  color: Color(0xFF9B3D3D),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700))),
+                  ]),
+                  Text(
+                      [
+                        if (kind == 'Utilizadores')
+                          _roleLabel('${row['role'] ?? ''}'),
+                        '${row['email'] ?? row['phone'] ?? ''}'
+                      ].where((s) => s.isNotEmpty).join(' · '),
                       style: const TextStyle(color: _muted)),
                 ])),
+            if (kind == 'Utilizadores' &&
+                canEdit &&
+                '${row['id']}' != '${_user['id']}')
+              Tooltip(
+                  message: row['is_active'] == false ? 'Ativar' : 'Inativar',
+                  child: Switch(
+                      value: row['is_active'] != false,
+                      activeColor: _rose,
+                      onChanged: (v) => _setUserActive(row, v))),
             if (canEdit)
               IconButton(
                   onPressed: () => _saveManaged(kind, row),
@@ -5238,8 +5683,9 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     final tabs = <String>[
       'Início',
       if (_can('events.list') || _can('events.view')) 'Agenda',
+      if (_can('events.list') && !_offline) 'Serviços',
       if (_can('orders.list')) 'Pedidos',
-      if (_can('users.list') || _can('clients.list')) 'Gestão',
+      if (_can('users.list') || _can('clients.list')) 'Pessoas',
       if ((_user['role'] ?? '').toString().toLowerCase() == 'admin')
         'Financeiro',
       if (_isAdminRole && !_offline) 'Configurações'
@@ -5248,7 +5694,8 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
       'Início': Icons.home_outlined,
       'Agenda': Icons.calendar_month_outlined,
       'Pedidos': Icons.receipt_long_outlined,
-      'Gestão': Icons.manage_accounts_outlined,
+      'Serviços': Icons.event_note_outlined,
+      'Pessoas': Icons.people_alt_outlined,
       'Financeiro': Icons.bar_chart_outlined,
       'Configurações': Icons.settings_outlined
     };
@@ -5305,7 +5752,8 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                           if (_tab == 'Início') _overview(),
                           if (_tab == 'Agenda') _agenda(),
                           if (_tab == 'Pedidos') _tickets(),
-                          if (_tab == 'Gestão') _management(),
+                          if (_tab == 'Serviços') _servicesTab(),
+                          if (_tab == 'Pessoas') _management(),
                           if (_tab == 'Financeiro') _financial(),
                           if (_tab == 'Configurações') _settings(),
                         ])),
@@ -5315,7 +5763,12 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                 activeColor: _rose,
                 inactiveColor: _muted,
                 currentIndex: tabs.indexOf(_tab).clamp(0, tabs.length - 1),
-                onTap: (index) => setState(() => _tab = tabs[index]),
+                onTap: (index) {
+                  setState(() => _tab = tabs[index]);
+                  if (tabs[index] == 'Pessoas' && _manageKind == 'Serviços')
+                    _loadManaged(
+                        _can('users.list') ? 'Utilizadores' : 'Clientes');
+                },
                 items: tabs
                     .map((tab) => BottomNavigationBarItem(
                         icon: Icon(tabIcons[tab]), label: tab))

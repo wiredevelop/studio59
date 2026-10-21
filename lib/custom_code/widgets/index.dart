@@ -15,3 +15,5 @@ export '/custom_code/widgets/studio59_network_status.dart'
     show Studio59NetworkStatus;
 export '/custom_code/widgets/studio59_event_dossier.dart'
     show Studio59EventDossier;
+export '/custom_code/widgets/studio59_guest_ticket.dart'
+    show Studio59GuestTicket;

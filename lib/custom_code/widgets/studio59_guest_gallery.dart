@@ -316,7 +316,9 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
         }));
   }
 
-  Future<void> _preview(Map<String, dynamic> photo) async {
+  /// Abre a fotografia em ecrã inteiro: zoom com dois dedos ou duplo toque, deslizar para a seguinte.
+  Future<void> _preview(
+      Map<String, dynamic> photo, List<Map<String, dynamic>> list) async {
     studio59Offline(
         'log',
         jsonEncode({
@@ -324,52 +326,126 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
           'message':
               'Abriu a fotografia ${photo['number'] ?? photo['filename'] ?? photo['id']}'
         }));
-    await showCupertinoDialog<void>(
+    final start = list.indexWhere((p) => '${p['id']}' == '${photo['id']}');
+    await Navigator.of(context).push(PageRouteBuilder<void>(
+      opaque: true,
+      transitionDuration: const Duration(milliseconds: 180),
+      pageBuilder: (_, __, ___) => _PhotoViewer(
+        photos: list,
+        initialIndex: start < 0 ? 0 : start,
+        inCart: _inCart,
+        onAdd: (p) {
+          _add(p);
+        },
+      ),
+      transitionsBuilder: (_, animation, __, child) =>
+          FadeTransition(opacity: animation, child: child),
+    ));
+    if (mounted) setState(() {});
+  }
+
+  /// Tutorial passo a passo (só aparece quando o convidado toca em «Ajuda»).
+  Future<void> _showTour() async {
+    const steps = [
+      (
+        Icons.touch_app_outlined,
+        'Ver uma fotografia em grande',
+        'Toque numa fotografia para a abrir em ecrã inteiro. Afaste dois dedos (ou toque duas vezes) para aproximar e deslize para o lado para ver a seguinte.'
+      ),
+      (
+        Icons.add_circle_outline,
+        'Escolher fotografias',
+        'Toque no sinal + por baixo da fotografia, ou em «Adicionar ao carrinho» quando ela está aberta. As escolhidas ficam com um visto.'
+      ),
+      (
+        Icons.face_retouching_natural,
+        'Encontrar as suas fotografias',
+        'Toque em «Encontrar as minhas fotos» e tire uma selfie. Mostramos as fotografias onde aparece. Pode tirar a selfie com mais pessoas.'
+      ),
+      (
+        Icons.shopping_bag_outlined,
+        'Ver o carrinho',
+        'O botão «Ver carrinho», sempre visível no fundo do ecrã, mostra as fotografias escolhidas. Aí escolhe as quantidades e conclui o pedido.'
+      ),
+      (
+        Icons.receipt_long_outlined,
+        'Depois do pedido',
+        'No fim recebe um código. Dirija-se ao fotógrafo para pagar e entregue o iPad à próxima pessoa da sua mesa.'
+      ),
+    ];
+    var index = 0;
+    await showDialog<void>(
         context: context,
-        builder: (dialogContext) => Dialog(
-              insetPadding: const EdgeInsets.all(24),
-              backgroundColor: const Color(0xFF161412),
-              child: ConstrainedBox(
-                  constraints:
-                      const BoxConstraints(maxWidth: 900, maxHeight: 760),
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
+        builder: (dialogContext) =>
+            StatefulBuilder(builder: (dialogContext, update) {
+              final step = steps[index];
+              final last = index == steps.length - 1;
+              return AlertDialog(
+                backgroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(24)),
+                contentPadding: const EdgeInsets.fromLTRB(28, 28, 28, 8),
+                content: SizedBox(
+                    width: 460,
                     child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Expanded(
-                          child: CachedNetworkImage(
-                              imageUrl: '${photo['preview_url'] ?? ''}',
-                              fit: BoxFit.contain,
-                              errorWidget: (_, __, ___) => const Center(
-                                  child: Icon(Icons.broken_image_outlined,
-                                      color: Colors.white, size: 48)))),
-                      const SizedBox(height: 12),
-                      Text(
-                          '${photo['number'] ?? photo['filename'] ?? 'Fotografia'}',
+                      Container(
+                          padding: const EdgeInsets.all(18),
+                          decoration: const BoxDecoration(
+                              color: Color(0xFFF6ECEC), shape: BoxShape.circle),
+                          child: Icon(step.$1, color: _rose, size: 52)),
+                      const SizedBox(height: 18),
+                      Text(step.$2,
+                          textAlign: TextAlign.center,
                           style: const TextStyle(
-                              color: Colors.white, fontSize: 17)),
+                              fontSize: 24,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF292624))),
                       const SizedBox(height: 12),
+                      Text(step.$3,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              fontSize: 19,
+                              height: 1.4,
+                              color: Color(0xFF292624))),
+                      const SizedBox(height: 18),
                       Row(
                           mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            OutlinedButton(
-                                onPressed: () => Navigator.pop(dialogContext),
-                                child: const Text('Fechar')),
-                            const SizedBox(width: 12),
-                            FilledButton(
-                                onPressed: () {
-                                  _add(photo);
-                                  Navigator.pop(dialogContext);
-                                },
-                                style: FilledButton.styleFrom(
-                                    backgroundColor: _rose),
-                                child: Text(
-                                    _inCart(int.tryParse('${photo['id']}') ?? 0)
-                                        ? 'Já selecionada'
-                                        : 'Adicionar ao carrinho')),
-                          ]),
-                    ]),
-                  )),
-            ));
+                          children: List.generate(
+                              steps.length,
+                              (i) => Container(
+                                  width: i == index ? 22 : 10,
+                                  height: 10,
+                                  margin:
+                                      const EdgeInsets.symmetric(horizontal: 3),
+                                  decoration: BoxDecoration(
+                                      color: i == index
+                                          ? _rose
+                                          : const Color(0xFFE5D8D8),
+                                      borderRadius:
+                                          BorderRadius.circular(5))))),
+                    ])),
+                actionsAlignment: MainAxisAlignment.spaceBetween,
+                actions: [
+                  TextButton(
+                      onPressed: index == 0
+                          ? () => Navigator.pop(dialogContext)
+                          : () => update(() => index--),
+                      child: Text(index == 0 ? 'Fechar' : 'Anterior',
+                          style: const TextStyle(
+                              fontSize: 18, color: Color(0xFF6D625F)))),
+                  FilledButton(
+                      style: FilledButton.styleFrom(
+                          backgroundColor: _rose,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 26, vertical: 16)),
+                      onPressed: last
+                          ? () => Navigator.pop(dialogContext)
+                          : () => update(() => index++),
+                      child: Text(last ? 'Começar' : 'Seguinte',
+                          style: const TextStyle(fontSize: 18))),
+                ],
+              );
+            }));
   }
 
   Future<void> _exit() async {
@@ -416,224 +492,431 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
                 : 2;
     final price = FFAppState().guestEvent.pricePerPhoto;
     final shown = _faceResults ?? _photos;
+    final cartCount = FFAppState().guestCart.length;
     return SizedBox(
         width: widget.width,
         height: widget.height,
-        child: ScrollConfiguration(
-          behavior: const _GalleryScrollBehavior(),
-          child: CustomScrollView(
-              controller: _controller,
-              physics: const AlwaysScrollableScrollPhysics(),
-              slivers: [
-                SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    sliver: SliverToBoxAdapter(
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                          Wrap(
-                              alignment: WrapAlignment.end,
-                              spacing: 10,
-                              runSpacing: 8,
-                              children: [
-                                FilledButton.icon(
-                                    onPressed:
-                                        _faceSearching ? null : _faceSearch,
-                                    style: FilledButton.styleFrom(
-                                        backgroundColor: _rose,
-                                        shape: RoundedRectangleBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(12))),
-                                    icon: _faceSearching
-                                        ? const SizedBox(
-                                            width: 18,
-                                            height: 18,
-                                            child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                color: Colors.white))
-                                        : const Icon(
-                                            Icons.face_retouching_natural,
-                                            size: 18),
-                                    label: Text(_faceSearching
-                                        ? 'A procurar…'
-                                        : 'Encontrar as minhas fotos')),
-                                OutlinedButton.icon(
-                                    onPressed: _exit,
-                                    style: OutlinedButton.styleFrom(
-                                        foregroundColor: _rose,
-                                        side: const BorderSide(color: _rose),
-                                        shape: RoundedRectangleBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(12))),
-                                    icon: const Icon(Icons.logout, size: 18),
-                                    label: const Text('Sair do catálogo')),
-                              ]),
-                          const SizedBox(height: 8),
-                          Text(FFAppState().guestEvent.name,
-                              style: const TextStyle(
-                                  color: Color(0xFF292624),
-                                  fontSize: 21,
-                                  fontWeight: FontWeight.w700)),
-                          const SizedBox(height: 5),
-                          Text(
-                              '${price.toStringAsFixed(2).replaceAll('.', ',')} € por fotografia',
-                              style: const TextStyle(color: Color(0xFF6D625F))),
-                          if (_error != null)
-                            Padding(
-                                padding: const EdgeInsets.only(top: 14),
-                                child: Text(_error!,
-                                    style: const TextStyle(
-                                        color: Color(0xFF9B3D3D)))),
-                          if (_faceMessage != null || _faceResults != null)
-                            Padding(
-                                padding: const EdgeInsets.only(top: 14),
-                                child: Container(
-                                  padding:
-                                      const EdgeInsets.fromLTRB(14, 10, 8, 10),
-                                  decoration: BoxDecoration(
-                                      color: const Color(0xFFF6ECEC),
-                                      borderRadius: BorderRadius.circular(12)),
-                                  child: Row(children: [
-                                    const Icon(Icons.face_retouching_natural,
-                                        color: _rose, size: 20),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                        child: Text(_faceMessage ?? '',
-                                            style: const TextStyle(
-                                                color: Color(0xFF292624)))),
-                                    if (_faceResults != null)
-                                      TextButton(
-                                          onPressed: _clearFaceSearch,
-                                          child: const Text('Ver todas',
-                                              style: TextStyle(
-                                                  color: _rose,
-                                                  fontWeight:
-                                                      FontWeight.w600))),
-                                  ]),
-                                )),
-                        ]))),
-                if (_loading)
-                  const SliverFillRemaining(
-                      hasScrollBody: false,
-                      child: Center(child: CupertinoActivityIndicator()))
-                else if (shown.isEmpty)
-                  SliverFillRemaining(
-                      hasScrollBody: false,
-                      child: Center(
-                          child: Text(_faceResults != null
-                              ? 'Sem fotografias encontradas para esta selfie.'
-                              : 'Não existem fotografias disponíveis neste evento.')))
-                else
+        child: Column(children: [
+          Expanded(
+              child: ScrollConfiguration(
+            behavior: const _GalleryScrollBehavior(),
+            child: CustomScrollView(
+                controller: _controller,
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
                   SliverPadding(
-                      padding: const EdgeInsets.all(16),
-                      sliver: SliverGrid(
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: columns,
-                            crossAxisSpacing: 10,
-                            mainAxisSpacing: 10,
-                            childAspectRatio: .78),
-                        delegate: SliverChildBuilderDelegate((context, index) {
-                          final photo = shown[index];
-                          final id = int.tryParse('${photo['id']}') ?? 0;
-                          final selected = _inCart(id);
-                          return Material(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(16),
-                              clipBehavior: Clip.antiAlias,
-                              child: InkWell(
-                                onTap: () => _preview(photo),
-                                child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: [
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      sliver: SliverToBoxAdapter(
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                            Wrap(
+                                alignment: WrapAlignment.end,
+                                spacing: 10,
+                                runSpacing: 8,
+                                children: [
+                                  OutlinedButton.icon(
+                                      onPressed: _showTour,
+                                      style: OutlinedButton.styleFrom(
+                                          foregroundColor: _rose,
+                                          side: const BorderSide(color: _rose),
+                                          shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12))),
+                                      icon: const Icon(Icons.help_outline,
+                                          size: 18),
+                                      label: const Text('Ajuda')),
+                                  FilledButton.icon(
+                                      onPressed:
+                                          _faceSearching ? null : _faceSearch,
+                                      style: FilledButton.styleFrom(
+                                          backgroundColor: _rose,
+                                          shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12))),
+                                      icon: _faceSearching
+                                          ? const SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  color: Colors.white))
+                                          : const Icon(
+                                              Icons.face_retouching_natural,
+                                              size: 18),
+                                      label: Text(_faceSearching
+                                          ? 'A procurar…'
+                                          : 'Encontrar as minhas fotos')),
+                                  OutlinedButton.icon(
+                                      onPressed: _exit,
+                                      style: OutlinedButton.styleFrom(
+                                          foregroundColor: _rose,
+                                          side: const BorderSide(color: _rose),
+                                          shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12))),
+                                      icon: const Icon(Icons.logout, size: 18),
+                                      label: const Text('Sair do catálogo')),
+                                ]),
+                            const SizedBox(height: 8),
+                            Text(FFAppState().guestEvent.name,
+                                style: const TextStyle(
+                                    color: Color(0xFF292624),
+                                    fontSize: 21,
+                                    fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 5),
+                            Text(
+                                '${price.toStringAsFixed(2).replaceAll('.', ',')} € por fotografia',
+                                style:
+                                    const TextStyle(color: Color(0xFF6D625F))),
+                            if (_error != null)
+                              Padding(
+                                  padding: const EdgeInsets.only(top: 14),
+                                  child: Text(_error!,
+                                      style: const TextStyle(
+                                          color: Color(0xFF9B3D3D)))),
+                            if (_faceMessage != null || _faceResults != null)
+                              Padding(
+                                  padding: const EdgeInsets.only(top: 14),
+                                  child: Container(
+                                    padding: const EdgeInsets.fromLTRB(
+                                        14, 10, 8, 10),
+                                    decoration: BoxDecoration(
+                                        color: const Color(0xFFF6ECEC),
+                                        borderRadius:
+                                            BorderRadius.circular(12)),
+                                    child: Row(children: [
+                                      const Icon(Icons.face_retouching_natural,
+                                          color: _rose, size: 20),
+                                      const SizedBox(width: 10),
                                       Expanded(
-                                          child: Stack(
-                                              fit: StackFit.expand,
-                                              children: [
-                                            CachedNetworkImage(
-                                                imageUrl:
-                                                    '${photo['preview_url'] ?? ''}',
-                                                fit: BoxFit.cover,
-                                                placeholder: (_, __) =>
-                                                    const Center(
-                                                        child:
-                                                            CupertinoActivityIndicator()),
-                                                errorWidget: (_, __, ___) =>
-                                                    const Icon(Icons
-                                                        .broken_image_outlined)),
-                                            if (selected)
-                                              Positioned(
-                                                  right: 8,
-                                                  top: 8,
-                                                  child: Container(
-                                                      padding:
-                                                          const EdgeInsets.all(
-                                                              5),
-                                                      decoration:
-                                                          const BoxDecoration(
-                                                              color: _rose,
-                                                              shape: BoxShape
-                                                                  .circle),
-                                                      child: const Icon(
-                                                          Icons.check,
-                                                          color: Colors.white,
-                                                          size: 17))),
-                                          ])),
-                                      Padding(
-                                          padding: const EdgeInsets.all(10),
-                                          child: Row(children: [
-                                            Expanded(
-                                                child: Text(
-                                                    '${photo['number'] ?? photo['filename'] ?? 'Fotografia'}',
-                                                    maxLines: 1,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                    style: const TextStyle(
-                                                        fontWeight:
-                                                            FontWeight.w600))),
-                                            IconButton(
-                                                onPressed: selected
-                                                    ? null
-                                                    : () => _add(photo),
-                                                tooltip:
-                                                    'Adicionar ao carrinho',
-                                                icon: Icon(
-                                                    selected
-                                                        ? Icons.check_circle
-                                                        : Icons
-                                                            .add_circle_outline,
-                                                    color: _rose)),
-                                          ])),
+                                          child: Text(_faceMessage ?? '',
+                                              style: const TextStyle(
+                                                  color: Color(0xFF292624)))),
+                                      if (_faceResults != null)
+                                        TextButton(
+                                            onPressed: _clearFaceSearch,
+                                            child: const Text('Ver todas',
+                                                style: TextStyle(
+                                                    color: _rose,
+                                                    fontWeight:
+                                                        FontWeight.w600))),
                                     ]),
-                              ));
-                        }, childCount: shown.length),
-                      )),
-                SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                    sliver: SliverToBoxAdapter(
-                        child: Column(children: [
-                      if (_faceResults == null && _page < _lastPage)
-                        OutlinedButton(
-                            onPressed:
-                                _loadingMore ? null : () => _load(_page + 1),
-                            child: Text(_loadingMore
-                                ? 'A carregar…'
-                                : 'Carregar mais fotografias')),
-                      const SizedBox(height: 10),
-                      SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                              onPressed: FFAppState().guestCart.isEmpty
-                                  ? null
-                                  : () => context.pushNamed('GuestCartOnline'),
-                              style: FilledButton.styleFrom(
-                                  backgroundColor: _rose,
-                                  padding: const EdgeInsets.all(16)),
-                              icon: const Icon(Icons.shopping_bag_outlined),
-                              label: Text(
-                                  'Ver carrinho (${FFAppState().guestCart.length})'))),
-                    ]))),
-              ]),
-        ));
+                                  )),
+                          ]))),
+                  if (_loading)
+                    const SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(child: CupertinoActivityIndicator()))
+                  else if (shown.isEmpty)
+                    SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(
+                            child: Text(_faceResults != null
+                                ? 'Sem fotografias encontradas para esta selfie.'
+                                : 'Não existem fotografias disponíveis neste evento.')))
+                  else
+                    SliverPadding(
+                        padding: const EdgeInsets.all(16),
+                        sliver: SliverGrid(
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: columns,
+                                  crossAxisSpacing: 10,
+                                  mainAxisSpacing: 10,
+                                  childAspectRatio: .78),
+                          delegate:
+                              SliverChildBuilderDelegate((context, index) {
+                            final photo = shown[index];
+                            final id = int.tryParse('${photo['id']}') ?? 0;
+                            final selected = _inCart(id);
+                            return Material(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(16),
+                                clipBehavior: Clip.antiAlias,
+                                child: InkWell(
+                                  onTap: () => _preview(photo, shown),
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        Expanded(
+                                            child: Stack(
+                                                fit: StackFit.expand,
+                                                children: [
+                                              CachedNetworkImage(
+                                                  imageUrl:
+                                                      '${photo['preview_url'] ?? ''}',
+                                                  fit: BoxFit.cover,
+                                                  placeholder: (_, __) =>
+                                                      const Center(
+                                                          child:
+                                                              CupertinoActivityIndicator()),
+                                                  errorWidget: (_, __, ___) =>
+                                                      const Icon(Icons
+                                                          .broken_image_outlined)),
+                                              if (selected)
+                                                Positioned(
+                                                    right: 8,
+                                                    top: 8,
+                                                    child: Container(
+                                                        padding:
+                                                            const EdgeInsets
+                                                                .all(5),
+                                                        decoration:
+                                                            const BoxDecoration(
+                                                                color: _rose,
+                                                                shape: BoxShape
+                                                                    .circle),
+                                                        child: const Icon(
+                                                            Icons.check,
+                                                            color: Colors.white,
+                                                            size: 17))),
+                                            ])),
+                                        Padding(
+                                            padding: const EdgeInsets.all(10),
+                                            child: Row(children: [
+                                              Expanded(
+                                                  child: Text(
+                                                      '${photo['number'] ?? photo['filename'] ?? 'Fotografia'}',
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: const TextStyle(
+                                                          fontWeight: FontWeight
+                                                              .w600))),
+                                              IconButton(
+                                                  onPressed: selected
+                                                      ? null
+                                                      : () => _add(photo),
+                                                  tooltip:
+                                                      'Adicionar ao carrinho',
+                                                  icon: Icon(
+                                                      selected
+                                                          ? Icons.check_circle
+                                                          : Icons
+                                                              .add_circle_outline,
+                                                      color: _rose)),
+                                            ])),
+                                      ]),
+                                ));
+                          }, childCount: shown.length),
+                        )),
+                  SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                      sliver: SliverToBoxAdapter(
+                          child: Column(children: [
+                        if (_faceResults == null && _page < _lastPage)
+                          OutlinedButton(
+                              onPressed:
+                                  _loadingMore ? null : () => _load(_page + 1),
+                              child: Text(_loadingMore
+                                  ? 'A carregar…'
+                                  : 'Carregar mais fotografias')),
+                      ]))),
+                ]),
+          )),
+          // Barra fixa do carrinho: sempre visível, sem ser preciso descer até ao fim.
+          Material(
+              elevation: 8,
+              color: Colors.white,
+              child: SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                    child: SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                            onPressed: cartCount == 0
+                                ? null
+                                : () async {
+                                    await context.pushNamed('GuestCartOnline');
+                                    if (mounted) setState(() {});
+                                  },
+                            style: FilledButton.styleFrom(
+                                backgroundColor: _rose,
+                                padding: const EdgeInsets.all(18),
+                                textStyle: const TextStyle(
+                                    fontSize: 18, fontWeight: FontWeight.w600)),
+                            icon: const Icon(Icons.shopping_bag_outlined),
+                            label: Text(cartCount == 0
+                                ? 'Ver carrinho (vazio)'
+                                : 'Ver carrinho ($cartCount)'))),
+                  ))),
+        ]));
+  }
+}
+
+/// Visualizador em ecrã inteiro com zoom (dois dedos / duplo toque) e deslizar entre fotografias.
+class _PhotoViewer extends StatefulWidget {
+  const _PhotoViewer(
+      {required this.photos,
+      required this.initialIndex,
+      required this.inCart,
+      required this.onAdd});
+  final List<Map<String, dynamic>> photos;
+  final int initialIndex;
+  final bool Function(int id) inCart;
+  final void Function(Map<String, dynamic> photo) onAdd;
+  @override
+  State<_PhotoViewer> createState() => _PhotoViewerState();
+}
+
+class _PhotoViewerState extends State<_PhotoViewer> {
+  static const _rose = Color(0xFFB77F84);
+  late final PageController _pages =
+      PageController(initialPage: widget.initialIndex);
+  late int _index = widget.initialIndex;
+  final Map<int, TransformationController> _zoom = {};
+  bool _zoomed = false;
+
+  TransformationController _controllerFor(int i) =>
+      _zoom.putIfAbsent(i, () => TransformationController());
+
+  @override
+  void dispose() {
+    _pages.dispose();
+    for (final c in _zoom.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  void _toggleZoom(int i, TapDownDetails? details) {
+    final controller = _controllerFor(i);
+    if (controller.value.getMaxScaleOnAxis() > 1.01) {
+      controller.value = Matrix4.identity();
+      setState(() => _zoomed = false);
+    } else {
+      final p = details?.localPosition ??
+          Offset(MediaQuery.sizeOf(context).width / 2,
+              MediaQuery.sizeOf(context).height / 2);
+      controller.value = Matrix4.identity()
+        ..translate(-p.dx * 1.5, -p.dy * 1.5)
+        ..scale(2.5);
+      setState(() => _zoomed = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final photo = widget.photos[_index];
+    final id = int.tryParse('${photo['id']}') ?? 0;
+    final selected = widget.inCart(id);
+    TapDownDetails? lastTap;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+          child: Stack(children: [
+        PageView.builder(
+          controller: _pages,
+          physics: _zoomed
+              ? const NeverScrollableScrollPhysics()
+              : const PageScrollPhysics(),
+          itemCount: widget.photos.length,
+          onPageChanged: (i) => setState(() {
+            _index = i;
+            _zoomed = false;
+            for (final c in _zoom.values) {
+              c.value = Matrix4.identity();
+            }
+          }),
+          itemBuilder: (context, i) => GestureDetector(
+            onDoubleTapDown: (d) => lastTap = d,
+            onDoubleTap: () => _toggleZoom(i, lastTap),
+            child: InteractiveViewer(
+              transformationController: _controllerFor(i),
+              minScale: 1,
+              maxScale: 6,
+              onInteractionEnd: (_) => setState(() =>
+                  _zoomed = _controllerFor(i).value.getMaxScaleOnAxis() > 1.01),
+              child: Center(
+                  child: CachedNetworkImage(
+                      imageUrl: '${widget.photos[i]['preview_url'] ?? ''}',
+                      fit: BoxFit.contain,
+                      placeholder: (_, __) => const Center(
+                          child:
+                              CupertinoActivityIndicator(color: Colors.white)),
+                      errorWidget: (_, __, ___) => const Icon(
+                          Icons.broken_image_outlined,
+                          color: Colors.white,
+                          size: 56))),
+            ),
+          ),
+        ),
+        Positioned(
+            top: 8,
+            left: 8,
+            right: 8,
+            child: Row(children: [
+              IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  iconSize: 32,
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  tooltip: 'Fechar'),
+              Expanded(
+                  child: Text(
+                      '${photo['number'] ?? photo['filename'] ?? 'Fotografia'}  ·  ${_index + 1} de ${widget.photos.length}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600))),
+              const SizedBox(width: 48),
+            ])),
+        if (!_zoomed)
+          Positioned(
+              left: 0,
+              right: 0,
+              bottom: 86,
+              child: const Center(
+                  child: Text(
+                      'Afaste dois dedos para aproximar · deslize para o lado para a seguinte',
+                      style: TextStyle(color: Colors.white70, fontSize: 14)))),
+        Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16,
+            child: Row(children: [
+              if (_index > 0)
+                IconButton.filledTonal(
+                    onPressed: () => _pages.previousPage(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOut),
+                    iconSize: 30,
+                    icon: const Icon(Icons.chevron_left)),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: FilledButton.icon(
+                      onPressed: selected
+                          ? null
+                          : () {
+                              widget.onAdd(photo);
+                              setState(() {});
+                            },
+                      style: FilledButton.styleFrom(
+                          backgroundColor: _rose,
+                          disabledBackgroundColor: const Color(0xFF5E4A4C),
+                          disabledForegroundColor: Colors.white,
+                          padding: const EdgeInsets.all(18),
+                          textStyle: const TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.w600)),
+                      icon: Icon(selected
+                          ? Icons.check_circle
+                          : Icons.add_circle_outline),
+                      label: Text(selected
+                          ? 'Já está no carrinho'
+                          : 'Adicionar ao carrinho'))),
+              const SizedBox(width: 10),
+              if (_index < widget.photos.length - 1)
+                IconButton.filledTonal(
+                    onPressed: () => _pages.nextPage(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOut),
+                    iconSize: 30,
+                    icon: const Icon(Icons.chevron_right)),
+            ])),
+      ])),
+    );
   }
 }

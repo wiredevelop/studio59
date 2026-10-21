@@ -12,6 +12,7 @@ import 'package:flutter/material.dart' hide RepeatMode;
 import '/app_state.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 Future<Studio59GuestCashSubmitResultStruct>
     postStudio59GuestCashOrderNullableSafe(
@@ -88,6 +89,14 @@ Future<Studio59GuestCashSubmitResultStruct>
       message: validation,
     );
   }
+  // Mesa indicada no checkout (guardada pelo widget de checkout).
+  var tableLabel = '';
+  try {
+    tableLabel = (await SharedPreferences.getInstance())
+            .getString('studio59_table_label')
+            ?.trim() ??
+        '';
+  } catch (_) {}
   try {
     final response = await http.post(
       Uri.parse(
@@ -100,6 +109,7 @@ Future<Studio59GuestCashSubmitResultStruct>
       body: jsonEncode({
         'event_id': eventId,
         'customer_name': customerName,
+        if (tableLabel.isNotEmpty) 'table_label': tableLabel,
         'customer_phone': customerPhone,
         'customer_email': customerEmail,
         'payment_method': 'cash',
