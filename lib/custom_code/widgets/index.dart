@@ -13,3 +13,5 @@ export '/custom_code/widgets/studio59_offline_session.dart'
     show Studio59OfflineSession;
 export '/custom_code/widgets/studio59_network_status.dart'
     show Studio59NetworkStatus;
+export '/custom_code/widgets/studio59_event_dossier.dart'
+    show Studio59EventDossier;

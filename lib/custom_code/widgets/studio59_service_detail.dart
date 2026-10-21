@@ -1369,6 +1369,25 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
                           style: FilledButton.styleFrom(backgroundColor: _rose),
                           icon: const Icon(Icons.edit, size: 18),
                           label: const Text('Editar ficha')),
+                    if (_isAdmin && (widget.eventId ?? 0) > 0 && !_editing)
+                      Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: OutlinedButton.icon(
+                              onPressed: () => Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                      builder: (_) => Scaffold(
+                                          backgroundColor:
+                                              const Color(0xFFFAF9F7),
+                                          body: SafeArea(
+                                              child: Studio59EventDossier(
+                                                  eventId: widget.eventId))))),
+                              style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFFB77F84),
+                                  side: const BorderSide(
+                                      color: Color(0xFFB77F84))),
+                              icon: const Icon(Icons.folder_open_outlined,
+                                  size: 18),
+                              label: const Text('Dossier'))),
                     if (_isAdmin && (widget.eventId ?? 0) > 0)
                       IconButton(
                           onPressed: _deleteEvent,
