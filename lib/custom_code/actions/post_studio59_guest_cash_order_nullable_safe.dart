@@ -50,8 +50,11 @@ Future<Studio59GuestCashSubmitResultStruct>
   }
   String? validation;
   if (customerName.isEmpty) validation = 'Introduza o nome.';
-  if (customerPhone.isEmpty) validation = 'Introduza o telefone.';
-  if (customerEmail.isEmpty || !customerEmail.contains('@'))
+  // Email obrigatório só com fotografias digitais (formato digital ou ambos).
+  if ((productType == 'digital' || productType == 'both') &&
+      customerEmail.isEmpty)
+    validation = 'Para fotografias digitais indique o email.';
+  if (customerEmail.isNotEmpty && !customerEmail.contains('@'))
     validation = 'Introduza um email válido.';
   if (!['paper', 'digital', 'both'].contains(productType))
     validation = 'Escolha o formato das fotografias.';
@@ -111,8 +114,8 @@ Future<Studio59GuestCashSubmitResultStruct>
         'event_id': eventId,
         'customer_name': customerName,
         if (tableLabel.isNotEmpty) 'table_label': tableLabel,
-        'customer_phone': customerPhone,
-        'customer_email': customerEmail,
+        if (customerPhone.isNotEmpty) 'customer_phone': customerPhone,
+        if (customerEmail.isNotEmpty) 'customer_email': customerEmail,
         'payment_method': 'cash',
         'product_type': productType,
         'photo_items': items,

@@ -968,8 +968,9 @@ class _S59Host {
         body['wants_film'] == true || body['wants_film'] == 'true';
     String? problem;
     if (name.isEmpty) problem = 'O nome é obrigatório.';
-    if (phone.isEmpty) problem = 'O telefone é obrigatório.';
-    if (!email.contains('@')) problem = 'O email é obrigatório.';
+    if ((productType == 'digital' || productType == 'both') && email.isEmpty)
+      problem = 'Para fotografias digitais indique o email.';
+    if (email.isNotEmpty && !email.contains('@')) problem = 'Email inválido.';
     if (!const ['paper', 'digital', 'both'].contains(productType))
       problem = 'Formato inválido.';
     if (productType != 'digital' &&

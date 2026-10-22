@@ -62,6 +62,7 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
   int get _photosCents => _unitCents * _photoCount;
   bool get _needsDelivery =>
       _productType.isNotEmpty && _productType != 'digital';
+  bool get _needsEmail => _productType == 'digital' || _productType == 'both';
   int get _deliveryCents =>
       _needsDelivery && _deliveryType == 'shipping' ? _shippingCents : 0;
   int get _totalCents =>
@@ -81,9 +82,10 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
       problem = 'Escolha o formato das fotografias (papel, digital ou ambos).';
     else if (_name.text.trim().isEmpty)
       problem = 'Introduza o nome.';
-    else if (_phone.text.trim().isEmpty)
-      problem = 'Introduza o telefone.';
-    else if (!_email.text.trim().contains('@'))
+    else if (_needsEmail && _email.text.trim().isEmpty)
+      problem =
+          'Para fotografias digitais indique o email (é para lá que enviamos o link).';
+    else if (_email.text.trim().isNotEmpty && !_email.text.trim().contains('@'))
       problem = 'Introduza um email válido.';
     else if (_needsDelivery &&
         _deliveryType == 'shipping' &&
@@ -305,15 +307,18 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
                         LengthLimitingTextInputFormatter(40)
                       ]),
                   _field(_name, 'Nome *', Icons.person_outline),
-                  _field(_phone, 'Telefone *', Icons.phone_outlined,
+                  _field(_phone, 'Telefone (opcional)', Icons.phone_outlined,
                       keyboard: TextInputType.phone),
-                  _field(_email, 'Email *', Icons.mail_outline,
+                  _field(_email, _needsEmail ? 'Email *' : 'Email (opcional)',
+                      Icons.mail_outline,
                       keyboard: TextInputType.emailAddress),
-                  const Align(
+                  Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                          '* Campos obrigatórios. Diga o seu nome ao fotógrafo para ele encontrar o pedido.',
-                          style: TextStyle(color: _muted, fontSize: 12))),
+                          _needsEmail
+                              ? '* Campos obrigatórios. O email é obrigatório porque escolheu fotografias digitais: enviamos para lá o link.'
+                              : '* Campos obrigatórios. O email só é obrigatório se escolher fotografias digitais.',
+                          style: const TextStyle(color: _muted, fontSize: 12))),
                 ]),
                 subtitle: 'Todos os campos com * são obrigatórios.'),
             _section(
