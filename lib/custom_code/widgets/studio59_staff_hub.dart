@@ -501,8 +501,16 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     return cents == null ? '${amount ?? ''}' : _money(cents);
   }
 
+  /// Endereço da imagem: no offline usa o anfitrião a que a app está ligada (igual ao catálogo).
+  String _orderPhotoUrl(Map photo) {
+    if (_offline && '${photo['id'] ?? ''}'.isNotEmpty) {
+      return '${_base.replaceFirst(RegExp(r'/api/?$'), '')}/offline/previews/${photo['id']}?w=900';
+    }
+    return '${photo['preview_url'] ?? ''}';
+  }
+
   void _showOrderPhoto(BuildContext ctx, Map<String, dynamic> photo) {
-    final url = '${photo['preview_url'] ?? ''}';
+    final url = _orderPhotoUrl(photo);
     if (url.isEmpty) return;
     showDialog<void>(
         context: ctx,
@@ -816,13 +824,13 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                                             CrossAxisAlignment.stretch,
                                         children: [
                                           Expanded(
-                                              child: '${photo['preview_url'] ?? ''}'
+                                              child: _orderPhotoUrl(photo)
                                                       .isEmpty
                                                   ? const Icon(
                                                       Icons.image_outlined,
                                                       color: _muted)
                                                   : Image.network(
-                                                      '${photo['preview_url']}',
+                                                      _orderPhotoUrl(photo),
                                                       fit: BoxFit.cover,
                                                       errorBuilder: (_, __,
                                                               ___) =>

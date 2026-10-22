@@ -163,27 +163,40 @@ Future<Map<String, dynamic>> _s59Prepare(bool rescan) async {
 
 Future<List<String>> _s59LocalIps() async {
   if (kIsWeb) return [];
-  final result = <String>[];
+  // Prefere a placa de rede real (Wi-Fi/Ethernet) e põe no fim adaptadores virtuais e VPN
+  // (VirtualBox 192.168.56.x, Hyper-V/WSL, Radmin, Tailscale, OpenVPN…), que os tablets não alcançam.
+  final virtualName = RegExp(
+      r'virtual|vbox|vmware|vethernet|hyper-v|wsl|docker|radmin|vpn|tailscale|zerotier|hamachi|loopback|bluetooth|teredo|tap|tun|npcap',
+      caseSensitive: false);
+  final scored = <(String, int)>[];
   try {
     final interfaces = await NetworkInterface.list(
         type: InternetAddressType.IPv4, includeLoopback: false);
     for (final iface in interfaces) {
+      final name = iface.name;
       for (final address in iface.addresses) {
         final ip = address.address;
         if (ip.startsWith('169.254.')) continue;
-        result.add(ip);
+        var score = ip.startsWith('192.168.')
+            ? 0
+            : ip.startsWith('10.')
+                ? 1
+                : ip.startsWith('172.')
+                    ? 3
+                    : 4;
+        if (RegExp(r'wi-?fi|wlan|wireless|sem fios', caseSensitive: false)
+            .hasMatch(name)) score -= 2;
+        if (virtualName.hasMatch(name)) score += 20;
+        if (ip.startsWith('192.168.56.') ||
+            ip.startsWith('26.') ||
+            RegExp(r'^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.').hasMatch(ip))
+          score += 20;
+        scored.add((ip, score));
       }
     }
   } catch (_) {}
-  int rank(String ip) => ip.startsWith('192.168.')
-      ? 0
-      : ip.startsWith('10.')
-          ? 1
-          : ip.startsWith('172.')
-              ? 2
-              : 3;
-  result.sort((a, b) => rank(a).compareTo(rank(b)));
-  return result;
+  scored.sort((a, b) => a.$2.compareTo(b.$2));
+  return [for (final s in scored) s.$1];
 }
 
 /// Procura um computador com sessão offline na rede local (porta 5959).

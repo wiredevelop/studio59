@@ -17,7 +17,13 @@ Future<Studio59GuestSessionResultStruct> enterStudio59GuestSessionSafely(
   String credential,
   bool isQr,
 ) async {
-  final value = credential.trim();
+  var value = credential.trim();
+  // Link completo do QR online (…/public/events/qr/<token>): usa só o token.
+  if (isQr && !value.startsWith('S59OFF_') && value.contains('/qr/')) {
+    final segments = Uri.tryParse(value)?.pathSegments ?? const <String>[];
+    final i = segments.lastIndexOf('qr');
+    if (i >= 0 && i + 1 < segments.length) value = segments[i + 1];
+  }
   if (value.isEmpty) {
     return Studio59GuestSessionResultStruct(
       success: false,
@@ -25,9 +31,15 @@ Future<Studio59GuestSessionResultStruct> enterStudio59GuestSessionSafely(
       message: 'Introduza um PIN ou leia um QR válido.',
     );
   }
-  var base = (FFAppState().offlineApiBase.isNotEmpty
-      ? FFAppState().offlineApiBase
-      : 'https://studio59.wiredevelop.pt/api');
+  const onlineBase = 'https://studio59.wiredevelop.pt/api';
+  // PIN: sessão offline se o tablet estiver ligado a uma; senão o servidor online.
+  // QR: o QR de um evento online vai SEMPRE para o servidor online (mesmo que o tablet
+  // tenha ficado ligado a uma sessão offline antiga); só o QR «S59OFF_» vai para o computador.
+  var base = isQr
+      ? onlineBase
+      : (FFAppState().offlineApiBase.isNotEmpty
+          ? FFAppState().offlineApiBase
+          : onlineBase);
   var offlineQr = false;
   if (isQr && value.startsWith('S59OFF_')) {
     // QR de uma sessão offline: S59OFF_<ip com hífenes>_<porta>_<segredo>.
@@ -37,11 +49,11 @@ Future<Studio59GuestSessionResultStruct> enterStudio59GuestSessionSafely(
       offlineQr = true;
     }
   }
-  final uri = isQr
-      ? Uri.parse('$base/public/events/qr/${Uri.encodeComponent(value)}')
-      : Uri.parse('$base/public/events/pin');
-  try {
-    final response = (isQr
+  Future<http.Response> send(String b) {
+    final uri = isQr
+        ? Uri.parse('$b/public/events/qr/${Uri.encodeComponent(value)}')
+        : Uri.parse('$b/public/events/pin');
+    return (isQr
             ? http.get(uri, headers: {'Accept': 'application/json'})
             : http.post(
                 uri,
@@ -51,8 +63,21 @@ Future<Studio59GuestSessionResultStruct> enterStudio59GuestSessionSafely(
                 },
                 body: jsonEncode({'pin': value}),
               ))
-        .timeout(const Duration(seconds: 15));
-    final result = await response;
+        .timeout(const Duration(seconds: 12));
+  }
+
+  try {
+    http.Response result;
+    try {
+      result = await send(base);
+    } catch (_) {
+      if (!offlineQr) rethrow;
+      // O endereço do QR não respondeu (ex.: placa de rede virtual no computador): procura a sessão na rede.
+      final found = jsonDecode(await studio59Offline('discover', '{}'));
+      if (found is! Map || found['base'] is! String) rethrow;
+      base = found['base'] as String;
+      result = await send(base);
+    }
     dynamic decoded;
     try {
       decoded = jsonDecode(result.body);
@@ -65,7 +90,11 @@ Future<Studio59GuestSessionResultStruct> enterStudio59GuestSessionSafely(
         payload['event_session_token'] is String &&
         (payload['event_session_token'] as String).isNotEmpty &&
         payload['event'] is Map) {
-      if (offlineQr) FFAppState().offlineApiBase = base;
+      if (offlineQr) {
+        FFAppState().offlineApiBase = base;
+      } else if (isQr) {
+        FFAppState().offlineApiBase = ''; // catálogo online
+      }
       return Studio59GuestSessionResultStruct(
         success: true,
         statusCode: result.statusCode,
@@ -86,8 +115,9 @@ Future<Studio59GuestSessionResultStruct> enterStudio59GuestSessionSafely(
     return Studio59GuestSessionResultStruct(
       success: false,
       statusCode: 0,
-      message:
-          'Não foi possível contactar o servidor. Verifique a ligação e tente novamente.',
+      message: offlineQr || (!isQr && base != onlineBase)
+          ? 'Não foi possível contactar o computador da sessão offline. Confirme que está ligado à mesma rede Wi-Fi.'
+          : 'Não foi possível contactar o servidor. Verifique a internet e tente novamente.',
     );
   }
 }

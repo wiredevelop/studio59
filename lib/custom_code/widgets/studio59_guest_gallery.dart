@@ -60,6 +60,9 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
   // Sessão offline: estado da análise das fotografias no computador anfitrião.
   Map<String, dynamic>? _faceStatus;
   Timer? _faceTimer;
+  // Sessão offline: sair do catálogo só com 5 toques seguidos no título (evita saídas por engano).
+  int _titleTaps = 0;
+  DateTime? _firstTitleTap;
 
   @override
   void initState() {
@@ -187,6 +190,22 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
     if (seconds <= 60) return 'menos de 1 minuto';
     final minutes = (seconds / 60).ceil();
     return minutes == 1 ? 'cerca de 1 minuto' : 'cerca de $minutes minutos';
+  }
+
+  void _titleTapped() {
+    if (!_offline) return;
+    final now = DateTime.now();
+    if (_firstTitleTap == null ||
+        now.difference(_firstTitleTap!) > const Duration(seconds: 3)) {
+      _firstTitleTap = now;
+      _titleTaps = 0;
+    }
+    _titleTaps++;
+    if (_titleTaps >= 5) {
+      _titleTaps = 0;
+      _firstTitleTap = null;
+      _exit();
+    }
   }
 
   void _faceNotReady() {
@@ -622,23 +641,29 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
                                       label: Text(_faceSearching
                                           ? 'A procurar…'
                                           : 'Encontrar as minhas fotos')),
-                                  OutlinedButton.icon(
-                                      onPressed: _exit,
-                                      style: OutlinedButton.styleFrom(
-                                          foregroundColor: _rose,
-                                          side: const BorderSide(color: _rose),
-                                          shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(12))),
-                                      icon: const Icon(Icons.logout, size: 18),
-                                      label: const Text('Sair do catálogo')),
+                                  if (!_offline)
+                                    OutlinedButton.icon(
+                                        onPressed: _exit,
+                                        style: OutlinedButton.styleFrom(
+                                            foregroundColor: _rose,
+                                            side:
+                                                const BorderSide(color: _rose),
+                                            shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(12))),
+                                        icon:
+                                            const Icon(Icons.logout, size: 18),
+                                        label: const Text('Sair do catálogo')),
                                 ]),
                             const SizedBox(height: 8),
-                            Text(FFAppState().guestEvent.name,
-                                style: const TextStyle(
-                                    color: Color(0xFF292624),
-                                    fontSize: 21,
-                                    fontWeight: FontWeight.w700)),
+                            GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: _titleTapped,
+                                child: Text(FFAppState().guestEvent.name,
+                                    style: const TextStyle(
+                                        color: Color(0xFF292624),
+                                        fontSize: 21,
+                                        fontWeight: FontWeight.w700))),
                             const SizedBox(height: 5),
                             Text(
                                 '${price.toStringAsFixed(2).replaceAll('.', ',')} € por fotografia',
