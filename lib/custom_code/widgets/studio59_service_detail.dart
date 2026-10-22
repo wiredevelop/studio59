@@ -712,17 +712,12 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
         ? Map<String, dynamic>.from(event['event_meta'] as Map)
         : <String, dynamic>{};
     final payload = <String, dynamic>{
-      'event_type': _formType,
-      'event_date': _c('event_date').text.trim(),
-      'base_price': base,
-      'price_per_photo': photo,
+      'event_type': _formType, 'event_date': _c('event_date').text.trim(),
+      'base_price': base, 'price_per_photo': photo,
       'event_time': _c('event_time').text.trim(),
       'event_end_time': _c('event_end_time').text.trim(),
-      'location': _c('location').text.trim(),
-      'city': _c('city').text.trim(),
-      'address': _c('address').text.trim(),
-      'notes': _c('notes').text.trim(),
-      if (_c('name').text.trim().isNotEmpty) 'name': _c('name').text.trim(),
+      // O nome é sempre gerado pelo servidor a partir dos campos da ficha; cidade e morada deixaram de existir no formulário.
+      'location': _c('location').text.trim(), 'notes': _c('notes').text.trim(),
     };
     for (final f in _templateFields) {
       final key = '${f['key']}';
@@ -1070,17 +1065,10 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
           'half',
           _input('report_number', 'Nº do serviço', 'number', auto: 'sequence')
         ),
-        (
-          'full',
-          _input('name', 'Nome do serviço', 'text',
-              hint: 'Gerado a partir dos campos da ficha se ficar vazio')
-        ),
         ('third', _input('event_date', 'Data', 'date', required: true)),
         ('third', _input('event_time', 'Hora de início', 'time')),
         ('third', _input('event_end_time', 'Hora de fim', 'time')),
-        ('half', _input('location', 'Local', 'text')),
-        ('half', _input('city', 'Cidade', 'text')),
-        ('full', _input('address', 'Morada', 'text')),
+        ('full', _input('location', 'Local', 'text')),
         (
           'half',
           _input('base_price', 'Preço base (€)', 'number', required: true)

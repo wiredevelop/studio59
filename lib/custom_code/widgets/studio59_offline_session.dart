@@ -200,6 +200,68 @@ class _Studio59OfflineSessionState extends State<Studio59OfflineSession> {
         ]),
       );
 
+  String _eta(int seconds) {
+    if (seconds <= 60) return 'menos de 1 minuto';
+    final minutes = (seconds / 60).ceil();
+    return minutes == 1 ? 'cerca de 1 minuto' : 'cerca de $minutes minutos';
+  }
+
+  Widget _facesCard(Map<String, dynamic> f) {
+    final total = (f['total'] as num?)?.toInt() ?? 0;
+    final indexed = (f['indexed'] as num?)?.toInt() ?? 0;
+    final ready = f['ready'] == true;
+    final problem = f['problem'] as String?;
+    final eta = (f['eta_seconds'] as num?)?.toInt() ?? 0;
+    final color = problem != null
+        ? const Color(0xFF9B3D3D)
+        : ready
+            ? const Color(0xFF2E7D32)
+            : _rose;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: _line)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(ready ? Icons.check_circle : Icons.face_retouching_natural,
+              color: color),
+          const SizedBox(width: 10),
+          Expanded(
+              child: Text(
+                  problem != null
+                      ? 'Reconhecimento facial indisponível'
+                      : ready
+                          ? 'Reconhecimento facial pronto'
+                          : f['preparing'] == true
+                              ? 'Reconhecimento facial: a preparar…'
+                              : 'Reconhecimento facial: a analisar fotografias',
+                  style: const TextStyle(
+                      color: _ink, fontSize: 17, fontWeight: FontWeight.w700))),
+        ]),
+        const SizedBox(height: 10),
+        if (problem != null)
+          Text(problem, style: const TextStyle(color: Color(0xFF9B3D3D)))
+        else ...[
+          ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                  minHeight: 10,
+                  value: total == 0 ? (ready ? 1 : null) : indexed / total,
+                  color: color,
+                  backgroundColor: const Color(0xFFF3EEEC))),
+          const SizedBox(height: 8),
+          Text(
+              ready
+                  ? '$total fotografias analisadas. Os convidados já podem usar «Encontrar as minhas fotos».'
+                  : '$indexed de $total fotografias analisadas · falta ${_eta(eta)}. Até lá, o botão no catálogo mostra este tempo.',
+              style: const TextStyle(color: _muted)),
+        ],
+      ]),
+    );
+  }
+
   Widget _stat(String label, String value, {Color? color}) => Container(
         width: 150,
         padding: const EdgeInsets.all(14),
@@ -456,6 +518,26 @@ class _Studio59OfflineSessionState extends State<Studio59OfflineSession> {
         _stat('Total vendido', '${s['total_sold']}'),
         _stat('Recebido', '${s['total_received']}'),
       ]),
+      const SizedBox(height: 16),
+      if (s['faces'] is Map)
+        _facesCard(Map<String, dynamic>.from(s['faces'] as Map)),
+      const SizedBox(height: 12),
+      Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+              color: const Color(0xFFFFF8E1),
+              borderRadius: BorderRadius.circular(14)),
+          child: const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.power_outlined, color: Color(0xFF8D6E00)),
+                SizedBox(width: 10),
+                Expanded(
+                    child: Text(
+                        'Enquanto a sessão estiver aberta, este computador não entra em suspensão sozinho e pode bloquear o ecrã. '
+                        'Num portátil, deixe-o ligado à corrente e não feche a tampa, a não ser que nas opções de energia do Windows «Ao fechar a tampa» esteja em «Não fazer nada».',
+                        style: TextStyle(color: Color(0xFF5D4A00)))),
+              ])),
       const SizedBox(height: 14),
       Text('Ficheiro: ${s['file']}',
           style: const TextStyle(color: _muted, fontSize: 12)),

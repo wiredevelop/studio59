@@ -11,6 +11,7 @@ import 'package:flutter/material.dart' hide RepeatMode;
 // DO NOT REMOVE OR MODIFY THE CODE ABOVE!
 
 import '/app_state.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -56,15 +57,20 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
   List<Map<String, dynamic>>? _faceResults;
   bool _faceSearching = false;
   String? _faceMessage;
+  // Sessão offline: estado da análise das fotografias no computador anfitrião.
+  Map<String, dynamic>? _faceStatus;
+  Timer? _faceTimer;
 
   @override
   void initState() {
     super.initState();
     _load(1);
+    _pollFaceStatus();
   }
 
   @override
   void dispose() {
+    _faceTimer?.cancel();
     _controller.dispose();
     super.dispose();
   }
@@ -144,6 +150,64 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
               : 'Não foi possível contactar o servidor.';
         });
     }
+  }
+
+  bool get _offline => FFAppState().offlineApiBase.isNotEmpty;
+  bool get _faceReady =>
+      !_offline || _faceStatus == null || _faceStatus!['ready'] == true;
+
+  Future<void> _pollFaceStatus() async {
+    _faceTimer?.cancel();
+    if (!_offline) return;
+    final eventId = FFAppState().guestEvent.id;
+    final token = FFAppState().guestSessionToken.trim();
+    if (eventId <= 0 || token.isEmpty) return;
+    try {
+      final response = await http.get(
+          Uri.parse('$_base/public/events/$eventId/face-status'),
+          headers: {
+            'Accept': 'application/json',
+            'Authorization': 'Bearer $token'
+          }).timeout(const Duration(seconds: 8));
+      if (!mounted) return;
+      if (response.statusCode == 404) {
+        setState(() => _faceStatus =
+            null); // anfitrião antigo: sem estado, o botão funciona como antes
+        return;
+      }
+      final body = jsonDecode(response.body);
+      if (response.statusCode == 200 && body is Map)
+        setState(() => _faceStatus = Map<String, dynamic>.from(body));
+    } catch (_) {}
+    if (mounted && !_faceReady)
+      _faceTimer = Timer(const Duration(seconds: 8), _pollFaceStatus);
+  }
+
+  String _etaText(int seconds) {
+    if (seconds <= 60) return 'menos de 1 minuto';
+    final minutes = (seconds / 60).ceil();
+    return minutes == 1 ? 'cerca de 1 minuto' : 'cerca de $minutes minutos';
+  }
+
+  void _faceNotReady() {
+    final s = _faceStatus ?? const {};
+    final problem = s['problem'];
+    final text = problem != null
+        ? 'A pesquisa por rosto não está disponível nesta sessão. Pode procurar as suas fotografias no catálogo.'
+        : 'A pesquisa por rosto fica disponível dentro de ${_etaText((s['eta_seconds'] as num?)?.toInt() ?? 0)}. '
+            'Já analisámos ${s['indexed'] ?? 0} de ${s['total'] ?? 0} fotografias.';
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFF4A3F3C),
+          duration: const Duration(seconds: 5),
+          content: Row(children: [
+            const Icon(Icons.hourglass_top, color: Colors.white70),
+            const SizedBox(width: 12),
+            Expanded(child: Text(text, style: const TextStyle(fontSize: 16))),
+          ])));
+    _pollFaceStatus();
   }
 
   Future<void> _faceSearch() async {
@@ -527,10 +591,18 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
                                           size: 18),
                                       label: const Text('Ajuda')),
                                   FilledButton.icon(
-                                      onPressed:
-                                          _faceSearching ? null : _faceSearch,
+                                      onPressed: _faceSearching
+                                          ? null
+                                          : (_faceReady
+                                              ? _faceSearch
+                                              : _faceNotReady),
                                       style: FilledButton.styleFrom(
-                                          backgroundColor: _rose,
+                                          backgroundColor: _faceReady
+                                              ? _rose
+                                              : const Color(0xFFD9CFCD),
+                                          foregroundColor: _faceReady
+                                              ? Colors.white
+                                              : const Color(0xFF6D625F),
                                           shape: RoundedRectangleBorder(
                                               borderRadius:
                                                   BorderRadius.circular(12))),
@@ -541,8 +613,11 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
                                               child: CircularProgressIndicator(
                                                   strokeWidth: 2,
                                                   color: Colors.white))
-                                          : const Icon(
-                                              Icons.face_retouching_natural,
+                                          : Icon(
+                                              _faceReady
+                                                  ? Icons
+                                                      .face_retouching_natural
+                                                  : Icons.hourglass_top,
                                               size: 18),
                                       label: Text(_faceSearching
                                           ? 'A procurar…'

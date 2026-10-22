@@ -12,6 +12,7 @@ import 'package:flutter/material.dart' hide RepeatMode;
 import '/app_state.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -324,6 +325,7 @@ class _S59Host {
       'total_sold': _s59Money(sum('total_amount')),
       'total_received': _s59Money(sum('cash_received_amount')),
       'devices': _guestTokens.values.toSet().length,
+      'faces': _faces.progress(_photos),
     };
   }
 
@@ -491,6 +493,7 @@ class _S59Host {
     await _save();
     unawaited(_warmPreviews());
     unawaited(_faces.start(folder, () => _photos, _photoPaths));
+    _s59KeepAwake(true);
     return status();
   }
 
@@ -501,6 +504,7 @@ class _S59Host {
         null);
     await _save();
     await _faces.stop();
+    _s59KeepAwake(false);
     await _server?.close(force: true);
     _server = null;
     _guestTokens.clear();
@@ -730,6 +734,12 @@ class _S59Host {
           return _json(
               response, 401, {'message': 'Sessão do evento inválida.'});
         return _photosPage(request, response, device);
+      }
+      if (route('GET', ['public', 'events', '*', 'face-status'])) {
+        if (!guest)
+          return _json(
+              response, 401, {'message': 'Sessão do evento inválida.'});
+        return _json(response, 200, _faces.progress(_photos));
       }
       if (route('POST', ['public', 'logs'])) {
         log(
@@ -1301,7 +1311,8 @@ class _S59FaceEngine {
       OrtEnv.instance.init();
       _envReady = true;
     }
-    final options = OrtSessionOptions();
+    final options = OrtSessionOptions()
+      ..setIntraOpNumThreads(max(2, Platform.numberOfProcessors));
     // fromBuffer: o fromFile do plugin falha com caminhos no Windows (codificação do caminho).
     final det =
         OrtSession.fromBuffer(await File(detPath).readAsBytes(), options);
@@ -1556,6 +1567,18 @@ class _S59FaceEngine {
   }
 }
 
+// ---- Manter o computador acordado durante a sessão (Windows) ----
+void _s59KeepAwake(bool on) {
+  if (kIsWeb || !Platform.isWindows) return;
+  try {
+    final kernel = ffi.DynamicLibrary.open('kernel32.dll');
+    final setState = kernel.lookupFunction<ffi.Uint32 Function(ffi.Uint32),
+        int Function(int)>('SetThreadExecutionState');
+    // ES_CONTINUOUS | ES_SYSTEM_REQUIRED: o sistema não entra em suspensão por inatividade.
+    setState(on ? 0x80000001 : 0x80000000);
+  } catch (_) {}
+}
+
 // ---- Índice de rostos da sessão offline (no computador anfitrião) ----
 
 const _s59FaceModelsUrl = 'https://studio59.wiredevelop.pt/face-models';
@@ -1575,6 +1598,8 @@ class _S59FaceIndex {
   Directory? _folder;
   // id da fotografia -> {mtime, e: [[512 valores], ...]}
   Map<String, dynamic> _index = {};
+  double _msPerPhoto = 800; // média móvel do tempo por fotografia
+  bool _preparing = true; // a abrir/descarregar os modelos
 
   static Future<Directory> _modelsDir() async {
     final base = await getApplicationSupportDirectory();
@@ -1664,7 +1689,9 @@ class _S59FaceIndex {
     _running = true;
     try {
       while (!_stopping) {
+        _preparing = true;
         final engine = await _openEngine();
+        _preparing = false;
         if (engine == null) {
           await Future.delayed(const Duration(minutes: 1));
           continue;
@@ -1684,6 +1711,7 @@ class _S59FaceIndex {
           }
           final entry = _index['$id'];
           if (entry is Map && entry['mtime'] == mtime) continue;
+          final watch = Stopwatch()..start();
           try {
             final bytes = await file.readAsBytes();
             final faces = await _exclusive(() => engine.faces(bytes));
@@ -1697,6 +1725,7 @@ class _S59FaceIndex {
           } catch (_) {
             _index['$id'] = {'mtime': mtime, 'e': const []};
           }
+          _msPerPhoto = _msPerPhoto * 0.8 + watch.elapsedMilliseconds * 0.2;
           if (++changed % 20 == 0) await _saveIndex();
         }
         if (changed > 0) await _saveIndex();
@@ -1724,6 +1753,22 @@ class _S59FaceIndex {
   Future<void> stop() async {
     _stopping = true;
     await _saveIndex();
+  }
+
+  Map<String, dynamic> progress(List<Map<String, dynamic>> photos) {
+    final total = photos.length;
+    final left = pending(photos);
+    final ready = _engine != null && left == 0;
+    return {
+      'ready': ready,
+      'indexed': total - left,
+      'total': total,
+      'eta_seconds': ready
+          ? 0
+          : ((left * _msPerPhoto) / 1000).ceil() + (_engine == null ? 20 : 0),
+      'preparing': _preparing && _problem == null,
+      if (_problem != null) 'problem': _problem,
+    };
   }
 
   int pending(List<Map<String, dynamic>> photos) =>
