@@ -1212,38 +1212,54 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
     final meta = event['event_meta'] is Map
         ? Map<String, dynamic>.from(event['event_meta'] as Map)
         : <String, dynamic>{};
-    final all = <MapEntry<String, dynamic>>[
-      ...event.entries.where((e) => !const {
-            'name',
-            'event_meta',
-            'qr_token',
-            'access_pin'
-          }.contains(e.key)),
-      ...meta.entries,
-    ]
-        .where((e) =>
-            e.value != null &&
-            e.value.toString().trim().isNotEmpty &&
-            e.value is! Map &&
-            e.value is! List)
-        // Campos retirados da ficha (dados antigos importados): Facebook e Residência após casamento.
-        .where((e) =>
-            !RegExp(r'facebook|resid', caseSensitive: false).hasMatch(e.key))
-        .toList();
-    final groups = <String, List<MapEntry<String, dynamic>>>{
-      'Noivo': [],
-      'Noiva': [],
-      'Igreja': [],
-      'Quinta': [],
-      'Serviço': [],
-      'Outros': [],
-    };
-    for (final field in all) {
-      groups[_groupFor(field.key)]!.add(field);
-    }
     final type = _templates
         .where((t) => '${t['slug']}' == '${event['event_type']}')
         .firstOrNull;
+    // Só a informação útil no dia: campos do template, pelos separadores do template.
+    // Fora: números internos de cliente, dados antigos importados (Facebook/Residência) e restantes campos técnicos.
+    final hidden =
+        RegExp(r'^cliente_.*_num$|facebook|resid', caseSensitive: false);
+    dynamic valueOf(String key) =>
+        meta.containsKey(key) ? meta[key] : event[key];
+    bool filled(dynamic v) =>
+        v != null && v is! Map && v is! List && v.toString().trim().isNotEmpty;
+    final templateFields =
+        (type?['fields'] is List ? type!['fields'] as List : const [])
+            .whereType<Map>()
+            .map((f) => Map<String, dynamic>.from(f))
+            .toList();
+    final groups = <String, List<MapEntry<String, dynamic>>>{};
+    if (filled(event['location']))
+      groups['Serviço'] = [MapEntry('location', event['location'])];
+    if (templateFields.isNotEmpty) {
+      for (final f in templateFields) {
+        final key = '${f['key']}';
+        if (hidden.hasMatch(key)) continue;
+        var value = valueOf(key);
+        if ('${f['type']}' == 'checkbox') {
+          final on = value == true ||
+              const {'1', 'true', 'sim', 'x', 'yes'}
+                  .contains('$value'.trim().toLowerCase());
+          if (!on) continue;
+          value = 'Sim';
+        }
+        if (!filled(value)) continue;
+        final section = '${f['section'] ?? ''}'.trim().isEmpty
+            ? 'Geral'
+            : '${f['section']}'.trim();
+        groups.putIfAbsent(section, () => []).add(MapEntry(key, value));
+      }
+    } else {
+      // Tipos antigos sem template: agrupamento por nome, sem a secção «Outros».
+      for (final e in meta.entries) {
+        if (!filled(e.value) || hidden.hasMatch(e.key)) continue;
+        final group = _groupFor(e.key);
+        if (group == 'Outros') continue;
+        groups.putIfAbsent(group, () => []).add(e);
+      }
+    }
+    if (filled(event['notes']))
+      groups['Observações'] = [MapEntry('notes', event['notes'])];
     final details = <Widget>[
       Container(
           padding: const EdgeInsets.all(22),
@@ -1271,7 +1287,23 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
               Padding(
                   padding: const EdgeInsets.only(top: 10),
                   child: Text(
-                      '${event['event_date']}${event['event_time'] == null ? '' : ' · ${event['event_time']}'}',
+                      [
+                        '${event['event_date']}'.split('T').first,
+                        if (filled(event['event_time']))
+                          [
+                            '${event['event_time']}'.substring(
+                                0,
+                                '${event['event_time']}'.length >= 5
+                                    ? 5
+                                    : '${event['event_time']}'.length),
+                            if (filled(event['event_end_time']))
+                              '${event['event_end_time']}'.substring(
+                                  0,
+                                  '${event['event_end_time']}'.length >= 5
+                                      ? 5
+                                      : '${event['event_end_time']}'.length),
+                          ].join('–'),
+                      ].join(' · '),
                       style: const TextStyle(
                           color: Color(0xFF6D625F), fontSize: 15))),
           ])),

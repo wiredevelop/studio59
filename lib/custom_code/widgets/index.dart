@@ -17,3 +17,6 @@ export '/custom_code/widgets/studio59_event_dossier.dart'
     show Studio59EventDossier;
 export '/custom_code/widgets/studio59_guest_ticket.dart'
     show Studio59GuestTicket;
+export '/custom_code/widgets/studio59_staff_login.dart' show Studio59StaffLogin;
+export '/custom_code/widgets/studio59_staff_settings.dart'
+    show Studio59StaffSettings;

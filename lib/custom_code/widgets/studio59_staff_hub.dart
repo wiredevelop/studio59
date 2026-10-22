@@ -244,6 +244,8 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
       }.contains((_user['role'] ?? '').toString().toLowerCase())) {
         throw StateError('Perfil sem acesso à área da equipa.');
       }
+      // Notificações push (Android/iOS): regista este telemóvel para os convites de serviços.
+      if (!_offline) unawaited(studio59Push('register'));
       final events = <Map<String, dynamic>>[];
       var eventPage = 1;
       var eventLastPage = 0;
@@ -395,6 +397,11 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
   }
 
   Future<void> _logout() async {
+    if (!_offline) {
+      try {
+        await studio59Push('unregister').timeout(const Duration(seconds: 8));
+      } catch (_) {}
+    }
     final client = http.Client();
     try {
       await client.post(Uri.parse('$_base/auth/logout'), headers: {
@@ -5743,6 +5750,19 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                                 onPressed: _load,
                                 tooltip: 'Atualizar',
                                 icon: const Icon(Icons.refresh, color: _ink)),
+                            if (!_offline)
+                              IconButton(
+                                  onPressed: () => Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                          builder: (_) => const Scaffold(
+                                              backgroundColor:
+                                                  Color(0xFFFAF9F7),
+                                              body: SafeArea(
+                                                  child:
+                                                      Studio59StaffSettings())))),
+                                  tooltip: 'Definições',
+                                  icon: const Icon(Icons.settings_outlined,
+                                      color: _ink)),
                             IconButton(
                                 onPressed: _logout,
                                 tooltip: 'Terminar sessão',

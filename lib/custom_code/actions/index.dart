@@ -31,3 +31,4 @@ export '/custom_code/actions/authenticate_studio59_staff_with_nullable_token.dar
 export '/custom_code/actions/load_studio59_agenda_events.dart'
     show loadStudio59AgendaEvents;
 export '/custom_code/actions/studio59_offline.dart' show studio59Offline;
+export '/custom_code/actions/studio59_push.dart' show studio59Push;
