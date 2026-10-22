@@ -903,7 +903,9 @@ class _S59Host {
             {
               'id': item['photo_id'],
               'number': item['photo_number'],
-              'quantity': item['quantity']
+              'quantity': item['quantity'],
+              'preview_url':
+                  'http://$_ip:$_s59Port/offline/previews/${item['photo_id']}?w=$_s59PreviewWidth'
             },
         ],
       };
@@ -971,7 +973,8 @@ class _S59Host {
     if (!const ['paper', 'digital', 'both'].contains(productType))
       problem = 'Formato inválido.';
     if (productType != 'digital' &&
-        !const ['pickup', 'store_pickup', 'shipping'].contains(deliveryType)) {
+        !const ['couple', 'pickup', 'store_pickup', 'shipping']
+            .contains(deliveryType)) {
       problem = 'Escolha levantamento ou envio.';
     }
     if (productType != 'digital' &&

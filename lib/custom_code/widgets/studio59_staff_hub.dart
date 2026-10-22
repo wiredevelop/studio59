@@ -501,6 +501,40 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     return cents == null ? '${amount ?? ''}' : _money(cents);
   }
 
+  void _showOrderPhoto(BuildContext ctx, Map<String, dynamic> photo) {
+    final url = '${photo['preview_url'] ?? ''}';
+    if (url.isEmpty) return;
+    showDialog<void>(
+        context: ctx,
+        builder: (dialogContext) => Dialog(
+              backgroundColor: Colors.black,
+              insetPadding: const EdgeInsets.all(12),
+              child: Stack(children: [
+                InteractiveViewer(
+                    maxScale: 6,
+                    child:
+                        Center(child: Image.network(url, fit: BoxFit.contain))),
+                Positioned(
+                    top: 8,
+                    right: 8,
+                    child: IconButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        iconSize: 30,
+                        icon: const Icon(Icons.close, color: Colors.white))),
+                Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 14,
+                    child: Text('Fotografia ${photo['number'] ?? photo['id']}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600))),
+              ]),
+            ));
+  }
+
   Future<void> _openOrder(Map<String, dynamic> order) async {
     final id = int.tryParse('${order['id']}');
     if (id == null || id <= 0) return;
@@ -562,6 +596,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
             : totalCents - receivedCents;
         final fields = <String, dynamic>{
           'Cliente': data['customer_name'],
+          'Mesa': data['table_label'],
           'Telefone': data['customer_phone'],
           'Email': data['customer_email'],
           'Formato': const {
@@ -571,6 +606,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
               }['${data['product_type']}'] ??
               data['product_type'],
           'Entrega': const {
+                'couple': 'Noivos entregam',
                 'pickup': 'Levantamento',
                 'store_pickup': 'Levantamento em loja',
                 'shipping': 'Envio'
@@ -737,6 +773,82 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                                                       color: _ink))),
                                         ])),
                             ])),
+                        if (data['photos'] is List &&
+                            (data['photos'] as List).isNotEmpty) ...[
+                          const SizedBox(height: 14),
+                          Text(
+                              'Fotografias escolhidas (${(data['photos'] as List).length})',
+                              style: const TextStyle(
+                                  color: _ink,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 4),
+                          const Text(
+                              'Toque numa fotografia para a mostrar em grande ao cliente.',
+                              style: TextStyle(color: _muted, fontSize: 12)),
+                          const SizedBox(height: 8),
+                          GridView.count(
+                            crossAxisCount:
+                                MediaQuery.sizeOf(sheetContext).width >= 700
+                                    ? 5
+                                    : 3,
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            mainAxisSpacing: 8,
+                            crossAxisSpacing: 8,
+                            childAspectRatio: .8,
+                            children: [
+                              for (final photo
+                                  in (data['photos'] as List).whereType<Map>())
+                                InkWell(
+                                  onTap: () => _showOrderPhoto(sheetContext,
+                                      Map<String, dynamic>.from(photo)),
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(
+                                            color: const Color(0xFFECE7E3))),
+                                    clipBehavior: Clip.antiAlias,
+                                    child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          Expanded(
+                                              child: '${photo['preview_url'] ?? ''}'
+                                                      .isEmpty
+                                                  ? const Icon(
+                                                      Icons.image_outlined,
+                                                      color: _muted)
+                                                  : Image.network(
+                                                      '${photo['preview_url']}',
+                                                      fit: BoxFit.cover,
+                                                      errorBuilder: (_, __,
+                                                              ___) =>
+                                                          const Icon(
+                                                              Icons
+                                                                  .broken_image_outlined,
+                                                              color: _muted))),
+                                          Padding(
+                                              padding: const EdgeInsets.all(6),
+                                              child: Text(
+                                                  '${photo['number'] ?? photo['id']}${(int.tryParse('${photo['quantity'] ?? 1}') ?? 1) > 1 ? ' × ${photo['quantity']}' : ''}',
+                                                  textAlign: TextAlign.center,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                      color: _ink,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      fontSize: 12))),
+                                        ]),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
                         if (pending) ...[
                           const SizedBox(height: 16),
                           const Text('Registar pagamento',
@@ -1867,6 +1979,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     final location = TextEditingController();
     final notes = TextEditingController();
     final team = <int>{};
+    var foreign = false;
     var saving = false;
     var acceptConflict = false;
     String? formError;
@@ -1955,8 +2068,12 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
             'notes': notes.text.trim(),
             'staff_ids': team.toList(),
             // Campos ainda exigidos pelo servidor; editáveis depois na ficha do serviço.
-            'base_price': 0, 'price_per_photo': 5,
-            'event_meta': <String, dynamic>{},
+            'base_price': 0,
+            'price_per_photo': 5,
+            'event_meta': <String, dynamic>{
+              'agendamento_rapido': true,
+              'estrangeiro': foreign
+            },
           };
           update(() {
             saving = true;
@@ -2161,7 +2278,15 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                                   controller: notes,
                                   maxLines: 3,
                                   decoration: deco('Notas', icon: Icons.notes)),
-                              const SizedBox(height: 14),
+                              SwitchListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  activeColor: _rose,
+                                  value: foreign,
+                                  onChanged: (v) => update(() => foreign = v),
+                                  title: const Text('Estrangeiro'),
+                                  subtitle: const Text(
+                                      'Marca no calendário o dia anterior, o próprio dia e o dia seguinte.')),
+                              const SizedBox(height: 6),
                               const Text('Equipa',
                                   style: TextStyle(
                                       color: _ink,
@@ -2259,6 +2384,23 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     }
   }
 
+  bool _isForeign(Map<String, dynamic> e) {
+    final meta = e['event_meta'];
+    return meta is Map &&
+        (meta['estrangeiro'] == true ||
+            '${meta['estrangeiro']}' == 'true' ||
+            '${meta['estrangeiro']}' == '1');
+  }
+
+  /// Dias marcados por serviços no estrangeiro: o próprio dia, o anterior e o seguinte.
+  bool _foreignNear(DateTime date) {
+    for (final offset in const [-1, 0, 1]) {
+      final d = date.add(Duration(days: offset));
+      if (_eventsOn(d).any(_isForeign)) return true;
+    }
+    return false;
+  }
+
   Widget _agenda() {
     final firstOffset = DateTime(_month.year, _month.month, 1).weekday - 1;
     final days = DateTime(_month.year, _month.month + 1, 0).day;
@@ -2317,13 +2459,31 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                             style: TextStyle(
                                 color: selected ? Colors.white : _ink,
                                 fontWeight: FontWeight.w600)),
-                        if (_eventsOn(date).isNotEmpty)
-                          Container(
-                              width: 5,
-                              height: 5,
-                              decoration: BoxDecoration(
-                                  color: selected ? Colors.white : _rose,
-                                  shape: BoxShape.circle)),
+                        Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              if (_eventsOn(date).isNotEmpty)
+                                Container(
+                                    width: 5,
+                                    height: 5,
+                                    decoration: BoxDecoration(
+                                        color: selected ? Colors.white : _rose,
+                                        shape: BoxShape.circle)),
+                              if (_eventsOn(date).isNotEmpty &&
+                                  _foreignNear(date))
+                                const SizedBox(width: 3),
+                              if (_foreignNear(date))
+                                Container(
+                                    width: 6,
+                                    height: 6,
+                                    decoration: BoxDecoration(
+                                        color: const Color(0xFFD32F2F),
+                                        shape: BoxShape.circle,
+                                        border: selected
+                                            ? Border.all(
+                                                color: Colors.white, width: 1)
+                                            : null)),
+                            ]),
                       ]),
                 ));
           },

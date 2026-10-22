@@ -17,6 +17,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class Studio59ServiceDetail extends StatefulWidget {
@@ -167,6 +168,7 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
         'event_date': 'Data',
         'event_time': 'Hora',
         'location': 'Local',
+        'estrangeiro': 'Estrangeiro',
         'city': 'Cidade',
         'address': 'Morada',
         'address2': 'Morada adicional',
@@ -599,6 +601,14 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
     ]) {
       _c(key).text = '${event[key] ?? ''}';
     }
+    for (final key in const ['event_time', 'event_end_time']) {
+      final m = RegExp(r'^(\d{1,2}:\d{2})').firstMatch(_c(key).text.trim());
+      if (m != null) _c(key).text = m.group(1)!.padLeft(5, '0');
+    }
+    _c('estrangeiro').text =
+        (meta['estrangeiro'] == true || '${meta['estrangeiro']}' == 'true')
+            ? 'Sim'
+            : 'Não';
     if (isNew) {
       _c('event_date').text = _today();
       if (_c('price_per_photo').text.isEmpty) _c('price_per_photo').text = '5';
@@ -689,6 +699,7 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
   }
 
   Future<void> _publish() async {
+    if (_quick) return _publishQuick();
     final date = DateTime.tryParse(_c('event_date').text.trim());
     final base =
         num.tryParse(_c('base_price').text.trim().replaceAll(',', '.'));
@@ -743,6 +754,7 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
         meta[key] = value;
       }
     }
+    meta['estrangeiro'] = _c('estrangeiro').text == 'Sim';
     payload['event_meta'] = meta;
     setState(() {
       _saving = true;
@@ -1011,9 +1023,144 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
     ]);
   }
 
+  bool get _quick {
+    final event = _event ?? const <String, dynamic>{};
+    if ((widget.eventId ?? 0) <= 0 ||
+        '${event['event_type'] ?? ''}' != 'outros') return false;
+    final meta =
+        event['event_meta'] is Map ? event['event_meta'] as Map : const {};
+    if (meta['agendamento_rapido'] == true) return true;
+    final tpl = _templates.where((t) => '${t['slug']}' == 'outros').firstOrNull;
+    final keys = (tpl?['fields'] is List ? tpl!['fields'] as List : const [])
+        .whereType<Map>()
+        .where((f) => f['source'] != 'event')
+        .map((f) => '${f['key']}');
+    return keys.every((k) => '${meta[k] ?? ''}'.trim().isEmpty);
+  }
+
+  Widget _quickForm() =>
+      Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        if (_formError != null)
+          Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                  color: const Color(0xFFFBEAEA),
+                  borderRadius: BorderRadius.circular(12)),
+              child: Text(_formError!,
+                  style: const TextStyle(color: Color(0xFFB3261E)))),
+        _box('Agendamento', [
+          ('full', _input('name', 'Nome', 'text', required: true)),
+          ('third', _input('event_date', 'Data', 'date', required: true)),
+          ('third', _input('event_time', 'Início', 'time', required: true)),
+          ('third', _input('event_end_time', 'Fim', 'time')),
+          ('full', _input('location', 'Local de encontro', 'text')),
+          ('full', _input('notes', 'Notas', 'textarea')),
+          (
+            'half',
+            _input('estrangeiro', 'Estrangeiro', 'select',
+                options: const ['Não', 'Sim'])
+          ),
+        ]),
+      ]);
+
+  Future<void> _publishQuick() async {
+    final date = DateTime.tryParse(_c('event_date').text.trim());
+    if (_c('name').text.trim().isEmpty) {
+      setState(() => _formError = 'Indique o nome.');
+      return;
+    }
+    if (date == null) {
+      setState(() => _formError = 'Indique a data.');
+      return;
+    }
+    if (_c('event_time').text.trim().isEmpty) {
+      setState(() => _formError = 'Indique a hora de início.');
+      return;
+    }
+    final event = _event ?? <String, dynamic>{};
+    final meta = event['event_meta'] is Map
+        ? Map<String, dynamic>.from(event['event_meta'] as Map)
+        : <String, dynamic>{};
+    meta['agendamento_rapido'] = true;
+    meta['estrangeiro'] = _c('estrangeiro').text == 'Sim';
+    final payload = <String, dynamic>{
+      'event_type': 'outros',
+      'name': _c('name').text.trim(),
+      'event_date': _c('event_date').text.trim(),
+      'event_time': _c('event_time').text.trim(),
+      'event_end_time': _c('event_end_time').text.trim(),
+      'location': _c('location').text.trim(),
+      'notes': _c('notes').text.trim(),
+      'base_price': event['base_price'] ?? 0,
+      'price_per_photo': event['price_per_photo'] ?? 5,
+      'event_meta': meta,
+    };
+    setState(() {
+      _saving = true;
+      _formError = null;
+    });
+    try {
+      final response = await http
+          .put(
+              Uri.parse(
+                  'https://studio59.wiredevelop.pt/api/events/${widget.eventId}'),
+              headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $_token'
+              },
+              body: jsonEncode(payload))
+          .timeout(const Duration(seconds: 25));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        String message = '';
+        try {
+          final body = jsonDecode(response.body);
+          if (body is Map) message = '${body['message'] ?? ''}';
+        } catch (_) {}
+        throw StateError(message.isEmpty
+            ? 'Não foi possível guardar (${response.statusCode}).'
+            : message);
+      }
+      await _clearDraft();
+      _dirty = false;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Agendamento atualizado.')));
+      setState(() {
+        _editing = false;
+        _saving = false;
+      });
+      _load();
+    } catch (error) {
+      if (mounted)
+        setState(() {
+          _saving = false;
+          _formError = error is StateError
+              ? error.message.toString()
+              : 'Não foi possível contactar o servidor.';
+        });
+    }
+  }
+
   Widget _fichaForm() {
+    if (_quick) return _quickForm();
     final sections = <String, List<Map<String, dynamic>>>{};
     for (final f in _templateFields) {
+      if (const {
+        'name',
+        'event_date',
+        'event_time',
+        'event_end_time',
+        'location',
+        'city',
+        'address',
+        'notes',
+        'base_price',
+        'price_per_photo',
+        'report_number',
+        'estrangeiro'
+      }.contains('${f['key']}')) continue;
       sections
           .putIfAbsent(
               '${f['section'] ?? ''}'.trim().isEmpty
@@ -1068,7 +1215,12 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
         ('third', _input('event_date', 'Data', 'date', required: true)),
         ('third', _input('event_time', 'Hora de início', 'time')),
         ('third', _input('event_end_time', 'Hora de fim', 'time')),
-        ('full', _input('location', 'Local', 'text')),
+        ('half', _input('location', 'Local', 'text')),
+        (
+          'half',
+          _input('estrangeiro', 'Estrangeiro', 'select',
+              options: const ['Não', 'Sim'])
+        ),
         (
           'half',
           _input('base_price', 'Preço base (€)', 'number', required: true)
@@ -1229,12 +1381,29 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
             .map((f) => Map<String, dynamic>.from(f))
             .toList();
     final groups = <String, List<MapEntry<String, dynamic>>>{};
-    if (filled(event['location']))
-      groups['Serviço'] = [MapEntry('location', event['location'])];
+    groups['Serviço'] = [
+      if (filled(event['location'])) MapEntry('location', event['location']),
+      if (meta['estrangeiro'] == true) const MapEntry('estrangeiro', 'Sim'),
+    ];
+    if (groups['Serviço']!.isEmpty) groups.remove('Serviço');
     if (templateFields.isNotEmpty) {
       for (final f in templateFields) {
         final key = '${f['key']}';
-        if (hidden.hasMatch(key)) continue;
+        if (hidden.hasMatch(key) ||
+            const {
+              'name',
+              'event_date',
+              'event_time',
+              'event_end_time',
+              'location',
+              'city',
+              'address',
+              'notes',
+              'base_price',
+              'price_per_photo',
+              'report_number',
+              'estrangeiro'
+            }.contains(key)) continue;
         var value = valueOf(key);
         if ('${f['type']}' == 'checkbox') {
           final on = value == true ||
@@ -1307,6 +1476,54 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
                       style: const TextStyle(
                           color: Color(0xFF6D625F), fontSize: 15))),
           ])),
+      if ('${event['access_pin'] ?? ''}'.trim().isNotEmpty ||
+          '${event['qr_token'] ?? ''}'.trim().isNotEmpty)
+        Container(
+          margin: const EdgeInsets.only(top: 14),
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: const Color(0xFFECE7E3))),
+          child: Wrap(
+              spacing: 24,
+              runSpacing: 16,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Acesso dos convidados',
+                          style: TextStyle(
+                              color: Color(0xFF292624),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 4),
+                      const Text('PIN do catálogo',
+                          style: TextStyle(color: Color(0xFF6D625F))),
+                      SelectableText('${event['access_pin'] ?? '—'}',
+                          style: const TextStyle(
+                              color: Color(0xFF292624),
+                              fontSize: 40,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 8)),
+                      const Text(
+                          'Os convidados entram com este PIN ou lendo o QR.',
+                          style: TextStyle(
+                              color: Color(0xFF6D625F), fontSize: 12)),
+                    ]),
+                if ('${event['qr_token'] ?? ''}'.trim().isNotEmpty)
+                  Container(
+                      color: Colors.white,
+                      padding: const EdgeInsets.all(6),
+                      child: QrImageView(
+                          data:
+                              'https://studio59.wiredevelop.pt/api/public/events/qr/${event['qr_token']}',
+                          size: 170,
+                          backgroundColor: Colors.white)),
+              ]),
+        ),
       if (widget.eventId == 0 && _canEdit)
         FilledButton(
             onPressed: _startEdit,

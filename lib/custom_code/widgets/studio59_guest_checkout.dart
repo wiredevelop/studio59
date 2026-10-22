@@ -39,8 +39,8 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
   final _table = TextEditingController();
   // Mesa: só letras (com acentos) e espaços, ou só números inteiros (1, 2, 3…).
   static final _tableRule = RegExp(r'^(?:[\p{L}\p{M} ]+|\d+)$', unicode: true);
-  String _productType = 'paper';
-  String _deliveryType = 'pickup';
+  String _productType = ''; // obrigatório: o convidado escolhe
+  String _deliveryType = 'couple'; // «Noivos entregam» por defeito
   bool _wantsFilm = false;
   bool _submitting = false;
   bool _uncertain = false;
@@ -60,7 +60,8 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
   int get _photoCount =>
       FFAppState().guestCart.fold(0, (sum, item) => sum + item.quantity);
   int get _photosCents => _unitCents * _photoCount;
-  bool get _needsDelivery => _productType != 'digital';
+  bool get _needsDelivery =>
+      _productType.isNotEmpty && _productType != 'digital';
   int get _deliveryCents =>
       _needsDelivery && _deliveryType == 'shipping' ? _shippingCents : 0;
   int get _totalCents =>
@@ -76,6 +77,8 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
       problem = 'Indique qual é a sua mesa.';
     else if (!_tableRule.hasMatch(table))
       problem = 'Na mesa use só letras (ex.: Noivos) ou só números (ex.: 12).';
+    else if (_productType.isEmpty)
+      problem = 'Escolha o formato das fotografias (papel, digital ou ambos).';
     else if (_name.text.trim().isEmpty)
       problem = 'Introduza o nome.';
     else if (_phone.text.trim().isEmpty)
@@ -97,6 +100,7 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
       // Lida pela ação que envia o pedido e pela página do ticket.
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('studio59_table_label', table);
+      await prefs.setString('studio59_last_name', _name.text.trim());
     } catch (_) {}
     final items = FFAppState()
         .guestCart
@@ -291,7 +295,7 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
             _section(
                 'Os seus dados',
                 Column(children: [
-                  _field(_table, 'Qual é a sua mesa?',
+                  _field(_table, 'Qual é a sua mesa? *',
                       Icons.table_restaurant_outlined,
                       hint: 'Ex.: 12 ou Noivos',
                       maxLines: 1,
@@ -300,15 +304,20 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
                             RegExp(r'[\p{L}\p{M} 0-9]', unicode: true)),
                         LengthLimitingTextInputFormatter(40)
                       ]),
-                  _field(_name, 'Nome', Icons.person_outline),
-                  _field(_phone, 'Telefone', Icons.phone_outlined,
+                  _field(_name, 'Nome *', Icons.person_outline),
+                  _field(_phone, 'Telefone *', Icons.phone_outlined,
                       keyboard: TextInputType.phone),
-                  _field(_email, 'Email', Icons.mail_outline,
+                  _field(_email, 'Email *', Icons.mail_outline,
                       keyboard: TextInputType.emailAddress),
+                  const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                          '* Campos obrigatórios. Diga o seu nome ao fotógrafo para ele encontrar o pedido.',
+                          style: TextStyle(color: _muted, fontSize: 12))),
                 ]),
-                subtitle: 'O email é obrigatório para registar o pedido.'),
+                subtitle: 'Todos os campos com * são obrigatórios.'),
             _section(
-                'Formato',
+                'Formato *',
                 _options([
                   _option(
                       active: _productType == 'paper',
@@ -325,7 +334,10 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
                       icon: Icons.collections_outlined,
                       title: 'Ambos',
                       onTap: () => setState(() => _productType = 'both')),
-                ])),
+                ]),
+                subtitle: _productType.isEmpty
+                    ? 'Escolha uma opção (obrigatório).'
+                    : null),
             if (_needsDelivery)
               _section(
                   'Entrega',
@@ -333,6 +345,13 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         _options([
+                          _option(
+                              active: _deliveryType == 'couple',
+                              icon: Icons.favorite_border,
+                              title: 'Noivos entregam',
+                              detail: 'Grátis',
+                              onTap: () =>
+                                  setState(() => _deliveryType = 'couple')),
                           _option(
                               active: _deliveryType == 'pickup',
                               icon: Icons.storefront_outlined,
@@ -379,7 +398,11 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
                   _summaryRow('Filme do evento', _money(_filmCents)),
                 if (_needsDelivery)
                   _summaryRow(
-                      _deliveryType == 'shipping' ? 'Envio' : 'Levantamento',
+                      _deliveryType == 'shipping'
+                          ? 'Envio'
+                          : _deliveryType == 'couple'
+                              ? 'Noivos entregam'
+                              : 'Levantamento',
                       _deliveryCents == 0 ? 'Grátis' : _money(_deliveryCents)),
                 const Divider(height: 18, color: Color(0xFFE3D2CF)),
                 _summaryRow('Total', _money(_totalCents), strong: true),

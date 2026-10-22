@@ -33,6 +33,7 @@ class _Studio59GuestTicketState extends State<Studio59GuestTicket> {
   static const _muted = Color(0xFF6D625F);
 
   String _table = '';
+  String _name = '';
   String? _shipping;
 
   String get _base => FFAppState().offlineApiBase.isNotEmpty
@@ -49,7 +50,12 @@ class _Studio59GuestTicketState extends State<Studio59GuestTicket> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final table = prefs.getString('studio59_table_label') ?? '';
-      if (mounted) setState(() => _table = table);
+      final name = prefs.getString('studio59_last_name') ?? '';
+      if (mounted)
+        setState(() {
+          _table = table;
+          _name = name;
+        });
     } catch (_) {}
     final code = FFAppState().lastGuestOrder.orderCode;
     if (code.isEmpty) return;
@@ -82,6 +88,7 @@ class _Studio59GuestTicketState extends State<Studio59GuestTicket> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('studio59_table_label');
+      await prefs.remove('studio59_last_name');
     } catch (_) {}
     FFAppState().update(() {
       FFAppState().guestCart = [];
@@ -165,16 +172,21 @@ class _Studio59GuestTicketState extends State<Studio59GuestTicket> {
                           color: _roseSoft,
                           borderRadius: BorderRadius.circular(22)),
                       child: Column(children: [
-                        const Text('O seu código',
+                        const Text('Pedido em nome de',
                             style: TextStyle(color: _muted, fontSize: 17)),
                         const SizedBox(height: 4),
-                        SelectableText(code.isEmpty ? '—' : code,
+                        Text(_name.isEmpty ? '—' : _name,
                             textAlign: TextAlign.center,
                             style: const TextStyle(
                                 color: _ink,
-                                fontSize: 40,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 2)),
+                                fontSize: 34,
+                                fontWeight: FontWeight.w800)),
+                        if (code.isNotEmpty)
+                          Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text('Pedido $code',
+                                  style: const TextStyle(
+                                      color: _muted, fontSize: 14))),
                         if (_table.isNotEmpty || total.isNotEmpty)
                           const SizedBox(height: 10),
                         Wrap(
@@ -202,26 +214,7 @@ class _Studio59GuestTicketState extends State<Studio59GuestTicket> {
                                   style: const TextStyle(
                                       color: _muted, fontSize: 15))),
                       ])),
-                  const SizedBox(height: 22),
-                  const Text('E agora?',
-                      style: TextStyle(
-                          color: _ink,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 12),
-                  _step(1, Icons.badge_outlined, 'Guarde o seu código',
-                      'Tire uma fotografia ao ecrã ou memorize o código ${code.isEmpty ? '' : '«$code» '}— é com ele que encontramos o seu pedido.'),
-                  _step(
-                      2,
-                      Icons.photo_camera_outlined,
-                      'Dirija-se ao fotógrafo',
-                      'Vá ter com o fotógrafo do evento para pagar e confirmar o pedido. Se preferir, aguarde na sua mesa: o fotógrafo passa por lá.'),
-                  _step(
-                      3,
-                      Icons.tablet_mac_outlined,
-                      'Passe o iPad à próxima pessoa',
-                      'Entregue o iPad à próxima pessoa ou casal $tableText. Por favor, não o leve para outras mesas.'),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 18),
                   FilledButton.icon(
                       onPressed: _nextPerson,
                       style: FilledButton.styleFrom(
@@ -233,6 +226,23 @@ class _Studio59GuestTicketState extends State<Studio59GuestTicket> {
                               borderRadius: BorderRadius.circular(16))),
                       icon: const Icon(Icons.people_alt_outlined),
                       label: const Text('Próxima pessoa: abrir o catálogo')),
+                  const SizedBox(height: 22),
+                  const Text('E agora?',
+                      style: TextStyle(
+                          color: _ink,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 12),
+                  _step(
+                      1,
+                      Icons.photo_camera_outlined,
+                      'Dirija-se ao fotógrafo',
+                      'Diga o seu nome ao fotógrafo: ele encontra o seu pedido, mostra-lhe as fotografias escolhidas e regista o pagamento. Se preferir, aguarde na sua mesa: o fotógrafo passa por lá.'),
+                  _step(
+                      2,
+                      Icons.tablet_mac_outlined,
+                      'Passe o iPad à próxima pessoa',
+                      'Entregue o iPad à próxima pessoa ou casal $tableText. Por favor, não o leve para outras mesas.'),
                   const SizedBox(height: 24),
                 ]))));
   }

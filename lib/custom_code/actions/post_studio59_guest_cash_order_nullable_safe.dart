@@ -73,8 +73,9 @@ Future<Studio59GuestCashSubmitResultStruct>
     validation = 'Selecione pelo menos uma fotografia.';
   }
   if (productType != 'digital' &&
-      !['pickup', 'store_pickup', 'shipping'].contains(deliveryType)) {
-    validation = 'Escolha levantamento ou envio.';
+      !['couple', 'pickup', 'store_pickup', 'shipping']
+          .contains(deliveryType)) {
+    validation = 'Escolha como quer receber as fotografias.';
   }
   if (productType != 'digital' &&
       deliveryType == 'shipping' &&
