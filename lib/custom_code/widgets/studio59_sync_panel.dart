@@ -12,6 +12,7 @@ import 'package:flutter/material.dart' hide RepeatMode;
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -457,38 +458,63 @@ class _Studio59SyncPanelState extends State<Studio59SyncPanel> {
               ],
             ));
     if (confirmed != true) return;
-    final resumeFrom = _previous != null &&
-            _previous!['payload_hash'] == _payloadHash &&
-            _previous!['event_id'] == _eventId &&
-            _previous!['imported_at'] == null
+    final resuming = _previous != null &&
+        _previous!['payload_hash'] == _payloadHash &&
+        _previous!['event_id'] == _eventId &&
+        _previous!['imported_at'] == null;
+    // Retoma pelo número de fotografias já enviadas (ficheiros de progresso antigos: 20 por lote).
+    final photosDoneBefore = !resuming
+        ? 0
+        : min(
+            uploads.length,
+            int.tryParse('${_previous!['photos_done'] ?? ''}') ??
+                (int.tryParse('${_previous!['photo_batches_done']}') ?? 0) *
+                    20);
+    final batchesDoneBefore = resuming
         ? (int.tryParse('${_previous!['photo_batches_done']}') ?? 0)
         : 0;
+    // Lotes por tamanho: o servidor aceita até 200 MB por pedido; fotos de alta resolução
+    // (~10 MB) em lotes fixos de 20 passavam esse limite (erro 413).
+    const maxBatchBytes = 150 * 1024 * 1024;
     final batches = <List<(File, Map<String, dynamic>)>>[];
-    for (var i = 0; i < uploads.length; i += 20) {
-      batches.add(uploads.skip(i).take(20).toList());
+    var current = <(File, Map<String, dynamic>)>[];
+    var currentBytes = 0;
+    for (final upload in uploads.skip(photosDoneBefore)) {
+      final size = await upload.$1.length();
+      if (current.isNotEmpty &&
+          (current.length >= 20 || currentBytes + size > maxBatchBytes)) {
+        batches.add(current);
+        current = [];
+        currentBytes = 0;
+      }
+      current.add(upload);
+      currentBytes += size;
     }
+    if (current.isNotEmpty) batches.add(current);
     setState(() {
       _busy = true;
       _error = null;
       _result = null;
       _totalBatches = batches.length;
-      _doneBatches = resumeFrom;
+      _doneBatches = 0;
       _step = 'A enviar fotografias…';
     });
+    var photosDone = photosDoneBefore;
     final progress = <String, dynamic>{
       'event_id': _eventId,
       'event_name': event['name'],
       'payload_hash': _payloadHash,
       'json_file': _jsonFile!.path,
-      'photo_batches_total': batches.length,
-      'photo_batches_done': resumeFrom,
+      'photos_total': uploads.length,
+      'photos_done': photosDone,
+      'photo_batches_done': batchesDoneBefore,
       'started_at': DateTime.now().toIso8601String(),
       'imported_at': null,
     };
     await _saveProgress(progress);
     final client = http.Client();
     try {
-      for (var index = resumeFrom; index < batches.length; index++) {
+      for (var index = 0; index < batches.length; index++) {
         final batch = batches[index];
         final request = http.MultipartRequest(
             'POST', Uri.parse('$_base/offline/events/$_eventId/import-photos'));
@@ -508,7 +534,9 @@ class _Studio59SyncPanelState extends State<Studio59SyncPanel> {
             await client.send(request).timeout(const Duration(minutes: 10)));
         if (response.statusCode < 200 || response.statusCode >= 300)
           throw StateError(_apiError(response));
-        progress['photo_batches_done'] = index + 1;
+        photosDone += batch.length;
+        progress['photos_done'] = photosDone;
+        progress['photo_batches_done'] = batchesDoneBefore + index + 1;
         await _saveProgress(progress);
         if (mounted) setState(() => _doneBatches = index + 1);
       }
@@ -540,7 +568,7 @@ class _Studio59SyncPanelState extends State<Studio59SyncPanel> {
         setState(() {
           _step = '';
           _error =
-              '${e is StateError ? e.message : 'A ligação falhou durante o envio.'}\nO progresso ficou guardado: ao tocar novamente em Sincronizar, continua a partir do lote ${_doneBatches + 1}.';
+              '${e is StateError ? e.message : 'A ligação falhou durante o envio.'}\nO progresso ficou guardado: ao tocar novamente em Sincronizar, continua a partir das fotografias que faltam.';
         });
     } finally {
       client.close();

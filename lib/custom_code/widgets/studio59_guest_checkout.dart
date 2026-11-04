@@ -11,6 +11,7 @@ import 'package:flutter/material.dart' hide RepeatMode;
 // DO NOT REMOVE OR MODIFY THE CODE ABOVE!
 
 import '/app_state.dart';
+import '/custom_code/widgets/studio59_language.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -25,13 +26,13 @@ class Studio59GuestCheckout extends StatefulWidget {
 }
 
 class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
-  static const _rose = Color(0xFFB77F84);
-  static const _roseSoft = Color(0xFFF2E5E3);
-  static const _ink = Color(0xFF292624);
-  static const _muted = Color(0xFF6D625F);
-  static const _line = Color(0xFFECE7E3);
-  static const _filmCents = 3000;
-  static const _shippingCents = 500;
+  static final _rose = Color(0xFFB77F84);
+  static final _roseSoft = Color(0xFFF2E5E3);
+  static final _ink = Color(0xFF292624);
+  static final _muted = Color(0xFF6D625F);
+  static final _line = Color(0xFFECE7E3);
+  static final _filmCents = 3000;
+  static final _shippingCents = 500;
   final _name = TextEditingController();
   final _phone = TextEditingController();
   final _email = TextEditingController();
@@ -39,15 +40,27 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
   final _table = TextEditingController();
   // Mesa: só letras (com acentos) e espaços, ou só números inteiros (1, 2, 3…).
   static final _tableRule = RegExp(r'^(?:[\p{L}\p{M} ]+|\d+)$', unicode: true);
-  String _productType = ''; // obrigatório: o convidado escolhe
+  // Todas as encomendas são em papel e digital; o formato deixou de ser uma escolha.
+  static final _productType = 'both';
   String _deliveryType = 'couple'; // «Noivos entregam» por defeito
   bool _wantsFilm = false;
   bool _submitting = false;
   bool _uncertain = false;
   String? _error;
 
+  void _onLanguage() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    s59Language.addListener(_onLanguage);
+  }
+
   @override
   void dispose() {
+    s59Language.removeListener(_onLanguage);
     _name.dispose();
     _phone.dispose();
     _email.dispose();
@@ -60,11 +73,11 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
   int get _photoCount =>
       FFAppState().guestCart.fold(0, (sum, item) => sum + item.quantity);
   int get _photosCents => _unitCents * _photoCount;
-  bool get _needsDelivery =>
-      _productType.isNotEmpty && _productType != 'digital';
-  bool get _needsEmail => _productType == 'digital' || _productType == 'both';
-  int get _deliveryCents =>
-      _needsDelivery && _deliveryType == 'shipping' ? _shippingCents : 0;
+  bool get _offline => FFAppState().offlineApiBase.isNotEmpty;
+  bool get _needsEmail => _deliveryType == 'shipping';
+  // Online as fotografias digitais são entregues por QR; o email só serve para o envio por correio.
+  bool get _showsEmail => _offline || _needsEmail;
+  int get _deliveryCents => _deliveryType == 'shipping' ? _shippingCents : 0;
   int get _totalCents =>
       _photosCents + (_wantsFilm ? _filmCents : 0) + _deliveryCents;
   String _money(int cents) =>
@@ -78,22 +91,23 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
       problem = 'Indique qual é a sua mesa.';
     else if (!_tableRule.hasMatch(table))
       problem = 'Na mesa use só letras (ex.: Noivos) ou só números (ex.: 12).';
-    else if (_productType.isEmpty)
-      problem = 'Escolha o formato das fotografias (papel, digital ou ambos).';
     else if (_name.text.trim().isEmpty)
       problem = 'Introduza o nome.';
     else if (_needsEmail && _email.text.trim().isEmpty)
-      problem =
-          'Para fotografias digitais indique o email (é para lá que enviamos o link).';
-    else if (_email.text.trim().isNotEmpty && !_email.text.trim().contains('@'))
+      problem = 'Para o envio por correio indique o email.';
+    else if (_showsEmail &&
+        _email.text.trim().isNotEmpty &&
+        !_email.text.trim().contains('@'))
       problem = 'Introduza um email válido.';
-    else if (_needsDelivery &&
-        _deliveryType == 'shipping' &&
-        _address.text.trim().isEmpty) problem = 'Indique a morada de envio.';
+    else if (_deliveryType == 'shipping' && _address.text.trim().isEmpty)
+      problem = 'Indique a morada de envio.';
     if (problem != null) {
       setState(() => _error = problem);
       return;
     }
+    // Sessão offline: o link das fotografias digitais só pode seguir por email, por isso pedimo-lo ao terminar.
+    if (_offline && _email.text.trim().isEmpty && !await _askEmail()) return;
+    if (!mounted) return;
     setState(() {
       _submitting = true;
       _error = null;
@@ -113,12 +127,12 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
       FFAppState().guestSessionToken,
       _name.text,
       _phone.text,
-      _email.text,
+      _showsEmail ? _email.text : '',
       _productType,
       items,
       _wantsFilm,
-      _needsDelivery ? _deliveryType : '',
-      _needsDelivery && _deliveryType == 'shipping' ? _address.text : '',
+      _deliveryType,
+      _deliveryType == 'shipping' ? _address.text : '',
     );
     if (!mounted) return;
     if (result.success) {
@@ -134,23 +148,23 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
   }
 
   Widget _section(String title, Widget child, {String? subtitle}) => Container(
-        margin: const EdgeInsets.only(bottom: 14),
-        padding: const EdgeInsets.all(16),
+        margin: EdgeInsets.only(bottom: 14),
+        padding: EdgeInsets.all(16),
         decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(18),
             border: Border.all(color: _line)),
         child:
             Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text(title,
-              style: const TextStyle(
+          Text(s59tr(title),
+              style: TextStyle(
                   color: _ink, fontSize: 17, fontWeight: FontWeight.w700)),
           if (subtitle != null)
             Padding(
-                padding: const EdgeInsets.only(top: 3),
-                child: Text(subtitle,
-                    style: const TextStyle(color: _muted, fontSize: 13))),
-          const SizedBox(height: 14),
+                padding: EdgeInsets.only(top: 3),
+                child: Text(s59tr(subtitle),
+                    style: TextStyle(color: _muted, fontSize: 13))),
+          SizedBox(height: 14),
           child,
         ]),
       );
@@ -161,7 +175,7 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
           String? hint,
           List<TextInputFormatter>? formatters}) =>
       Padding(
-        padding: const EdgeInsets.only(bottom: 10),
+        padding: EdgeInsets.only(bottom: 10),
         child: TextField(
           controller: controller,
           keyboardType: keyboard,
@@ -174,77 +188,172 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
             if (_error != null) setState(() => _error = null);
           },
           decoration: InputDecoration(
-            labelText: label,
-            hintText: hint,
+            labelText: s59tr(label),
+            hintText: hint == null ? null : s59tr(hint),
             prefixIcon: Icon(icon, color: _muted, size: 20),
             filled: true,
-            fillColor: const Color(0xFFFAF9F7),
-            labelStyle: const TextStyle(color: _muted),
+            fillColor: Color(0xFFFAF9F7),
+            labelStyle: TextStyle(color: _muted),
             border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: _line)),
+                borderSide: BorderSide(color: _line)),
             enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: _line)),
+                borderSide: BorderSide(color: _line)),
             focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: _rose, width: 1.6)),
+                borderSide: BorderSide(color: _rose, width: 1.6)),
           ),
         ),
       );
+
+  /// Devolve false se o convidado quiser voltar ao formulário.
+  Future<bool> _askEmail() async {
+    final input = TextEditingController();
+    String? problem;
+    final result = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+            builder: (dialogContext, update) => AlertDialog(
+                  backgroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20)),
+                  title: Text(s59tr('Receber as fotografias digitais')),
+                  content: SizedBox(
+                      width: 440,
+                      child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                                s59tr(
+                                    'Para receber as fotografias digitais, insira o seu email. Enviamos-lhe o link depois do pagamento.'),
+                                style: const TextStyle(
+                                    fontSize: 17, height: 1.35)),
+                            const SizedBox(height: 12),
+                            TextField(
+                                controller: input,
+                                autofocus: true,
+                                keyboardType: TextInputType.emailAddress,
+                                decoration: InputDecoration(
+                                    labelText: s59tr('Email'),
+                                    errorText: problem == null
+                                        ? null
+                                        : s59tr(problem!),
+                                    border: const OutlineInputBorder())),
+                          ])),
+                  actionsOverflowButtonSpacing: 4,
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        child: Text(s59tr('Voltar'),
+                            style: TextStyle(color: _muted))),
+                    TextButton(
+                        onPressed: () => Navigator.pop(dialogContext, ''),
+                        child: Text(s59tr('Continuar sem email'),
+                            style: TextStyle(color: _muted))),
+                    FilledButton(
+                        style: FilledButton.styleFrom(backgroundColor: _rose),
+                        onPressed: () {
+                          final value = input.text.trim();
+                          if (!value.contains('@')) {
+                            update(
+                                () => problem = 'Introduza um email válido.');
+                            return;
+                          }
+                          Navigator.pop(dialogContext, value);
+                        },
+                        child: Text(s59tr('Confirmar email'))),
+                  ],
+                )));
+    if (result == null) return false;
+    if (result.isNotEmpty) _email.text = result;
+    return true;
+  }
+
+  Future<void> _optionInfo(String title, String text) => showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+            backgroundColor: Colors.white,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Text(s59tr(title)),
+            content:
+                Text(s59tr(text), style: TextStyle(fontSize: 17, height: 1.35)),
+            actions: [
+              FilledButton(
+                  style: FilledButton.styleFrom(backgroundColor: _rose),
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: Text(s59tr('Percebi')))
+            ],
+          ));
 
   Widget _option(
           {required bool active,
           required IconData icon,
           required String title,
           String? detail,
-          required VoidCallback onTap}) =>
-      Material(
-        color: active ? _roseSoft : Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          onTap: _submitting ? null : onTap,
+          required VoidCallback onTap,
+          String? info}) =>
+      Stack(children: [
+        Material(
+          color: active ? _roseSoft : Colors.white,
           borderRadius: BorderRadius.circular(14),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-            decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                    color: active ? _rose : _line, width: active ? 2 : 1)),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Icon(icon, color: active ? _rose : _muted, size: 26),
-              const SizedBox(height: 8),
-              Text(title,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      color: _ink,
-                      fontWeight: active ? FontWeight.w700 : FontWeight.w500)),
-              if (detail != null)
-                Padding(
-                    padding: const EdgeInsets.only(top: 3),
-                    child: Text(detail,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            color: active ? _rose : _muted,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600))),
-            ]),
+          child: InkWell(
+            onTap: _submitting ? null : onTap,
+            borderRadius: BorderRadius.circular(14),
+            child: AnimatedContainer(
+              duration: Duration(milliseconds: 160),
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                      color: active ? _rose : _line, width: active ? 2 : 1)),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Icon(icon, color: active ? _rose : _muted, size: 26),
+                SizedBox(height: 8),
+                Text(s59tr(title),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: _ink,
+                        fontWeight:
+                            active ? FontWeight.w700 : FontWeight.w500)),
+                if (detail != null)
+                  Padding(
+                      padding: EdgeInsets.only(top: 3),
+                      child: Text(s59tr(detail),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: active ? _rose : _muted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600))),
+              ]),
+            ),
           ),
         ),
-      );
+        if (info != null)
+          Positioned(
+              top: 0,
+              right: 0,
+              child: IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: s59tr('Ajuda'),
+                  onPressed: () => _optionInfo(title, info),
+                  icon: Icon(Icons.info_outline, size: 20, color: _rose))),
+      ]);
 
   Widget _options(List<Widget> children) =>
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         for (var i = 0; i < children.length; i++) ...[
-          if (i > 0) const SizedBox(width: 10),
+          if (i > 0) SizedBox(width: 10),
           Expanded(child: children[i])
         ],
       ]);
 
   Widget _summaryRow(String label, String value, {bool strong = false}) =>
       Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
+        padding: EdgeInsets.symmetric(vertical: 4),
         child: Row(children: [
           Expanded(
               child: Text(label,
@@ -266,34 +375,40 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
     if (cart.isEmpty)
       return Center(
           child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: EdgeInsets.all(24),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(CupertinoIcons.cart,
-                    size: 52, color: Color(0xFFB9AEAA)),
-                const SizedBox(height: 16),
-                const Text('O carrinho está vazio.',
+                Icon(CupertinoIcons.cart, size: 52, color: Color(0xFFB9AEAA)),
+                SizedBox(height: 16),
+                Text(s59tr('O carrinho está vazio.'),
                     style:
                         TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 18),
+                SizedBox(height: 18),
                 FilledButton(
                     onPressed: () => context.goNamed('GuestGalleryOnline'),
                     style: FilledButton.styleFrom(backgroundColor: _rose),
-                    child: const Text('Ver galeria')),
+                    child: Text(s59tr('Ver galeria'))),
               ])));
     return SizedBox(
         width: widget.width,
         height: widget.height,
         child: Center(
             child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 760),
-          child: ListView(padding: const EdgeInsets.all(16), children: [
+          constraints: BoxConstraints(maxWidth: 760),
+          child: ListView(padding: EdgeInsets.all(16), children: [
+            Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                    padding: EdgeInsets.only(bottom: 10),
+                    child: Studio59Language())),
             Text(FFAppState().guestEvent.name,
-                style: const TextStyle(
+                style: TextStyle(
                     color: _ink, fontSize: 19, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 5),
-            Text('${cart.length} fotografias · $_photoCount unidades',
-                style: const TextStyle(color: _muted)),
-            const SizedBox(height: 16),
+            SizedBox(height: 5),
+            Text(
+                s59tr('{a} fotografias · {b} unidades',
+                    {'a': cart.length, 'b': _photoCount}),
+                style: TextStyle(color: _muted)),
+            SizedBox(height: 16),
             _section(
                 'Os seus dados',
                 Column(children: [
@@ -309,76 +424,61 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
                   _field(_name, 'Nome *', Icons.person_outline),
                   _field(_phone, 'Telefone (opcional)', Icons.phone_outlined,
                       keyboard: TextInputType.phone),
-                  _field(_email, _needsEmail ? 'Email *' : 'Email (opcional)',
-                      Icons.mail_outline,
-                      keyboard: TextInputType.emailAddress),
-                  Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                          _needsEmail
-                              ? '* Campos obrigatórios. O email é obrigatório porque escolheu fotografias digitais: enviamos para lá o link.'
-                              : '* Campos obrigatórios. O email só é obrigatório se escolher fotografias digitais.',
-                          style: const TextStyle(color: _muted, fontSize: 12))),
+                  if (_showsEmail)
+                    _field(_email, _needsEmail ? 'Email *' : 'Email (opcional)',
+                        Icons.mail_outline,
+                        keyboard: TextInputType.emailAddress),
+                  if (_showsEmail)
+                    Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                            s59tr(_needsEmail
+                                ? 'O email é obrigatório porque escolheu o envio para a morada.'
+                                : 'Se indicar o email, enviamos para lá o link das fotografias digitais.'),
+                            style: TextStyle(color: _muted, fontSize: 12))),
                 ]),
                 subtitle: 'Todos os campos com * são obrigatórios.'),
             _section(
-                'Formato *',
-                _options([
-                  _option(
-                      active: _productType == 'paper',
-                      icon: Icons.photo_outlined,
-                      title: 'Papel',
-                      onTap: () => setState(() => _productType = 'paper')),
-                  _option(
-                      active: _productType == 'digital',
-                      icon: Icons.cloud_download_outlined,
-                      title: 'Digital',
-                      onTap: () => setState(() => _productType = 'digital')),
-                  _option(
-                      active: _productType == 'both',
-                      icon: Icons.collections_outlined,
-                      title: 'Ambos',
-                      onTap: () => setState(() => _productType = 'both')),
-                ]),
-                subtitle: _productType.isEmpty
-                    ? 'Escolha uma opção (obrigatório).'
-                    : null),
-            if (_needsDelivery)
-              _section(
-                  'Entrega',
-                  Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _options([
-                          _option(
-                              active: _deliveryType == 'couple',
-                              icon: Icons.favorite_border,
-                              title: 'Noivos entregam',
-                              detail: 'Grátis',
-                              onTap: () =>
-                                  setState(() => _deliveryType = 'couple')),
-                          _option(
-                              active: _deliveryType == 'pickup',
-                              icon: Icons.storefront_outlined,
-                              title: 'Levantamento',
-                              detail: 'Grátis',
-                              onTap: () =>
-                                  setState(() => _deliveryType = 'pickup')),
-                          _option(
-                              active: _deliveryType == 'shipping',
-                              icon: Icons.local_shipping_outlined,
-                              title: 'Envio',
-                              detail: '+ ${_money(_shippingCents)}',
-                              onTap: () =>
-                                  setState(() => _deliveryType = 'shipping')),
-                        ]),
-                        if (_deliveryType == 'shipping') ...[
-                          const SizedBox(height: 12),
-                          _field(
-                              _address, 'Morada de envio', Icons.home_outlined,
-                              maxLines: 2)
-                        ],
-                      ])),
+                'Entrega',
+                Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _options([
+                        _option(
+                            active: _deliveryType == 'couple',
+                            icon: Icons.favorite_border,
+                            title: 'Noivos entregam',
+                            detail: 'Grátis',
+                            onTap: () =>
+                                setState(() => _deliveryType = 'couple'),
+                            info:
+                                'Os noivos recebem as suas fotografias impressas e entregam-lhas depois. Não tem custos.'),
+                        _option(
+                            active: _deliveryType == 'pickup',
+                            icon: Icons.storefront_outlined,
+                            title: 'Levantamento',
+                            detail: 'Grátis',
+                            onTap: () =>
+                                setState(() => _deliveryType = 'pickup'),
+                            info:
+                                'Levanta as fotografias impressas na loja Studio 59, quando estiverem prontas. Não tem custos.'),
+                        _option(
+                            active: _deliveryType == 'shipping',
+                            icon: Icons.local_shipping_outlined,
+                            title: 'Envio',
+                            detail: '+ ${_money(_shippingCents)}',
+                            onTap: () =>
+                                setState(() => _deliveryType = 'shipping'),
+                            info:
+                                'Enviamos as fotografias impressas por correio para a sua morada. Tem de indicar a morada e o email.'),
+                      ]),
+                      if (_deliveryType == 'shipping') ...[
+                        SizedBox(height: 12),
+                        _field(
+                            _address, 'Morada de envio *', Icons.home_outlined,
+                            maxLines: 2)
+                      ],
+                    ])),
             _section(
                 'Extras',
                 _option(
@@ -386,77 +486,82 @@ class _Studio59GuestCheckoutState extends State<Studio59GuestCheckout> {
                   icon: Icons.movie_outlined,
                   title: 'Filme do evento',
                   detail: _wantsFilm
-                      ? 'Adicionado · + ${_money(_filmCents)}'
+                      ? s59tr(
+                          'Adicionado · {m}', {'m': '+ ${_money(_filmCents)}'})
                       : '+ ${_money(_filmCents)}',
                   onTap: () => setState(() => _wantsFilm = !_wantsFilm),
                 ),
                 subtitle: 'Toque para adicionar ou remover.'),
             Container(
-              padding: const EdgeInsets.all(18),
+              padding: EdgeInsets.all(18),
               decoration: BoxDecoration(
                   color: _roseSoft, borderRadius: BorderRadius.circular(18)),
               child: Column(children: [
                 _summaryRow(
-                    'Fotografias ($_photoCount × ${_money(_unitCents)})',
+                    s59tr('Fotografias ({a} × {b})',
+                        {'a': _photoCount, 'b': _money(_unitCents)}),
                     _money(_photosCents)),
                 if (_wantsFilm)
-                  _summaryRow('Filme do evento', _money(_filmCents)),
-                if (_needsDelivery)
-                  _summaryRow(
-                      _deliveryType == 'shipping'
-                          ? 'Envio'
-                          : _deliveryType == 'couple'
-                              ? 'Noivos entregam'
-                              : 'Levantamento',
-                      _deliveryCents == 0 ? 'Grátis' : _money(_deliveryCents)),
-                const Divider(height: 18, color: Color(0xFFE3D2CF)),
-                _summaryRow('Total', _money(_totalCents), strong: true),
+                  _summaryRow(s59tr('Filme do evento'), _money(_filmCents)),
+                _summaryRow(
+                    s59tr(_deliveryType == 'shipping'
+                        ? 'Envio'
+                        : _deliveryType == 'couple'
+                            ? 'Noivos entregam'
+                            : 'Levantamento'),
+                    _deliveryCents == 0
+                        ? s59tr('Grátis')
+                        : _money(_deliveryCents)),
+                Divider(height: 18, color: Color(0xFFE3D2CF)),
+                _summaryRow(s59tr('Total'), _money(_totalCents), strong: true),
               ]),
             ),
             if (_error != null)
               Padding(
-                  padding: const EdgeInsets.only(top: 12),
+                  padding: EdgeInsets.only(top: 12),
                   child: Container(
-                    padding: const EdgeInsets.all(12),
+                    padding: EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                        color: const Color(0xFFFBEAEA),
+                        color: Color(0xFFFBEAEA),
                         borderRadius: BorderRadius.circular(12)),
                     child: Text(
-                        _uncertain
+                        s59tr(_uncertain
                             ? 'O resultado do pedido é incerto. Contacte a equipa antes de tentar novamente.'
-                            : _error!,
-                        style: const TextStyle(color: Color(0xFF9B3D3D))),
+                            : _error!),
+                        style: TextStyle(color: Color(0xFF9B3D3D))),
                   )),
-            const SizedBox(height: 16),
+            SizedBox(height: 16),
             FilledButton(
               onPressed: _submitting || _uncertain ? null : _submit,
               style: FilledButton.styleFrom(
                   backgroundColor: _rose,
-                  padding: const EdgeInsets.all(16),
+                  padding: EdgeInsets.all(16),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14))),
               child: _submitting
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 20,
                       height: 20,
                       child: CircularProgressIndicator(
                           strokeWidth: 2, color: Colors.white))
-                  : Text('Registar pedido · ${_money(_totalCents)}',
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w600)),
+                  : Text(
+                      s59tr(
+                          'Registar pedido · {m}', {'m': _money(_totalCents)}),
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
             ),
-            const SizedBox(height: 10),
+            SizedBox(height: 10),
             OutlinedButton(
               onPressed: _submitting ? null : () => context.safePop(),
               style: OutlinedButton.styleFrom(
                   foregroundColor: _rose,
-                  side: const BorderSide(color: _rose),
-                  padding: const EdgeInsets.all(14),
+                  side: BorderSide(color: _rose),
+                  padding: EdgeInsets.all(14),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14))),
-              child: const Text('Voltar ao carrinho'),
+              child: Text(s59tr('Voltar ao carrinho')),
             ),
-            const SizedBox(height: 24),
+            SizedBox(height: 24),
           ]),
         )));
   }

@@ -20,6 +20,7 @@ import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -573,6 +574,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     var changeGiven = true;
     var saving = false;
     var locked = false;
+    var settled = false; // pago na totalidade neste ecrã
     String? formError;
     final paidNow = await showModalBottomSheet<String>(
       context: context,
@@ -607,12 +609,6 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
           'Mesa': data['table_label'],
           'Telefone': data['customer_phone'],
           'Email': data['customer_email'],
-          'Formato': const {
-                'paper': 'Papel',
-                'digital': 'Digital',
-                'both': 'Papel e digital'
-              }['${data['product_type']}'] ??
-              data['product_type'],
           'Entrega': const {
                 'couple': 'Noivos entregam',
                 'pickup': 'Levantamento',
@@ -650,6 +646,54 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                 formError = 'Introduza o valor recebido (ex.: 20 ou 12,50).');
             return;
           }
+          // Dupla confirmação: o fotógrafo confirma o que recebeu, mesmo havendo trocos ou dívida.
+          final sure = await showDialog<bool>(
+              context: sheetContext,
+              builder: (dialogContext) => AlertDialog(
+                    backgroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20)),
+                    title: const Text('Confirmar pagamento'),
+                    content: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                              'Recebeu ${_money(inputCents ?? receivedCents)} de ${data['customer_name'] ?? 'este cliente'}?',
+                              style: const TextStyle(
+                                  color: _ink,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 10),
+                          Text(
+                              'Total do pedido: ${totalCents == null ? '—' : _money(totalCents)}',
+                              style: const TextStyle(color: _muted)),
+                          if (previousCents > 0)
+                            Text('Já recebido antes: ${_money(previousCents)}',
+                                style: const TextStyle(color: _muted)),
+                          if (changeCents > 0)
+                            Text('Troco a entregar: ${_money(changeCents)}',
+                                style: const TextStyle(
+                                    color: Color(0xFFB26A00),
+                                    fontWeight: FontWeight.w600)),
+                          if (dueCents > 0)
+                            Text('Fica em dívida: ${_money(dueCents)}',
+                                style: const TextStyle(
+                                    color: Color(0xFF9B3D3D),
+                                    fontWeight: FontWeight.w600)),
+                        ]),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, false),
+                          child: const Text('Voltar',
+                              style: TextStyle(color: _muted))),
+                      FilledButton(
+                          style: FilledButton.styleFrom(backgroundColor: _rose),
+                          onPressed: () => Navigator.pop(dialogContext, true),
+                          child: const Text('Sim, recebi')),
+                    ],
+                  ));
+          if (sure != true) return;
           update(() {
             saving = true;
             formError = null;
@@ -673,6 +717,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                     }))
                 .timeout(const Duration(seconds: 25));
             if (response.statusCode >= 200 && response.statusCode < 300) {
+              settled = dueCents == 0;
               if (sheetContext.mounted) Navigator.pop(sheetContext, 'paid');
               return;
             }
@@ -723,7 +768,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                         Row(children: [
                           Expanded(
                               child: Text(
-                                  '${data['order_code'] ?? 'Pedido $id'}',
+                                  '${data['event_number'] != null ? '${data['event_number']} · ' : ''}${data['order_code'] ?? 'Pedido $id'}',
                                   style: const TextStyle(
                                       color: _ink,
                                       fontSize: 20,
@@ -990,13 +1035,37 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                                 icon: const Icon(Icons.folder_zip_outlined,
                                     size: 18),
                                 label: const Text('Descarregar ZIP')),
+                          if (_hasPhotosQr(data))
+                            FilledButton.icon(
+                                onPressed: saving
+                                    ? null
+                                    : () => Navigator.pop(sheetContext, 'qr'),
+                                style: FilledButton.styleFrom(
+                                    backgroundColor: _rose),
+                                icon: const Icon(Icons.qr_code_2, size: 18),
+                                label: const Text('QR das fotografias')),
                           if (_canEditOrder)
                             OutlinedButton.icon(
                                 onPressed: saving
                                     ? null
                                     : () => Navigator.pop(sheetContext, 'edit'),
                                 icon: const Icon(Icons.edit_outlined, size: 18),
-                                label: const Text('Editar dados')),
+                                label: const Text('Editar pedido')),
+                          if (_canEditOrder &&
+                              '${data['status']}' != 'cancelled' &&
+                              (!pending || previousCents > 0))
+                            OutlinedButton.icon(
+                                onPressed: saving
+                                    ? null
+                                    : () =>
+                                        Navigator.pop(sheetContext, 'unpaid'),
+                                style: OutlinedButton.styleFrom(
+                                    foregroundColor: const Color(0xFF9B3D3D),
+                                    side: const BorderSide(
+                                        color: Color(0xFF9B3D3D))),
+                                icon: const Icon(Icons.money_off_outlined,
+                                    size: 18),
+                                label: const Text('Marcar como não pago')),
                           if (_canAdjustCash && !pending ||
                               _canAdjustCash && previousCents > 0)
                             OutlinedButton.icon(
@@ -1036,12 +1105,19 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     if (!mounted) return;
     if (paidNow == 'paid') {
       _afterOrderChange('Pagamento registado.');
+      // Online: mostra logo o QR para o cliente levar as fotografias digitais.
+      if (settled && !_offline && '${data['product_type']}' != 'paper')
+        await _showPhotosQr(id);
+    } else if (paidNow == 'qr') {
+      await _showPhotosQr(id);
     } else if (paidNow == 'event') {
       _openEvent(_eventOf(data));
     } else if (paidNow == 'zip') {
       await _downloadZip(id, data);
     } else if (paidNow == 'edit') {
       await _editOrder(id, data);
+    } else if (paidNow == 'unpaid') {
+      await _markUnpaid(id, data);
     } else if (paidNow == 'cash') {
       await _adjustCash(id, data);
     } else if (paidNow == 'change') {
@@ -1765,36 +1841,6 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
         0, (sum, order) => sum + (_eurosToCents(order['items_total']) ?? 0));
     final annualServiceCents = annualServices.fold<int>(
         0, (sum, event) => sum + (_eurosToCents(event['base_price']) ?? 0));
-    final now = DateTime.now();
-    final monthLabel = '${_months[now.month - 1]} ${now.year}';
-    final ownSalesByEvent = <int, int>{};
-    final ownEventNames = <int, String>{};
-    for (final order
-        in _orders.where((order) => '${order['status']}' != 'cancelled')) {
-      final id =
-          int.tryParse('${order['event_id'] ?? _object(order['event'])['id']}');
-      final cents = _eurosToCents(order['total_amount']);
-      if (id == null || cents == null || !_ownAssignedEvents.contains(id))
-        continue;
-      final event =
-          _events.where((e) => int.tryParse('${e['id']}') == id).firstOrNull ??
-              _object(order['event']);
-      final date = _eventDate(event) ??
-          DateTime.tryParse('${order['created_at'] ?? ''}');
-      if (date == null || date.year != now.year || date.month != now.month)
-        continue;
-      ownSalesByEvent[id] = (ownSalesByEvent[id] ?? 0) + cents;
-      ownEventNames[id] = '${event['name'] ?? 'Serviço $id'}';
-    }
-    final commissionByEvent = <int, int>{};
-    for (final entry in ownSalesByEvent.entries) {
-      final count = _photographersByEvent[entry.key];
-      if (count == null || count < 1) continue;
-      // 15% do total vendido do evento ÷ fotógrafos atribuídos, arredondado para baixo ao cêntimo.
-      commissionByEvent[entry.key] = (entry.value * 15) ~/ (100 * count);
-    }
-    final commissionCents =
-        commissionByEvent.values.fold<int>(0, (sum, value) => sum + value);
     final upcoming = _events.where((event) {
       final date = _eventDate(event);
       return date != null &&
@@ -1816,12 +1862,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                 style: const TextStyle(
                     color: _ink, fontSize: 24, fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
-            Text(
-                admin
-                    ? 'Visão do negócio · $year'
-                    : photographer
-                        ? 'A sua atividade e comissão'
-                        : 'A sua atividade',
+            Text(admin ? 'Visão do negócio · $year' : 'A sua atividade',
                 style: const TextStyle(color: _muted, fontSize: 14)),
           ])),
       const SizedBox(height: 16),
@@ -1853,43 +1894,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
             () => setState(() => _tab = 'Pedidos'),
             detail: 'Toque para consultar os pedidos'),
       ] else if (photographer) ...[
-        _metricCard(
-            'Comissão estimada · $monthLabel',
-            _commissionComplete ? _money(commissionCents) : '—',
-            Icons.payments_outlined,
-            () => setState(() => _tab = 'Pedidos'),
-            detail: !_commissionComplete
-                ? 'Dados de vendas ou equipa incompletos'
-                : commissionByEvent.isEmpty
-                    ? 'Sem vendas pagas este mês nos serviços em que está atribuído'
-                    : '15% do total vendido nos seus serviços deste mês, dividido pelos fotógrafos de cada serviço'),
-        if (_commissionComplete && commissionByEvent.isNotEmpty)
-          Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: _card(Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text('Serviços incluídos em $monthLabel',
-                      style: const TextStyle(
-                          color: _ink, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 6),
-                  for (final entry in commissionByEvent.entries)
-                    Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 3),
-                        child: Row(children: [
-                          Expanded(
-                              child: Text(
-                                  ownEventNames[entry.key] ??
-                                      'Serviço ${entry.key}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(color: _muted))),
-                          Text(_money(entry.value),
-                              style: const TextStyle(
-                                  color: _ink, fontWeight: FontWeight.w600)),
-                        ])),
-                ],
-              ))),
+        // Comissões deixaram de ser mostradas aos fotógrafos (2026-10-31).
         const SizedBox(height: 10),
         Row(children: [
           Expanded(
@@ -2538,8 +2543,8 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
 
   bool get _isAdminRole => const {'admin', 'administrator'}.contains(_roleName);
   bool get _canZip => !_offline && (_isAdminRole || _can('orders.download'));
-  bool get _canEditOrder =>
-      _roleName != 'photographer' && (_isAdminRole || _can('orders.update'));
+  // No dia o fotógrafo também edita os dados do pedido (valores e estado têm botões próprios).
+  bool get _canEditOrder => _isAdminRole || _can('orders.update');
   bool get _canAdjustCash =>
       _isAdminRole ||
       _can('orders.cash.adjust') ||
@@ -2657,8 +2662,126 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     }
   }
 
+  bool _hasPhotosQr(Map<String, dynamic> data) =>
+      !_offline &&
+      '${data['product_type']}' != 'paper' &&
+      const {'paid', 'delivered'}.contains('${data['status']}') &&
+      _c(data['cash_due_amount']) == 0;
+
+  /// QR que o cliente lê com a câmara do telemóvel para guardar as fotografias digitais.
+  Future<void> _showPhotosQr(int id) async {
+    final client = http.Client();
+    String? url;
+    String? problem;
+    try {
+      final response = await client
+          .post(Uri.parse('$_base/orders/$id/download-qr'), headers: {
+        'Accept': 'application/json',
+        'Authorization': 'Bearer $_token'
+      }).timeout(const Duration(seconds: 25));
+      final body = jsonDecode(response.body);
+      if (response.statusCode == 200 && body is Map) {
+        url = '${body['url']}';
+      } else {
+        problem = body is Map && body['message'] != null
+            ? '${body['message']}'
+            : 'Não foi possível criar o QR (${response.statusCode}).';
+      }
+    } catch (_) {
+      problem = 'Não foi possível contactar o servidor.';
+    } finally {
+      client.close();
+    }
+    if (!mounted) return;
+    if (url == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(problem ?? 'Não foi possível criar o QR.')));
+      return;
+    }
+    final link = url;
+    await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20)),
+              title: const Text('Fotografias digitais',
+                  textAlign: TextAlign.center),
+              content: SizedBox(
+                  width: 340,
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const Text(
+                        'O cliente aponta a câmara do telemóvel a este código e guarda as fotografias.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: _ink, fontSize: 16)),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                        width: 280,
+                        height: 280,
+                        child: QrImageView(
+                            data: link,
+                            size: 280,
+                            backgroundColor: Colors.white)),
+                  ])),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child:
+                        const Text('Fechar', style: TextStyle(color: _muted)))
+              ],
+            ));
+  }
+
+  /// Volta a «não pago»: o recebido, os trocos e as dívidas desaparecem (ficam só no histórico).
+  Future<void> _markUnpaid(int id, Map<String, dynamic> data) async {
+    final sure = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+              backgroundColor: Colors.white,
+              title: const Text('Marcar como não pago?'),
+              content: Text(
+                  'O pedido de ${data['customer_name'] ?? 'este cliente'} volta a pendente. O valor recebido, os trocos e as dívidas são limpos.'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child:
+                        const Text('Voltar', style: TextStyle(color: _muted))),
+                FilledButton(
+                    style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF9B3D3D)),
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: const Text('Marcar como não pago')),
+              ],
+            ));
+    if (sure != true || !mounted) return;
+    final client = http.Client();
+    try {
+      final response = await client
+          .post(Uri.parse('$_base/orders/$id/mark-unpaid'), headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_token'
+      }).timeout(const Duration(seconds: 25));
+      if (response.statusCode < 200 || response.statusCode >= 300)
+        throw StateError(
+            'Não foi possível alterar o pedido (${response.statusCode}).');
+      _afterOrderChange('Pedido marcado como não pago.');
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(error is StateError
+                ? error.message.toString()
+                : 'Não foi possível contactar o servidor.')));
+    } finally {
+      client.close();
+    }
+  }
+
   Future<void> _editOrder(int id, Map<String, dynamic> data) async {
     final name = TextEditingController(text: '${data['customer_name'] ?? ''}');
+    final table = TextEditingController(text: '${data['table_label'] ?? ''}');
+    final address =
+        TextEditingController(text: '${data['delivery_address'] ?? ''}');
     final email =
         TextEditingController(text: '${data['customer_email'] ?? ''}');
     final phone =
@@ -2682,6 +2805,10 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                             decoration: const InputDecoration(
                                 labelText: 'Nome do cliente *')),
                         TextField(
+                            controller: table,
+                            decoration:
+                                const InputDecoration(labelText: 'Mesa')),
+                        TextField(
                             controller: email,
                             keyboardType: TextInputType.emailAddress,
                             decoration:
@@ -2691,6 +2818,12 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                             keyboardType: TextInputType.phone,
                             decoration:
                                 const InputDecoration(labelText: 'Telefone')),
+                        if ('${data['delivery_type']}' == 'shipping')
+                          TextField(
+                              controller: address,
+                              maxLines: 2,
+                              decoration: const InputDecoration(
+                                  labelText: 'Morada de envio')),
                         TextField(
                             controller: notes,
                             maxLines: 3,
@@ -2736,6 +2869,11 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                                             'customer_name': name.text.trim(),
                                             'customer_email': email.text.trim(),
                                             'customer_phone': phone.text.trim(),
+                                            'table_label': table.text.trim(),
+                                            if ('${data['delivery_type']}' ==
+                                                'shipping')
+                                              'delivery_address':
+                                                  address.text.trim(),
                                             'notes': notes.text.trim(),
                                             'status':
                                                 data['status'] ?? 'pending',
@@ -2771,7 +2909,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                         child: Text(saving ? 'A guardar…' : 'Guardar')),
                   ],
                 )));
-    for (final c in [name, email, phone, notes]) {
+    for (final c in [name, email, phone, notes, table, address]) {
       c.dispose();
     }
     if (saved == true && mounted) _afterOrderChange('Pedido atualizado.');
@@ -3185,6 +3323,12 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
       Text('Pedidos ($_ordersTotal)',
           style: const TextStyle(
               color: _ink, fontSize: 20, fontWeight: FontWeight.w600)),
+      if (_roleName == 'photographer' && !_offline)
+        const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text(
+                'Pode consultar os pedidos e as contas de cada serviço até 2 dias depois do serviço.',
+                style: TextStyle(color: _muted, fontSize: 12))),
       const SizedBox(height: 12),
       if (wide)
         Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -3267,6 +3411,15 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                       style: FilledButton.styleFrom(backgroundColor: _rose),
                       icon: const Icon(Icons.folder_zip_outlined, size: 18),
                       label: const Text('Descarregar pedidos (ZIP)')),
+                if (_canZip && _serviceOrders.isNotEmpty)
+                  OutlinedButton.icon(
+                      onPressed: () =>
+                          _printSlips(_orderEventId!, selectedEvent),
+                      style: OutlinedButton.styleFrom(
+                          foregroundColor: _rose,
+                          side: const BorderSide(color: _rose)),
+                      icon: const Icon(Icons.print_outlined, size: 18),
+                      label: const Text('Imprimir talões')),
                 if (_can('events.view') && !_offline)
                   OutlinedButton.icon(
                       onPressed: () => _openEvent(selectedEvent),
@@ -3282,6 +3435,8 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
           _eventCalcCard(_orderEventId!, selectedEvent, _serviceOrders,
               _finSums(_serviceOrders)),
         ],
+        const SizedBox(height: 12),
+        _accountNotesCard(_orderEventId!),
         const SizedBox(height: 10),
         TextField(
             key: ValueKey('search-$_orderEventId'),
@@ -3331,7 +3486,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                         Text(
-                            '${order['order_code'] ?? 'Pedido'} · ${order['customer_name'] ?? ''}',
+                            '${order['event_number'] != null ? '${order['event_number']} · ' : ''}${order['order_code'] ?? 'Pedido'} · ${order['customer_name'] ?? ''}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -3357,6 +3512,204 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
   }
 
   // ---- ZIP de todos os pedidos de um evento ----
+  /// Talões dos pedidos: à esquerda (maior) os números das fotografias, à direita nome, morada, telemóvel e nº do pedido.
+  Future<void> _printSlips(int eventId, Map<String, dynamic> event) async {
+    var scope = 'all';
+    final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+            builder: (dialogContext, update) => AlertDialog(
+                  backgroundColor: Colors.white,
+                  title: const Text('Imprimir talões'),
+                  content: SizedBox(
+                      width: 440,
+                      child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('${event['name'] ?? 'Serviço'}',
+                                style: const TextStyle(
+                                    color: _ink, fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 6),
+                            const Text(
+                                'Um talão por pedido, pela ordem dos números (P001, P002…).',
+                                style: TextStyle(color: _muted, fontSize: 12)),
+                            const SizedBox(height: 10),
+                            const Text('Pedidos incluídos',
+                                style: TextStyle(
+                                    color: _ink, fontWeight: FontWeight.w700)),
+                            RadioListTile<String>(
+                                contentPadding: EdgeInsets.zero,
+                                value: 'all',
+                                groupValue: scope,
+                                activeColor: _rose,
+                                onChanged: (v) => update(() => scope = v!),
+                                title: const Text('Todos (exceto cancelados)')),
+                            RadioListTile<String>(
+                                contentPadding: EdgeInsets.zero,
+                                value: 'paid',
+                                groupValue: scope,
+                                activeColor: _rose,
+                                onChanged: (v) => update(() => scope = v!),
+                                title: const Text('Só pedidos pagos a 100%')),
+                          ])),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(dialogContext, false),
+                        child: const Text('Cancelar')),
+                    FilledButton.icon(
+                        style: FilledButton.styleFrom(backgroundColor: _rose),
+                        onPressed: () => Navigator.pop(dialogContext, true),
+                        icon: const Icon(Icons.print_outlined, size: 18),
+                        label: const Text('Preparar talões')),
+                  ],
+                )));
+    if (confirmed != true || !mounted) return;
+    final client = http.Client();
+    try {
+      final body =
+          await _get(client, '/events/$eventId/orders/slips', {'scope': scope});
+      final slips = (body['slips'] as List? ?? const [])
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+      if (slips.isEmpty) throw StateError('Sem pedidos para imprimir.');
+      final (theme, unicode) = await _pdfTheme();
+      String t(String value) => unicode
+          ? value
+          : value
+              .replaceAll('×', 'x')
+              .replaceAll('·', '-')
+              .replaceAll('€', 'EUR');
+      const rose = PdfColor.fromInt(0xFFB77F84);
+      const ink = PdfColor.fromInt(0xFF292624);
+      const muted = PdfColor.fromInt(0xFF6D625F);
+      final date = _eventDate(event);
+      final title =
+          '${event['name'] ?? 'Serviço'}${date == null ? '' : ' · ${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}'}';
+      pw.Widget info(String label, String value, {double size = 11}) =>
+          pw.Padding(
+              padding: const pw.EdgeInsets.only(top: 6),
+              child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text(t(label.toUpperCase()),
+                        style: const pw.TextStyle(
+                            color: muted, fontSize: 7, letterSpacing: 0.8)),
+                    pw.Text(t(value.trim().isEmpty ? '—' : value),
+                        style: pw.TextStyle(
+                            color: ink,
+                            fontSize: size,
+                            fontWeight: pw.FontWeight.bold)),
+                  ]));
+      pw.Widget slip(Map<String, dynamic> s) {
+        final photos =
+            (s['photos'] as List? ?? const []).whereType<Map>().toList();
+        final units = photos.fold<int>(
+            0, (sum, p) => sum + (int.tryParse('${p['quantity']}') ?? 1));
+        return pw.Container(
+            margin: const pw.EdgeInsets.only(bottom: 14),
+            child: pw.Table(
+              border: pw.TableBorder.all(color: ink, width: 0.9),
+              columnWidths: const {
+                0: pw.FlexColumnWidth(3),
+                1: pw.FlexColumnWidth(2)
+              },
+              children: [
+                pw.TableRow(children: [
+                  pw.ConstrainedBox(
+                      constraints: const pw.BoxConstraints(minHeight: 120),
+                      child: pw.Padding(
+                          padding: const pw.EdgeInsets.all(10),
+                          child: pw.Column(
+                              crossAxisAlignment: pw.CrossAxisAlignment.start,
+                              children: [
+                                pw.Text(
+                                    t(
+                                        'FOTOGRAFIAS · ${photos.length} n.º · $units unid.'),
+                                    style: const pw.TextStyle(
+                                        color: muted,
+                                        fontSize: 7,
+                                        letterSpacing: 0.8)),
+                                pw.SizedBox(height: 6),
+                                pw.Wrap(spacing: 12, runSpacing: 5, children: [
+                                  for (final p in photos)
+                                    pw.Text(
+                                        t((int.tryParse('${p['quantity']}') ??
+                                                    1) >
+                                                1
+                                            ? '${p['number']} ×${p['quantity']}'
+                                            : '${p['number']}'),
+                                        style: pw.TextStyle(
+                                            color: ink,
+                                            fontSize: 13,
+                                            fontWeight: pw.FontWeight.bold)),
+                                ]),
+                              ]))),
+                  pw.Padding(
+                      padding: const pw.EdgeInsets.all(10),
+                      child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.start,
+                          children: [
+                            pw.Text(
+                                t('${s['number'] ?? s['order_code'] ?? ''}'),
+                                style: pw.TextStyle(
+                                    color: rose,
+                                    fontSize: 22,
+                                    fontWeight: pw.FontWeight.bold)),
+                            info('Nome', '${s['customer_name'] ?? ''}',
+                                size: 12),
+                            info('Morada', '${s['delivery_address'] ?? ''}'),
+                            info('Telemóvel', '${s['customer_phone'] ?? ''}'),
+                          ])),
+                ])
+              ],
+            ));
+      }
+
+      final doc = pw.Document(
+          theme: theme, title: t('Talões · $title'), author: 'Studio 59');
+      doc.addPage(pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.fromLTRB(28, 24, 28, 24),
+        header: (context) => pw.Padding(
+            padding: const pw.EdgeInsets.only(bottom: 8),
+            child: pw.Row(children: [
+              pw.Expanded(
+                  child: pw.Text(t(title),
+                      style: const pw.TextStyle(color: muted, fontSize: 9))),
+              pw.Text(t('Talões · ${context.pageNumber}/${context.pagesCount}'),
+                  style: const pw.TextStyle(color: muted, fontSize: 9)),
+            ])),
+        build: (context) => [for (final s in slips) slip(s)],
+      ));
+      final bytes = await doc.save();
+      final fileName =
+          '${_safeName('${event['name'] ?? 'evento_$eventId'}')}_taloes.pdf';
+      try {
+        await Printing.layoutPdf(onLayout: (_) async => bytes, name: fileName);
+      } catch (_) {
+        // Sem impressora/serviço de impressão: guarda o PDF para imprimir depois.
+        final path = await FilePicker.platform.saveFile(
+            dialogTitle: 'Guardar talões (PDF)',
+            fileName: fileName,
+            bytes: bytes);
+        if (path != null &&
+            !kIsWeb &&
+            (Platform.isWindows || Platform.isMacOS || Platform.isLinux))
+          await File(path).writeAsBytes(bytes, flush: true);
+      }
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(error is StateError
+                ? '${error.message}'
+                : 'Não foi possível preparar os talões ($error).')));
+    } finally {
+      client.close();
+    }
+  }
+
   Future<void> _downloadEventZip(
       int eventId, Map<String, dynamic> event) async {
     const layout = 'flat';
@@ -3382,7 +3735,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                                 style: TextStyle(color: _muted, fontSize: 12)),
                             const SizedBox(height: 14),
                             const Text(
-                                'Todas as fotografias ficam juntas no ZIP (ex.: «0001.jpg», «0001 (2).jpg»).',
+                                'Cada fotografia leva o nº do pedido (ex.: «P001_0439.jpg», «P001_0439 (2).jpg»); cada serviço começa no P001.',
                                 style: TextStyle(color: _muted, fontSize: 12)),
                             const SizedBox(height: 6),
                             const Text('Pedidos incluídos',
@@ -3473,14 +3826,11 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
   String? _templatesError;
 
   static const _fieldTypes = <String, String>{
-    'text': 'Texto',
-    'textarea': 'Texto longo',
-    'number': 'Número',
-    'date': 'Data',
-    'time': 'Hora',
-    'checkbox': 'Sim/Não',
-    'select': 'Lista de opções',
-    'email': 'Email',
+    'text': 'Texto', 'textarea': 'Texto longo', 'number': 'Número',
+    'date': 'Data', 'time': 'Hora',
+    'checkbox': 'Sim/Não', 'select': 'Lista de opções', 'email': 'Email',
+    // Associa os fotógrafos pelas iniciais/username (ex.: «LM não trocar + MB + FB»).
+    'team': 'Profissionais / Equipa',
   };
 
   String _slugify(String value) {
@@ -3528,8 +3878,398 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     }
   }
 
+  // ---- Configurações › Packs e serviços ----
+  Map<String, dynamic>? _catalog;
+  bool _catalogBusy = false;
+  String? _catalogError;
+
+  List<Map<String, dynamic>> _catList(String key) =>
+      (_catalog?[key] as List? ?? const [])
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+  String _catEur(dynamic v) {
+    final n = num.tryParse('${v ?? ''}');
+    return n == null ? '' : '${n.toStringAsFixed(2).replaceAll('.', ',')} €';
+  }
+
+  Future<void> _loadCatalog() async {
+    setState(() {
+      _catalogBusy = true;
+      _catalogError = null;
+    });
+    final client = http.Client();
+    try {
+      _catalog = await _get(client, '/service-catalog');
+    } catch (error) {
+      _catalogError = error is StateError
+          ? '${error.message}'
+          : 'Não foi possível carregar o catálogo.';
+    } finally {
+      client.close();
+      if (mounted) setState(() => _catalogBusy = false);
+    }
+  }
+
+  Future<void> _saveCatalog(List<Map<String, dynamic>> items,
+      List<Map<String, dynamic>> packs) async {
+    setState(() {
+      _catalogBusy = true;
+      _catalogError = null;
+    });
+    final client = http.Client();
+    try {
+      final response = await client
+          .put(Uri.parse('$_base/service-catalog'),
+              headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $_token'
+              },
+              body: jsonEncode({'items': items, 'packs': packs}))
+          .timeout(const Duration(seconds: 25));
+      if (response.statusCode != 200)
+        throw StateError('Não foi possível guardar (${response.statusCode}).');
+      _catalog = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Catálogo guardado.')));
+    } catch (error) {
+      _catalogError = error is StateError
+          ? '${error.message}'
+          : 'Não foi possível contactar o servidor.';
+    } finally {
+      client.close();
+      if (mounted) setState(() => _catalogBusy = false);
+    }
+  }
+
+  Future<void> _editPack(Map<String, dynamic>? pack) async {
+    final name = TextEditingController(text: '${pack?['name'] ?? ''}');
+    final price = TextEditingController(text: '${pack?['price'] ?? ''}');
+    final chosen = <String>{
+      ...(pack?['items'] as List? ?? const []).map((e) => '$e')
+    };
+    final items = _catList('items');
+    final categories = <String, List<Map<String, dynamic>>>{};
+    for (final i in items) {
+      categories.putIfAbsent('${i['category']}', () => []).add(i);
+    }
+    final result = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+            builder: (dialogContext, update) => AlertDialog(
+                  backgroundColor: Colors.white,
+                  title: Text(pack == null ? 'Novo pack' : 'Editar pack'),
+                  content: SizedBox(
+                      width: 520,
+                      child: SingleChildScrollView(
+                          child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                            TextField(
+                                controller: name,
+                                decoration: const InputDecoration(
+                                    labelText: 'Nome do pack',
+                                    border: OutlineInputBorder())),
+                            const SizedBox(height: 10),
+                            TextField(
+                                controller: price,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
+                                decoration: const InputDecoration(
+                                    labelText: 'Preço sem IVA (€)',
+                                    border: OutlineInputBorder())),
+                            const SizedBox(height: 10),
+                            Text('Serviços incluídos (${chosen.length})',
+                                style: const TextStyle(
+                                    color: _ink, fontWeight: FontWeight.w700)),
+                            for (final entry in categories.entries)
+                              ExpansionTile(
+                                  tilePadding: EdgeInsets.zero,
+                                  childrenPadding: EdgeInsets.zero,
+                                  initiallyExpanded: entry.value.any(
+                                      (i) => chosen.contains('${i['id']}')),
+                                  title: Text(
+                                      '${entry.key} (${entry.value.where((i) => chosen.contains('${i['id']}')).length})',
+                                      style: const TextStyle(
+                                          color: _ink, fontSize: 14)),
+                                  children: [
+                                    for (final i in entry.value)
+                                      CheckboxListTile(
+                                          dense: true,
+                                          contentPadding: EdgeInsets.zero,
+                                          activeColor: _rose,
+                                          controlAffinity:
+                                              ListTileControlAffinity.leading,
+                                          value: chosen.contains('${i['id']}'),
+                                          title: Text('${i['name']}'),
+                                          subtitle:
+                                              '${i['detail'] ?? ''}'.isEmpty
+                                                  ? null
+                                                  : Text('${i['detail']}'),
+                                          onChanged: (v) => update(() {
+                                                if (v == true) {
+                                                  chosen.add('${i['id']}');
+                                                } else {
+                                                  chosen.remove('${i['id']}');
+                                                }
+                                              }))
+                                  ]),
+                          ]))),
+                  actions: [
+                    if (pack != null)
+                      TextButton(
+                          onPressed: () =>
+                              Navigator.pop(dialogContext, 'delete'),
+                          child: const Text('Apagar',
+                              style: TextStyle(color: Color(0xFFB3261E)))),
+                    TextButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        child: const Text('Cancelar')),
+                    FilledButton(
+                        style: FilledButton.styleFrom(backgroundColor: _rose),
+                        onPressed: () => Navigator.pop(dialogContext, 'save'),
+                        child: const Text('Guardar')),
+                  ],
+                )));
+    if (result == null || !mounted) return;
+    final packs = _catList('packs');
+    if (result == 'delete') {
+      packs.removeWhere((p) => p['id'] == pack!['id']);
+    } else {
+      if (name.text.trim().isEmpty) {
+        setState(() => _catalogError = 'O pack precisa de um nome.');
+        return;
+      }
+      final data = {
+        'id': pack?['id'] ?? 'p${DateTime.now().microsecondsSinceEpoch}',
+        'name': name.text.trim(),
+        'price': num.tryParse(price.text.trim().replaceAll(',', '.')),
+        'items': chosen.toList()
+      };
+      final index = packs.indexWhere((p) => p['id'] == data['id']);
+      if (index >= 0) {
+        packs[index] = data;
+      } else {
+        packs.add(data);
+      }
+    }
+    await _saveCatalog(_catList('items'), packs);
+  }
+
+  Future<void> _editCatalogItem(Map<String, dynamic>? item,
+      {String? category}) async {
+    final name = TextEditingController(text: '${item?['name'] ?? ''}');
+    final detail = TextEditingController(text: '${item?['detail'] ?? ''}');
+    final price = TextEditingController(text: '${item?['price'] ?? ''}');
+    final cat =
+        TextEditingController(text: '${item?['category'] ?? category ?? ''}');
+    final result = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+              backgroundColor: Colors.white,
+              title: Text(item == null ? 'Novo serviço' : 'Editar serviço'),
+              content: SizedBox(
+                  width: 460,
+                  child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TextField(
+                            controller: cat,
+                            decoration: const InputDecoration(
+                                labelText: 'Categoria (ex.: Capas e modelos)',
+                                border: OutlineInputBorder())),
+                        const SizedBox(height: 10),
+                        TextField(
+                            controller: name,
+                            decoration: const InputDecoration(
+                                labelText: 'Nome',
+                                border: OutlineInputBorder())),
+                        const SizedBox(height: 10),
+                        TextField(
+                            controller: detail,
+                            decoration: const InputDecoration(
+                                labelText: 'Detalhe (opcional)',
+                                border: OutlineInputBorder())),
+                        const SizedBox(height: 10),
+                        TextField(
+                            controller: price,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            decoration: const InputDecoration(
+                                labelText: 'Preço sem IVA, se for um extra (€)',
+                                border: OutlineInputBorder())),
+                      ])),
+              actions: [
+                if (item != null)
+                  TextButton(
+                      onPressed: () => Navigator.pop(dialogContext, 'delete'),
+                      child: const Text('Apagar',
+                          style: TextStyle(color: Color(0xFFB3261E)))),
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('Cancelar')),
+                FilledButton(
+                    style: FilledButton.styleFrom(backgroundColor: _rose),
+                    onPressed: () => Navigator.pop(dialogContext, 'save'),
+                    child: const Text('Guardar')),
+              ],
+            ));
+    if (result == null || !mounted) return;
+    final items = _catList('items');
+    final packs = _catList('packs');
+    if (result == 'delete') {
+      items.removeWhere((i) => i['id'] == item!['id']);
+      for (final p in packs) {
+        p['items'] = (p['items'] as List? ?? const [])
+            .where((e) => '$e' != '${item!['id']}')
+            .toList();
+      }
+    } else {
+      if (name.text.trim().isEmpty || cat.text.trim().isEmpty) {
+        setState(() => _catalogError = 'Indique a categoria e o nome.');
+        return;
+      }
+      final data = {
+        'id': item?['id'] ?? 'i${DateTime.now().microsecondsSinceEpoch}',
+        'category': cat.text.trim(),
+        'name': name.text.trim(),
+        'detail': detail.text.trim().isEmpty ? null : detail.text.trim(),
+        'price': num.tryParse(price.text.trim().replaceAll(',', '.'))
+      };
+      final index = items.indexWhere((i) => i['id'] == data['id']);
+      if (index >= 0) {
+        items[index] = data;
+      } else {
+        items.add(data);
+      }
+    }
+    await _saveCatalog(items, packs);
+  }
+
+  Widget _catalogEditor() {
+    final packs = _catList('packs');
+    final categories = <String, List<Map<String, dynamic>>>{};
+    for (final i in _catList('items')) {
+      categories.putIfAbsent('${i['category']}', () => []).add(i);
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Row(children: [
+        IconButton(
+            onPressed: () => setState(() => _settingsSection = ''),
+            icon: const Icon(Icons.arrow_back, color: _ink)),
+        const Expanded(
+            child: Text('Packs e serviços',
+                style: TextStyle(
+                    color: _ink, fontSize: 20, fontWeight: FontWeight.w600))),
+        if (_catalogBusy)
+          const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2, color: _rose)),
+      ]),
+      if (_catalogError != null)
+        Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Text(_catalogError!,
+                style: const TextStyle(color: Color(0xFFB3261E)))),
+      if (_catalog != null) ...[
+        const SizedBox(height: 10),
+        Row(children: [
+          const Expanded(
+              child: Text('Packs',
+                  style: TextStyle(
+                      color: _ink, fontSize: 17, fontWeight: FontWeight.w700))),
+          TextButton.icon(
+              onPressed: _catalogBusy ? null : () => _editPack(null),
+              icon: const Icon(Icons.add, color: _rose),
+              label: const Text('Novo pack', style: TextStyle(color: _rose))),
+        ]),
+        for (final p in packs)
+          Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: _catalogBusy ? null : () => _editPack(p),
+                  child: _card(Row(children: [
+                    Expanded(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                          Text('${p['name']}',
+                              style: const TextStyle(
+                                  color: _ink, fontWeight: FontWeight.w600)),
+                          Text(
+                              '${(p['items'] as List? ?? const []).length} serviços',
+                              style:
+                                  const TextStyle(color: _muted, fontSize: 12)),
+                        ])),
+                    Text(
+                        _catEur(p['price']).isEmpty
+                            ? 'sem preço'
+                            : _catEur(p['price']),
+                        style: TextStyle(
+                            color: _catEur(p['price']).isEmpty
+                                ? const Color(0xFFB3261E)
+                                : _ink,
+                            fontWeight: FontWeight.w600)),
+                    const Icon(Icons.chevron_right, color: _muted),
+                  ])))),
+        const SizedBox(height: 14),
+        Row(children: [
+          const Expanded(
+              child: Text('Serviços, extras, capas e modelos',
+                  style: TextStyle(
+                      color: _ink, fontSize: 17, fontWeight: FontWeight.w700))),
+          TextButton.icon(
+              onPressed: _catalogBusy ? null : () => _editCatalogItem(null),
+              icon: const Icon(Icons.add, color: _rose),
+              label: const Text('Novo', style: TextStyle(color: _rose))),
+        ]),
+        for (final entry in categories.entries)
+          Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _card(ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: EdgeInsets.zero,
+                  shape: const Border(),
+                  title: Text('${entry.key} (${entry.value.length})',
+                      style: const TextStyle(
+                          color: _ink, fontWeight: FontWeight.w600)),
+                  children: [
+                    for (final i in entry.value)
+                      ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          onTap:
+                              _catalogBusy ? null : () => _editCatalogItem(i),
+                          title: Text('${i['name']}'),
+                          subtitle: '${i['detail'] ?? ''}'.isEmpty
+                              ? null
+                              : Text('${i['detail']}'),
+                          trailing: Text(_catEur(i['price']))),
+                    Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                            onPressed: _catalogBusy
+                                ? null
+                                : () =>
+                                    _editCatalogItem(null, category: entry.key),
+                            icon: const Icon(Icons.add, size: 18, color: _rose),
+                            label: const Text('Adicionar aqui',
+                                style: TextStyle(color: _rose)))),
+                  ]))),
+      ],
+    ]);
+  }
+
   Widget _settings() {
     if (_settingsSection == 'contrato') return _contractTemplateEditor();
+    if (_settingsSection == 'catalogo') return _catalogEditor();
     if (_settingsSection == '') {
       return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         const Text('Configurações',
@@ -3583,6 +4323,32 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                     SizedBox(height: 3),
                     Text(
                         'Texto base dos contratos, com os dados de cada evento preenchidos automaticamente.',
+                        style: TextStyle(color: _muted)),
+                  ])),
+              Icon(Icons.chevron_right, color: _muted),
+            ]))),
+        const SizedBox(height: 10),
+        InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () {
+              setState(() => _settingsSection = 'catalogo');
+              _loadCatalog();
+            },
+            child: _card(const Row(children: [
+              Icon(Icons.checklist_rtl_outlined, color: _rose, size: 28),
+              SizedBox(width: 14),
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text('Packs e serviços',
+                        style: TextStyle(
+                            color: _ink,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700)),
+                    SizedBox(height: 3),
+                    Text(
+                        'Nomes e preços dos packs, serviços, extras, capas e modelos que aparecem na ficha.',
                         style: TextStyle(color: _muted)),
                   ])),
               Icon(Icons.chevron_right, color: _muted),
@@ -3690,6 +4456,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     'checkbox': Icons.check_box_outlined,
     'select': Icons.list_alt,
     'email': Icons.alternate_email,
+    'team': Icons.groups_outlined,
   };
 
   static const _autoValues = <String, String>{
@@ -3733,6 +4500,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     final nameFields = TextEditingController(
         text:
             '${settings['name_fields'] is List ? (settings['name_fields'] as List).join(',') : settings['name_fields'] ?? ''}');
+    final typeCode = TextEditingController(text: '${settings['code'] ?? ''}');
     var slug = '${existing?['slug'] ?? ''}';
     var active = existing?['is_active'] != false;
     final usedTypes = {
@@ -3933,7 +4701,8 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                         .map((f) => f.trim())
                         .where((f) => f.isNotEmpty)
                         .toList(),
-                    'name_joiner': settings['name_joiner'] ?? ' - '
+                    'name_joiner': settings['name_joiner'] ?? ' - ',
+                    'code': typeCode.text.trim()
                   },
                   'fields': sentFields,
                 };
@@ -4577,8 +5346,14 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                             decoration: dense('Descrição')),
                         const SizedBox(height: 10),
                         TextField(
+                            controller: typeCode,
+                            decoration: dense('Código no título do serviço',
+                                helper: 'Ex.: C fica C-22-10-2026-Beiral')),
+                        const SizedBox(height: 10),
+                        TextField(
                             controller: nameFields,
-                            decoration: dense('Nome automático do serviço',
+                            decoration: dense(
+                                'Nomes para os convidados e o contrato',
                                 helper:
                                     'Chaves separadas por vírgulas, ex.: noivo,noiva')),
                         SwitchListTile(
@@ -4718,7 +5493,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                     ]),
                   ));
             }));
-    for (final c in [name, description, newType, nameFields]) {
+    for (final c in [name, description, newType, nameFields, typeCode]) {
       c.dispose();
     }
     for (final group in ctrl.values) {
@@ -5198,9 +5973,15 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
     final agg = <String, Map<String, int>>{};
     final children = <String, Set<int>>{};
     final eventById = <int, Map<String, dynamic>>{};
+    // Fotógrafos: só os pedidos dos serviços dos últimos 2 dias (o servidor aplica a mesma regra).
+    final today = DateTime.now();
+    final orderCutoff = DateTime(today.year, today.month, today.day)
+        .subtract(const Duration(days: 2));
     byId.forEach((id, e) {
       final d = _eventDate(e);
       if (d == null) return;
+      if (_roleName == 'photographer' && !_offline && d.isBefore(orderCutoff))
+        return;
       eventById[id] = e;
       final sums = _finSums(orders[id] ?? const []);
       final services = _c(e['base_price']);
@@ -5393,6 +6174,232 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
         ),
       ];
 
+  // Notas das contas do serviço (despesas do carro, acertos…): texto livre com histórico de quem alterou.
+  final Map<int, Map<String, dynamic>> _notes = {};
+  final Set<int> _notesLoading = {};
+  final Set<int> _notesSaving = {};
+  final Map<int, String> _notesErrors = {};
+  final Map<int, TextEditingController> _notesControllers = {};
+  final TextEditingController _notesAuthor = TextEditingController();
+
+  String _noteWhen(dynamic iso) {
+    final d = DateTime.tryParse('${iso ?? ''}')?.toLocal();
+    if (d == null) return '';
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(d.day)}/${two(d.month)}/${d.year} ${two(d.hour)}:${two(d.minute)}';
+  }
+
+  List<Map<String, dynamic>> _notesHistory(int eventId) =>
+      (_notes[eventId]?['history'] as List? ?? const [])
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+
+  Future<void> _loadNotes(int eventId) async {
+    if (_notesLoading.contains(eventId)) return;
+    setState(() {
+      _notesLoading.add(eventId);
+      _notesErrors.remove(eventId);
+    });
+    final client = http.Client();
+    try {
+      final body = await _get(client, '/events/$eventId/account-notes');
+      _notes[eventId] = body;
+      _notesControllers.putIfAbsent(eventId, TextEditingController.new).text =
+          '${_object(body['current'])['body'] ?? ''}';
+    } catch (error) {
+      _notesErrors[eventId] = error is StateError
+          ? '${error.message}'
+          : 'Não foi possível carregar as notas.';
+    } finally {
+      client.close();
+      if (mounted) setState(() => _notesLoading.remove(eventId));
+    }
+  }
+
+  Future<void> _saveNotes(int eventId) async {
+    final controller = _notesControllers[eventId];
+    if (controller == null) return;
+    if (_offline && _notesAuthor.text.trim().isEmpty) {
+      setState(() => _notesErrors[eventId] =
+          'Indique quem está a escrever (nome ou iniciais).');
+      return;
+    }
+    setState(() {
+      _notesSaving.add(eventId);
+      _notesErrors.remove(eventId);
+    });
+    final client = http.Client();
+    try {
+      final response = await client
+          .put(Uri.parse('$_base/events/$eventId/account-notes'),
+              headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $_token'
+              },
+              body: jsonEncode({
+                'body': controller.text,
+                if (_offline) 'author_name': _notesAuthor.text.trim()
+              }))
+          .timeout(const Duration(seconds: 25));
+      final decoded = response.body.isEmpty ? null : jsonDecode(response.body);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final message = decoded is Map ? '${decoded['message'] ?? ''}' : '';
+        throw StateError(message.isEmpty
+            ? 'Não foi possível guardar as notas (${response.statusCode}).'
+            : message);
+      }
+      if (decoded is Map) _notes[eventId] = Map<String, dynamic>.from(decoded);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(decoded is Map && decoded['unchanged'] == true
+                ? 'Sem alterações nas notas.'
+                : 'Notas guardadas.')));
+      }
+    } catch (error) {
+      _notesErrors[eventId] = error is StateError
+          ? '${error.message}'
+          : 'Não foi possível contactar o servidor.';
+    } finally {
+      client.close();
+      if (mounted) setState(() => _notesSaving.remove(eventId));
+    }
+  }
+
+  /// Notas das contas e despesas: ficam junto das contas do serviço e no PDF.
+  Widget _accountNotesCard(int eventId) {
+    if (!_notes.containsKey(eventId) &&
+        !_notesLoading.contains(eventId) &&
+        _notesErrors[eventId] == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadNotes(eventId);
+      });
+    }
+    final loaded = _notes.containsKey(eventId);
+    final saving = _notesSaving.contains(eventId);
+    final error = _notesErrors[eventId];
+    final controller =
+        _notesControllers.putIfAbsent(eventId, TextEditingController.new);
+    final current = loaded
+        ? _object(_notes[eventId]!['current'])
+        : const <String, dynamic>{};
+    final history = _notesHistory(eventId);
+    String who(Map<String, dynamic> n) =>
+        '${n['author_name'] ?? '—'} · ${_noteWhen(n['created_at'])}${n['source'] == 'offline' ? ' (offline)' : ''}';
+    return _card(
+        Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Row(children: [
+        const Icon(Icons.sticky_note_2_outlined, color: _rose, size: 20),
+        const SizedBox(width: 8),
+        const Expanded(
+            child: Text('Notas das contas e despesas',
+                style: TextStyle(
+                    color: _ink, fontSize: 16, fontWeight: FontWeight.w700))),
+        if (loaded)
+          IconButton(
+              tooltip: 'Atualizar',
+              onPressed: _notesLoading.contains(eventId) || saving
+                  ? null
+                  : () => _loadNotes(eventId),
+              icon: const Icon(Icons.refresh, size: 20, color: _muted)),
+      ]),
+      const Text(
+          'Escreva à vontade: acertos das contas, despesas do carro, portagens… Fica junto das contas no PDF do serviço.',
+          style: TextStyle(color: _muted, fontSize: 12)),
+      const SizedBox(height: 10),
+      if (!loaded && error == null)
+        const LinearProgressIndicator(color: _rose)
+      else if (!loaded)
+        Row(children: [
+          Expanded(
+              child: Text(error!,
+                  style: const TextStyle(color: Color(0xFFB3261E)))),
+          TextButton(
+              onPressed: () => _loadNotes(eventId),
+              child: const Text('Tentar novamente')),
+        ])
+      else ...[
+        TextField(
+            controller: controller,
+            enabled: !saving,
+            minLines: 4,
+            maxLines: 12,
+            keyboardType: TextInputType.multiline,
+            decoration: const InputDecoration(
+                hintText:
+                    'Ex.: Gasolina 25,00 € · Portagens 6,40 € (pago pelo LM)',
+                border: OutlineInputBorder())),
+        if (_offline) ...[
+          const SizedBox(height: 8),
+          TextField(
+              controller: _notesAuthor,
+              enabled: !saving,
+              decoration: const InputDecoration(
+                  labelText: 'Escrito por (nome ou iniciais)',
+                  isDense: true,
+                  border: OutlineInputBorder())),
+        ],
+        const SizedBox(height: 8),
+        Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            alignment: WrapAlignment.spaceBetween,
+            children: [
+              Text(
+                  current.isEmpty
+                      ? 'Ainda sem notas.'
+                      : 'Última edição: ${who(current)}',
+                  style: const TextStyle(color: _muted, fontSize: 12)),
+              FilledButton.icon(
+                  onPressed: saving ? null : () => _saveNotes(eventId),
+                  style: FilledButton.styleFrom(backgroundColor: _rose),
+                  icon: saving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.save_outlined, size: 18),
+                  label: const Text('Guardar notas')),
+            ]),
+        if (error != null)
+          Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(error,
+                  style: const TextStyle(color: Color(0xFFB3261E)))),
+        if (history.length > 1)
+          Theme(
+              data:
+                  Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: EdgeInsets.zero,
+                  title: Text('Histórico de alterações (${history.length})',
+                      style: const TextStyle(
+                          color: _ink,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600)),
+                  children: [
+                    for (final n in history)
+                      ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(who(n),
+                              style: const TextStyle(
+                                  color: _ink, fontWeight: FontWeight.w600)),
+                          subtitle: Text(
+                              '${n['body'] ?? ''}'.isEmpty
+                                  ? '(notas apagadas)'
+                                  : '${n['body']}',
+                              maxLines: 4,
+                              overflow: TextOverflow.ellipsis)),
+                  ])),
+      ],
+    ]));
+  }
+
   /// Resumo de vendas, cálculo detalhado e comissões de um evento (Financeiro e Pedidos).
   Widget _eventCalcCard(int eventId, Map<String, dynamic> event,
       List<Map<String, dynamic>> orders, Map<String, int> sums) {
@@ -5554,6 +6561,11 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
         content: Text('A gerar o PDF…'), duration: Duration(seconds: 2)));
     try {
       if (!_rosters.containsKey(eventId)) await _loadRoster(eventId);
+      if (!_notes.containsKey(eventId)) await _loadNotes(eventId);
+      final noteHistory = _notesHistory(eventId);
+      final noteCurrent = noteHistory.firstOrNull;
+      String noteWho(Map<String, dynamic> n) =>
+          '${n['author_name'] ?? '-'} · ${_noteWhen(n['created_at'])}${n['source'] == 'offline' ? ' (offline)' : ''}';
       final (theme, unicode) = await _pdfTheme();
       String t(String value) => unicode
           ? value
@@ -5690,6 +6702,51 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                     style: const pw.TextStyle(color: muted, fontSize: 9)),
             ])),
           ]),
+          // Notas das contas: linhas soltas para o texto poder continuar na página seguinte.
+          pw.Container(
+              color: roseSoft,
+              padding:
+                  const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              child: pw.Text(t('NOTAS DAS CONTAS E DESPESAS'),
+                  style: pw.TextStyle(
+                      color: rose,
+                      fontWeight: pw.FontWeight.bold,
+                      fontSize: 9,
+                      letterSpacing: 1))),
+          pw.SizedBox(height: 6),
+          if (noteCurrent == null ||
+              '${noteCurrent['body'] ?? ''}'.trim().isEmpty)
+            pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 10),
+                child: pw.Text(t('Sem notas.'),
+                    style: const pw.TextStyle(color: muted, fontSize: 10)))
+          else
+            for (final l in '${noteCurrent['body']}'.split('\n'))
+              pw.Padding(
+                  padding: const pw.EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 1),
+                  child: pw.Text(t(l.isEmpty ? ' ' : l),
+                      style: const pw.TextStyle(color: ink, fontSize: 10))),
+          if (noteCurrent != null)
+            pw.Padding(
+                padding: const pw.EdgeInsets.fromLTRB(10, 6, 10, 0),
+                child: pw.Text(t('Última edição: ${noteWho(noteCurrent)}'),
+                    style: pw.TextStyle(
+                        color: muted,
+                        fontSize: 8,
+                        fontWeight: pw.FontWeight.bold))),
+          if (noteHistory.length > 1) ...[
+            pw.Padding(
+                padding: const pw.EdgeInsets.fromLTRB(10, 4, 10, 0),
+                child: pw.Text(t('Histórico de alterações:'),
+                    style: const pw.TextStyle(color: muted, fontSize: 8))),
+            for (final n in noteHistory.skip(1))
+              pw.Padding(
+                  padding: const pw.EdgeInsets.symmetric(horizontal: 14),
+                  child: pw.Text(t('- ${noteWho(n)}'),
+                      style: const pw.TextStyle(color: muted, fontSize: 8))),
+          ],
+          pw.SizedBox(height: 12),
           box('Pedidos (${sorted.length})', [
             pw.TableHelper.fromTextArray(
               headers: [
@@ -5773,6 +6830,8 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
       const SizedBox(height: 18),
       _eventCalcCard(eventId, event, orders, sums),
       const SizedBox(height: 12),
+      _accountNotesCard(eventId),
+      const SizedBox(height: 12),
       Wrap(spacing: 8, runSpacing: 8, children: [
         for (final f in const ['Todos', 'Pago', 'Deve', 'Troco', 'Por atender'])
           ChoiceChip(
@@ -5799,7 +6858,7 @@ class _Studio59StaffHubState extends State<Studio59StaffHub> {
                     Row(children: [
                       Expanded(
                           child: Text(
-                              '${order['order_code'] ?? 'Pedido'} · ${order['customer_name'] ?? ''}',
+                              '${order['event_number'] != null ? '${order['event_number']} · ' : ''}${order['order_code'] ?? 'Pedido'} · ${order['customer_name'] ?? ''}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(

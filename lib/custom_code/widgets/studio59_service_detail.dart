@@ -17,6 +17,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import 'package:printing/printing.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -146,6 +147,7 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
         _isAdmin = admin;
         _loading = false;
       });
+      if (id > 0) _loadNotes();
       if (id == 0 && !_editing) _startEdit();
     } catch (error) {
       if (!mounted) return;
@@ -450,6 +452,687 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
   String? _formError;
   String _formType = '';
   String _role = '';
+  // Equipas: número de equipas e, para cada uma, profissionais, horas na loja e para onde vai.
+  List<Map<String, dynamic>> _teamOptions = [];
+  String? get _teamKey {
+    for (final f in _templateFields) {
+      if (f['type'] == 'team' && f['source'] != 'event') return '${f['key']}';
+    }
+    return _templateFields.any((f) => '${f['key']}' == 'equipa_de_trabalho')
+        ? 'equipa_de_trabalho'
+        : null;
+  }
+
+  int get _teamCount => (int.tryParse(_c('equipas_n').text) ?? 1).clamp(1, 4);
+  List<String> get _teamDestinations =>
+      _templateFields.any((f) => '${f['key']}'.contains('noiv'))
+          ? const ['Noivo', 'Noiva', 'Igreja', 'Quinta']
+          : const ['Igreja', 'Quinta', 'Casa', 'Festa'];
+
+  Future<void> _loadTeamOptions() async {
+    final client = http.Client();
+    try {
+      final response = await client.get(
+          Uri.parse(
+              'https://studio59.wiredevelop.pt/api/service-catalog/team-options'),
+          headers: {
+            'Accept': 'application/json',
+            'Authorization': 'Bearer $_token'
+          }).timeout(const Duration(seconds: 20));
+      if (response.statusCode == 200) {
+        _teamOptions =
+            ((jsonDecode(response.body) as Map)['data'] as List? ?? const [])
+                .whereType<Map>()
+                .map((m) => Map<String, dynamic>.from(m))
+                .toList();
+      }
+    } catch (_) {
+      // Sem a lista, os profissionais escrevem-se à mão, como antes.
+    } finally {
+      client.close();
+      if (mounted) setState(() {});
+    }
+  }
+
+  void _fillTeams(Map<String, dynamic> meta) {
+    final key = _teamKey;
+    if (key == null) return;
+    List<dynamic> saved = const [];
+    try {
+      saved = jsonDecode('${meta['equipas_json'] ?? '[]'}') as List;
+    } catch (_) {}
+    final teams = saved.whereType<Map>().toList();
+    if (teams.isEmpty) {
+      _c('equipas_n').text = '1';
+      _c('equipa_0_membros').text = '${meta[key] ?? ''}';
+      _c('equipa_0_hora').text = '${meta['estar_na_loja_as'] ?? ''}';
+      return;
+    }
+    _c('equipas_n').text = '${teams.length.clamp(1, 4)}';
+    for (var i = 0; i < teams.length && i < 4; i++) {
+      _c('equipa_${i}_membros').text = '${teams[i]['membros'] ?? ''}';
+      _c('equipa_${i}_hora').text = '${teams[i]['hora'] ?? ''}';
+      _c('equipa_${i}_destino').text = '${teams[i]['destino'] ?? ''}';
+    }
+  }
+
+  List<String> _teamTokens(String text) => text
+      .split(RegExp(r'[+,]'))
+      .map((t) => t.trim())
+      .where((t) => t.isNotEmpty)
+      .toList();
+  String _teamMembers(int i) =>
+      _teamTokens(_c('equipa_${i}_membros').text).join('+');
+
+  /// Texto da equipa na ficha, ex.: (LM+MB)- Noivo (JL+MC)- Noiva. É daqui que o servidor associa os fotógrafos.
+  String _teamsText() {
+    final parts = <String>[];
+    for (var i = 0; i < _teamCount; i++) {
+      final members = _teamMembers(i);
+      final dest = _c('equipa_${i}_destino').text.trim();
+      if (members.isEmpty && dest.isEmpty) continue;
+      parts.add(dest.isEmpty
+          ? (_teamCount == 1
+              ? _teamTokens(_c('equipa_${i}_membros').text).join(' + ')
+              : '($members)')
+          : '($members)- $dest');
+    }
+    return parts.join(' ');
+  }
+
+  void _toggleTeamMember(int i, String code) {
+    final c = _c('equipa_${i}_membros');
+    final tokens = _teamTokens(c.text);
+    final at =
+        tokens.indexWhere((t) => t.split(' ').first.toUpperCase() == code);
+    if (at >= 0) {
+      tokens.removeAt(at);
+    } else {
+      tokens.add(code);
+    }
+    setState(() => c.text = tokens.join(' + '));
+    _touched();
+  }
+
+  Widget _teamsEditor(String label) {
+    final count = _teamCount;
+    final width = count == 1
+        ? 'full'
+        : count == 3
+            ? 'third'
+            : 'half';
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _input('equipas_n', 'Número de equipas', 'select',
+          options: const ['1', '2', '3', '4']),
+      const SizedBox(height: 12),
+      _grid([
+        for (var i = 0; i < count; i++)
+          (
+            width,
+            Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                    color: const Color(0xFFFAF9F7),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFECE7E3))),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(count == 1 ? label.toUpperCase() : 'EQUIPA ${i + 1}',
+                          style: const TextStyle(
+                              color: Color(0xFF8E6267),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.1)),
+                      const SizedBox(height: 8),
+                      if (_teamOptions.isNotEmpty)
+                        Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Wrap(spacing: 6, runSpacing: 6, children: [
+                              for (final option in _teamOptions)
+                                FilterChip(
+                                    visualDensity: VisualDensity.compact,
+                                    showCheckmark: false,
+                                    selectedColor: const Color(0xFFF2E5E3),
+                                    label: Text('${option['code']}'),
+                                    tooltip: '${option['name'] ?? ''}',
+                                    selected: _teamTokens(
+                                            _c('equipa_${i}_membros').text)
+                                        .any((t) =>
+                                            t.split(' ').first.toUpperCase() ==
+                                            '${option['code']}'),
+                                    onSelected: _saving
+                                        ? null
+                                        : (_) => _toggleTeamMember(
+                                            i, '${option['code']}')),
+                            ])),
+                      _fieldCaption('Profissionais'),
+                      TextField(
+                          controller: _c('equipa_${i}_membros'),
+                          enabled: !_saving,
+                          onChanged: (_) {
+                            setState(() {});
+                            _touched();
+                          },
+                          decoration: _deco(hint: 'Ex.: LM não trocar + MB')),
+                      const SizedBox(height: 10),
+                      _input('equipa_${i}_hora', 'Horas na loja', 'time'),
+                      const SizedBox(height: 10),
+                      _input('equipa_${i}_destino', 'Vai para', 'select',
+                          options: _teamDestinations),
+                    ]))
+          ),
+      ]),
+    ]);
+  }
+
+  // Pack e serviços da ficha: catálogo editável em Configurações; na ficha fica uma fotografia dos nomes e preços.
+  Map<String, dynamic>? _catalog;
+  String? _catalogError;
+  String _packId = '';
+  final Set<String> _sel = {};
+
+  List<Map<String, dynamic>> _catList(String key) =>
+      (_catalog?[key] as List? ?? const [])
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+  Map<String, dynamic>? get _pack =>
+      _catList('packs').where((p) => '${p['id']}' == _packId).firstOrNull;
+  Set<String> _packItems(Map<String, dynamic>? pack) =>
+      {...(pack?['items'] as List? ?? const []).map((e) => '$e')};
+  String _eur(num v) => '${v.toStringAsFixed(2).replaceAll('.', ',')} €';
+
+  Future<void> _loadCatalog() async {
+    final client = http.Client();
+    try {
+      final response = await client.get(
+          Uri.parse('https://studio59.wiredevelop.pt/api/service-catalog'),
+          headers: {
+            'Accept': 'application/json',
+            'Authorization': 'Bearer $_token'
+          }).timeout(const Duration(seconds: 20));
+      if (response.statusCode != 200)
+        throw StateError('${response.statusCode}');
+      _catalog = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+      _catalogError = null;
+    } catch (_) {
+      _catalogError = 'Não foi possível carregar os packs e serviços.';
+    } finally {
+      client.close();
+      if (mounted) setState(() {});
+    }
+  }
+
+  /// Soma dos serviços marcados que têm preço e não fazem parte do pack.
+  num get _extrasTotal {
+    final inPack = _packItems(_pack);
+    return _catList('items')
+        .where((i) =>
+            _sel.contains('${i['id']}') && !inPack.contains('${i['id']}'))
+        .fold<num>(
+            0, (sum, i) => sum + (num.tryParse('${i['price'] ?? ''}') ?? 0));
+  }
+
+  /// Com o preço do pack conhecido, o preço base acompanha as escolhas (continua editável à mão).
+  void _syncBasePrice() {
+    final price = num.tryParse('${_pack?['price'] ?? ''}');
+    if (price != null) _c('base_price').text = '${price + _extrasTotal}';
+  }
+
+  void _choosePack(String? id) {
+    setState(() {
+      _sel.removeAll(_packItems(_pack));
+      _packId = id ?? '';
+      _sel.addAll(_packItems(_pack));
+      _syncBasePrice();
+    });
+    _touched();
+  }
+
+  Widget _servicesBox() {
+    if (_catalog == null) {
+      return _box('Pack e serviços', [
+        (
+          'full',
+          _catalogError == null
+              ? const LinearProgressIndicator(color: _rose)
+              : Row(children: [
+                  Expanded(
+                      child: Text(_catalogError!,
+                          style: const TextStyle(color: Color(0xFFB3261E)))),
+                  TextButton(
+                      onPressed: _loadCatalog,
+                      child: const Text('Tentar novamente'))
+                ])
+        )
+      ]);
+    }
+    final items = _catList('items');
+    final inPack = _packItems(_pack);
+    final byCategory = <String, List<Map<String, dynamic>>>{};
+    for (final i in items) {
+      byCategory.putIfAbsent('${i['category'] ?? 'Outros'}', () => []).add(i);
+    }
+    final packPrice = num.tryParse('${_pack?['price'] ?? ''}');
+    final extras = _extrasTotal;
+    return _box('Pack e serviços', [
+      (
+        'full',
+        Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _fieldCaption('Pack'),
+          DropdownButtonFormField<String>(
+              value: _pack == null ? '' : _packId,
+              isExpanded: true,
+              decoration: _deco(),
+              items: [
+                const DropdownMenuItem(
+                    value: '', child: Text('Sem pack (serviços à medida)')),
+                for (final p in _catList('packs'))
+                  DropdownMenuItem(
+                      value: '${p['id']}',
+                      child: Text(
+                          '${p['name']}${num.tryParse('${p['price'] ?? ''}') == null ? '' : ' · ${_eur(num.parse('${p['price']}'))}'}',
+                          overflow: TextOverflow.ellipsis)),
+              ],
+              onChanged: _saving ? null : _choosePack),
+          const SizedBox(height: 8),
+          Text(
+              _pack == null
+                  ? 'Escolha um pack para marcar os serviços dele, ou marque os serviços um a um.'
+                  : 'O pack marcou ${inPack.length} serviços. Pode acrescentar ou retirar abaixo.',
+              style: const TextStyle(color: _muted, fontSize: 12)),
+          if (_pack != null || extras > 0)
+            Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                    [
+                      if (_pack != null)
+                        packPrice == null
+                            ? 'Pack: sem preço definido'
+                            : 'Pack: ${_eur(packPrice)}',
+                      if (extras > 0) 'Extras: ${_eur(extras)}',
+                      if (packPrice != null)
+                        'Total: ${_eur(packPrice + extras)} (sem IVA)',
+                    ].join(' · '),
+                    style: const TextStyle(
+                        color: _ink, fontWeight: FontWeight.w600))),
+          const SizedBox(height: 6),
+          for (final entry in byCategory.entries)
+            Theme(
+                data: Theme.of(context)
+                    .copyWith(dividerColor: Colors.transparent),
+                child: ExpansionTile(
+                  key: PageStorageKey('cat-${entry.key}'),
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: EdgeInsets.zero,
+                  initiallyExpanded:
+                      entry.value.any((i) => _sel.contains('${i['id']}')),
+                  title: Text(
+                      '${entry.key} (${entry.value.where((i) => _sel.contains('${i['id']}')).length}/${entry.value.length})',
+                      style: const TextStyle(
+                          color: _ink,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600)),
+                  children: [
+                    for (final i in entry.value)
+                      CheckboxListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          activeColor: _rose,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          value: _sel.contains('${i['id']}'),
+                          title: Text('${i['name']}',
+                              style: const TextStyle(color: _ink)),
+                          subtitle: '${i['detail'] ?? ''}'.isEmpty
+                              ? null
+                              : Text('${i['detail']}'),
+                          secondary: inPack.contains('${i['id']}')
+                              ? const Text('no pack',
+                                  style: TextStyle(color: _rose, fontSize: 12))
+                              : num.tryParse('${i['price'] ?? ''}') == null
+                                  ? null
+                                  : Text(_eur(num.parse('${i['price']}')),
+                                      style: const TextStyle(
+                                          color: _muted, fontSize: 12)),
+                          onChanged: _saving
+                              ? null
+                              : (v) {
+                                  setState(() {
+                                    if (v == true) {
+                                      _sel.add('${i['id']}');
+                                    } else {
+                                      _sel.remove('${i['id']}');
+                                    }
+                                    _syncBasePrice();
+                                  });
+                                  _touched();
+                                })
+                  ],
+                )),
+        ])
+      ),
+    ]);
+  }
+
+  /// O que foi contratado, para a equipa ver na ficha (sem preços).
+  Widget _servicesView(Map<String, dynamic> event) {
+    final meta =
+        event['event_meta'] is Map ? event['event_meta'] as Map : const {};
+    final pack = '${meta['pack_nome'] ?? ''}'.trim();
+    List<dynamic> items = const [];
+    try {
+      items = jsonDecode('${meta['servicos_json'] ?? '[]'}') as List;
+    } catch (_) {}
+    if (pack.isEmpty && items.isEmpty) return const SizedBox.shrink();
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const SizedBox(height: 18),
+      const Text('Pack e serviços',
+          style: TextStyle(
+              color: Color(0xFF292624),
+              fontSize: 19,
+              fontWeight: FontWeight.w600)),
+      const SizedBox(height: 6),
+      if (pack.isNotEmpty)
+        Text(pack,
+            style: const TextStyle(
+                color: Color(0xFF292624), fontWeight: FontWeight.w700)),
+      for (final i in items.whereType<Map>())
+        Padding(
+            padding: const EdgeInsets.only(top: 3),
+            child: Text(
+                '• ${i['name'] ?? ''}${'${i['detail'] ?? ''}'.isEmpty ? '' : ' (${i['detail']})'}',
+                style: const TextStyle(color: Color(0xFF292624)))),
+    ]);
+  }
+
+  // Impressão das fichas (administração e backoffice).
+  bool get _canPrintSheets => _seesTeamNotes;
+  static const _sheetNames = <String, String>{
+    'servico': 'Ficha de serviço',
+    'filme': 'Ficha técnica de filme',
+    'fotografia': 'Ficha técnica de fotografia',
+    'contrato': 'Contrato',
+    'contas': 'Contas (vendas e despesas)',
+  };
+
+  Future<void> _printSheets(int eventId, List<String> types) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(const SnackBar(
+        content: Text('A preparar as fichas…'),
+        duration: Duration(seconds: 2)));
+    final client = http.Client();
+    try {
+      final response = await client.get(
+          Uri.parse(
+                  'https://studio59.wiredevelop.pt/api/events/$eventId/sheets')
+              .replace(queryParameters: {'types': types.join(',')}),
+          headers: {
+            'Accept': 'application/pdf, application/json',
+            'Authorization': 'Bearer $_token'
+          }).timeout(const Duration(seconds: 60));
+      if (response.statusCode != 200)
+        throw StateError(
+            'Não foi possível gerar as fichas (${response.statusCode}).');
+      final bytes = response.bodyBytes;
+      final name = 'fichas_servico_$eventId.pdf';
+      try {
+        await Printing.layoutPdf(onLayout: (_) async => bytes, name: name);
+      } catch (_) {
+        // Sem serviço de impressão neste dispositivo: partilhar/guardar o PDF.
+        await Printing.sharePdf(bytes: bytes, filename: name);
+      }
+    } catch (error) {
+      messenger.showSnackBar(SnackBar(
+          content: Text(error is StateError
+              ? '${error.message}'
+              : 'Não foi possível contactar o servidor.')));
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<void> _openPrintDialog() async {
+    final id = widget.eventId ?? 0;
+    if (id <= 0) return;
+    final chosen = <String>{};
+    final types = await showDialog<List<String>>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+            builder: (dialogContext, update) => AlertDialog(
+                  backgroundColor: Colors.white,
+                  title: const Text('Imprimir fichas'),
+                  content: SizedBox(
+                      width: 420,
+                      child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (final entry in _sheetNames.entries)
+                              CheckboxListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  dense: true,
+                                  activeColor: _rose,
+                                  controlAffinity:
+                                      ListTileControlAffinity.leading,
+                                  value: chosen.contains(entry.key),
+                                  title: Text(entry.value),
+                                  onChanged: (v) => update(() {
+                                        if (v == true) {
+                                          chosen.add(entry.key);
+                                        } else {
+                                          chosen.remove(entry.key);
+                                        }
+                                      })),
+                          ])),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        child: const Text('Cancelar')),
+                    OutlinedButton(
+                        onPressed: () => Navigator.pop(
+                            dialogContext, _sheetNames.keys.toList()),
+                        child: const Text('Imprimir todas')),
+                    FilledButton(
+                        style: FilledButton.styleFrom(backgroundColor: _rose),
+                        onPressed: chosen.isEmpty
+                            ? null
+                            : () =>
+                                Navigator.pop(dialogContext, chosen.toList()),
+                        child: const Text('Imprimir')),
+                  ],
+                )));
+    if (types != null && types.isNotEmpty && mounted)
+      await _printSheets(id, types);
+  }
+
+  // Notas pós-evento: as minhas (privadas) e, para administração/backoffice, as de toda a equipa.
+  final TextEditingController _myNote = TextEditingController();
+  String? _myNoteSavedAt;
+  bool _myNoteLoaded = false;
+  bool _myNoteSaving = false;
+  String? _myNoteError;
+  List<Map<String, dynamic>> _teamNotes = [];
+  bool get _seesTeamNotes => _isAdmin || _role == 'backoffice';
+
+  String _when(dynamic iso) {
+    final d = DateTime.tryParse('${iso ?? ''}'.replaceFirst(' ', 'T'));
+    if (d == null) return '';
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(d.day)}/${two(d.month)}/${d.year} ${two(d.hour)}:${two(d.minute)}';
+  }
+
+  Future<void> _loadNotes() async {
+    final id = widget.eventId ?? 0;
+    if (id <= 0 || _token.isEmpty) return;
+    final client = http.Client();
+    try {
+      final headers = {
+        'Accept': 'application/json',
+        'Authorization': 'Bearer $_token'
+      };
+      final mine = await client
+          .get(
+              Uri.parse(
+                  'https://studio59.wiredevelop.pt/api/events/$id/my-notes'),
+              headers: headers)
+          .timeout(const Duration(seconds: 20));
+      if (mine.statusCode == 200) {
+        final note = (jsonDecode(mine.body) as Map)['note'];
+        _myNote.text = note is Map ? '${note['body'] ?? ''}' : '';
+        _myNoteSavedAt = note is Map ? '${note['updated_at'] ?? ''}' : null;
+        _myNoteLoaded = true;
+      }
+      if (_seesTeamNotes) {
+        final team = await client
+            .get(
+                Uri.parse(
+                    'https://studio59.wiredevelop.pt/api/events/$id/team-notes'),
+                headers: headers)
+            .timeout(const Duration(seconds: 20));
+        if (team.statusCode == 200) {
+          _teamNotes =
+              ((jsonDecode(team.body) as Map)['notes'] as List? ?? const [])
+                  .whereType<Map>()
+                  .map((m) => Map<String, dynamic>.from(m))
+                  .toList();
+        }
+      }
+    } catch (_) {
+      _myNoteError = 'Não foi possível carregar as notas pós-evento.';
+    } finally {
+      client.close();
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _saveMyNote() async {
+    final id = widget.eventId ?? 0;
+    setState(() {
+      _myNoteSaving = true;
+      _myNoteError = null;
+    });
+    final client = http.Client();
+    try {
+      final response = await client
+          .put(
+              Uri.parse(
+                  'https://studio59.wiredevelop.pt/api/events/$id/my-notes'),
+              headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $_token'
+              },
+              body: jsonEncode({'body': _myNote.text}))
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300)
+        throw StateError('Não foi possível guardar (${response.statusCode}).');
+      final note = (jsonDecode(response.body) as Map)['note'];
+      _myNoteSavedAt = note is Map ? '${note['updated_at'] ?? ''}' : null;
+      if (_seesTeamNotes) await _loadNotes();
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Notas pós-evento guardadas.')));
+    } catch (error) {
+      _myNoteError = error is StateError
+          ? '${error.message}'
+          : 'Não foi possível contactar o servidor.';
+    } finally {
+      client.close();
+      if (mounted) setState(() => _myNoteSaving = false);
+    }
+  }
+
+  Widget _postEventNotes() => Container(
+        margin: const EdgeInsets.only(top: 18),
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFECE7E3))),
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const Row(children: [
+            Icon(Icons.edit_note, color: Color(0xFFB77F84)),
+            SizedBox(width: 8),
+            Expanded(
+                child: Text('As minhas notas pós-evento',
+                    style: TextStyle(
+                        color: Color(0xFF292624),
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700))),
+          ]),
+          const SizedBox(height: 4),
+          const Text(
+              'Só você e a administração veem o que escreve aqui. Os colegas não veem.',
+              style: TextStyle(color: Color(0xFF6D625F), fontSize: 12)),
+          const SizedBox(height: 10),
+          if (!_myNoteLoaded && _myNoteError == null)
+            const LinearProgressIndicator(color: Color(0xFFB77F84))
+          else ...[
+            TextField(
+                controller: _myNote,
+                enabled: !_myNoteSaving,
+                minLines: 3,
+                maxLines: 10,
+                decoration: const InputDecoration(
+                    hintText:
+                        'Ex.: o padrinho pediu fotos extra com a avó; a quinta fecha às 2h…',
+                    border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                      (_myNoteSavedAt ?? '').isEmpty
+                          ? 'Ainda sem notas.'
+                          : 'Guardado a ${_when(_myNoteSavedAt)}',
+                      style: const TextStyle(
+                          color: Color(0xFF6D625F), fontSize: 12)),
+                  FilledButton.icon(
+                      onPressed: _myNoteSaving ? null : _saveMyNote,
+                      style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFB77F84)),
+                      icon: const Icon(Icons.save_outlined, size: 18),
+                      label:
+                          Text(_myNoteSaving ? 'A guardar…' : 'Guardar notas')),
+                ]),
+          ],
+          if (_myNoteError != null)
+            Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(_myNoteError!,
+                    style: const TextStyle(color: Color(0xFFB3261E)))),
+          if (_seesTeamNotes) ...[
+            const Divider(height: 28),
+            const Text('Notas da equipa (só administração)',
+                style: TextStyle(
+                    color: Color(0xFF292624),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            if (_teamNotes.isEmpty)
+              const Text('Ninguém escreveu notas pós-evento.',
+                  style: TextStyle(color: Color(0xFF6D625F))),
+            for (final n in _teamNotes)
+              Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('${n['name'] ?? ''} · ${_when(n['updated_at'])}',
+                            style: const TextStyle(
+                                color: Color(0xFF292624),
+                                fontWeight: FontWeight.w600)),
+                        SelectableText('${n['body'] ?? ''}',
+                            style: const TextStyle(color: Color(0xFF292624))),
+                      ])),
+          ],
+        ]),
+      );
   String _userName = '';
   final Map<String, TextEditingController> _text = {};
   final Map<String, bool> _checks = {};
@@ -523,6 +1206,8 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
             'type': _formType,
             'values': {for (final e in _text.entries) e.key: e.value.text},
             'checks': _checks,
+            'pack': _packId,
+            'sel': _sel.toList(),
             'saved_at': DateTime.now().toIso8601String(),
           }));
       if (mounted) setState(() => _draftSavedAt = DateTime.now());
@@ -640,6 +1325,16 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
     }
 
     fillTemplate();
+    _packId = '${meta['pack_id'] ?? ''}';
+    _sel.clear();
+    try {
+      _sel.addAll((jsonDecode('${meta['servicos_json'] ?? '[]'}') as List)
+          .whereType<Map>()
+          .map((i) => '${i['id']}'));
+    } catch (_) {}
+    if (_catalog == null) _loadCatalog();
+    _fillTeams(meta);
+    if (_teamOptions.isEmpty) _loadTeamOptions();
     // Rascunho guardado neste dispositivo?
     Map<String, dynamic>? draft;
     try {
@@ -672,6 +1367,12 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
         (draft['values'] as Map? ?? {}).forEach((k, v) => _c('$k').text = '$v');
         (draft['checks'] as Map? ?? {})
             .forEach((k, v) => _checks['$k'] = v == true);
+        _packId = '${draft['pack'] ?? _packId}';
+        if (draft['sel'] is List) {
+          _sel
+            ..clear()
+            ..addAll((draft['sel'] as List).map((e) => '$e'));
+        }
         _draftSavedAt = when;
       } else {
         await _clearDraft();
@@ -722,6 +1423,30 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
     final meta = event['event_meta'] is Map
         ? Map<String, dynamic>.from(event['event_meta'] as Map)
         : <String, dynamic>{};
+    final teamKey = _teamKey;
+    if (teamKey != null) {
+      _c(teamKey).text = _teamsText();
+      final hours = <String>[];
+      meta['equipas_json'] = jsonEncode([
+        for (var i = 0; i < _teamCount; i++)
+          {
+            'membros': _teamMembers(i),
+            'hora': _c('equipa_${i}_hora').text.trim(),
+            'destino': _c('equipa_${i}_destino').text.trim(),
+          },
+      ]);
+      for (var i = 0; i < _teamCount; i++) {
+        final hour = _c('equipa_${i}_hora').text.trim();
+        if (hour.isNotEmpty) hours.add(hour);
+      }
+      hours.sort();
+      // A hora mais cedo continua a alimentar os convites de calendário.
+      if (hours.isEmpty) {
+        meta.remove('estar_na_loja_as');
+      } else {
+        meta['estar_na_loja_as'] = hours.first;
+      }
+    }
     final payload = <String, dynamic>{
       'event_type': _formType, 'event_date': _c('event_date').text.trim(),
       'base_price': base, 'price_per_photo': photo,
@@ -755,6 +1480,25 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
       }
     }
     meta['estrangeiro'] = _c('estrangeiro').text == 'Sim';
+    if (_catalog != null) {
+      final pack = _pack;
+      meta['pack_id'] = pack == null ? '' : _packId;
+      meta['pack_nome'] = pack == null ? '' : '${pack['name'] ?? ''}';
+      meta['pack_preco'] =
+          pack == null ? null : num.tryParse('${pack['price'] ?? ''}');
+      final inPack = _packItems(pack);
+      meta['servicos_json'] = jsonEncode([
+        for (final i in _catList('items'))
+          if (_sel.contains('${i['id']}'))
+            {
+              'id': i['id'],
+              'name': i['name'],
+              'detail': i['detail'],
+              'price': i['price'],
+              'in_pack': inPack.contains('${i['id']}')
+            },
+      ]);
+    }
     payload['event_meta'] = meta;
     setState(() {
       _saving = true;
@@ -800,6 +1544,35 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Serviço publicado.')));
+      // Ficha nova: imprime logo a ficha de serviço e o contrato. Numa alteração, pergunta primeiro.
+      final printId = id > 0 ? id : savedId;
+      if (_canPrintSheets && printId != null) {
+        final doPrint = id == 0 ||
+            await showDialog<bool>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                          backgroundColor: Colors.white,
+                          title: const Text('Imprimir?'),
+                          content: const Text(
+                              'Quer imprimir a ficha de serviço e o contrato com estas alterações?'),
+                          actions: [
+                            TextButton(
+                                onPressed: () =>
+                                    Navigator.pop(dialogContext, false),
+                                child: const Text('Agora não')),
+                            FilledButton(
+                                style: FilledButton.styleFrom(
+                                    backgroundColor: _rose),
+                                onPressed: () =>
+                                    Navigator.pop(dialogContext, true),
+                                child: const Text('Imprimir')),
+                          ],
+                        )) ==
+                true;
+        if (doPrint && mounted)
+          await _printSheets(printId, const ['servico', 'contrato']);
+      }
+      if (!mounted) return;
       if (id == 0 && savedId != null) {
         context.goNamed('Studio59ServiceOnline', queryParameters: {
           'eventId': serializeParam(savedId, ParamType.int)
@@ -1015,7 +1788,14 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
               : type == 'email'
                   ? TextInputType.emailAddress
                   : TextInputType.text,
-          decoration: _deco(hint: hint));
+          decoration: type == 'team'
+              ? _deco(
+                  hint: (hint ?? '').isEmpty
+                      ? 'Ex.: LM não trocar + MB + FB'
+                      : hint,
+                  suffix: const Icon(Icons.groups_outlined,
+                      size: 18, color: _muted))
+              : _deco(hint: hint));
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       _fieldCaption(label, required: required, auto: auto.isNotEmpty),
@@ -1231,23 +2011,28 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
               required: true)
         ),
       ]),
+      _servicesBox(),
       for (final entry in sections.entries)
         _box(entry.key, [
           for (final f in entry.value)
-            (
-              '${f['width'] ?? 'full'}',
-              _input('${f['key']}', '${f['label'] ?? f['key']}',
-                  '${f['type'] ?? 'text'}',
-                  required: f['required'] == true,
-                  hint: f['placeholder'] == null ? null : '${f['placeholder']}',
-                  auto: '${f['auto'] ?? ''}',
-                  options: f['options'] is List
-                      ? (f['options'] as List)
-                          .map((o) =>
-                              o is Map ? '${o['label'] ?? o['value']}' : '$o')
-                          .toList()
-                      : const [])
-            ),
+            if ('${f['key']}' == _teamKey)
+              ('full', _teamsEditor('${f['label'] ?? 'Equipa'}'))
+            else
+              (
+                '${f['width'] ?? 'full'}',
+                _input('${f['key']}', '${f['label'] ?? f['key']}',
+                    '${f['type'] ?? 'text'}',
+                    required: f['required'] == true,
+                    hint:
+                        f['placeholder'] == null ? null : '${f['placeholder']}',
+                    auto: '${f['auto'] ?? ''}',
+                    options: f['options'] is List
+                        ? (f['options'] as List)
+                            .map((o) =>
+                                o is Map ? '${o['label'] ?? o['value']}' : '$o')
+                            .toList()
+                        : const [])
+              ),
         ]),
       _box('Notas', [('full', _input('notes', 'Notas internas', 'textarea'))]),
     ]);
@@ -1429,6 +2214,61 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
     }
     if (filled(event['notes']))
       groups['Observações'] = [MapEntry('notes', event['notes'])];
+    // O que é preciso no dia vem primeiro; o resto fica em «Ver ficha completa».
+    final dayHours = <MapEntry<String, dynamic>>[];
+    final dayPlaces = <MapEntry<String, dynamic>>[];
+    final dayContacts = <MapEntry<String, dynamic>>[];
+    dynamic teamText;
+    final fieldTypes = {
+      for (final f in templateFields) '${f['key']}': '${f['type'] ?? ''}'
+    };
+    final rest = <String, List<MapEntry<String, dynamic>>>{};
+    final technical = <String, List<MapEntry<String, dynamic>>>{};
+    groups.forEach((section, entries) {
+      if (section == 'Filmador' || section == 'Fotógrafo') {
+        technical[section] = entries;
+        return;
+      }
+      for (final e in entries) {
+        final key = e.key.toLowerCase();
+        if (fieldTypes[e.key] == 'team' || key == 'equipa_de_trabalho') {
+          teamText = e.value;
+        } else if (fieldTypes[e.key] == 'time' ||
+            RegExp(r'hora|missa').hasMatch(key)) {
+          dayHours.add(e);
+        } else if (_isPhone(key)) {
+          dayContacts.add(e);
+        } else if (RegExp(
+                r'local|igreja|quinta|morada|coorden|cerimonia|almoco|location')
+            .hasMatch(key)) {
+          dayPlaces.add(e);
+        } else {
+          rest.putIfAbsent(section, () => []).add(e);
+        }
+      }
+    });
+    List<dynamic> teamRows = const [];
+    try {
+      teamRows = jsonDecode('${meta['equipas_json'] ?? '[]'}') as List;
+    } catch (_) {}
+    final clientNames = [
+      for (final k in (type?['settings'] is Map &&
+              (type!['settings'] as Map)['name_fields'] is List
+          ? (type['settings'] as Map)['name_fields'] as List
+          : const []))
+        if (filled(meta['$k'])) '${meta['$k']}',
+    ].join(' & ');
+    Widget dayBlock(String title, List<MapEntry<String, dynamic>> entries) =>
+        Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const SizedBox(height: 16),
+          Text(title,
+              style: const TextStyle(
+                  color: Color(0xFF292624),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          _grid([for (final e in entries) ('half', _infoCard(e.key, e.value))]),
+        ]);
     final details = <Widget>[
       Container(
           padding: const EdgeInsets.all(22),
@@ -1452,6 +2292,14 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
                     color: Color(0xFF292624),
                     fontSize: 23,
                     fontWeight: FontWeight.w700)),
+            if (clientNames.isNotEmpty)
+              Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(clientNames,
+                      style: const TextStyle(
+                          color: Color(0xFF292624),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500))),
             if (event['event_date'] != null)
               Padding(
                   padding: const EdgeInsets.only(top: 10),
@@ -1529,35 +2377,141 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
             onPressed: _startEdit,
             style: FilledButton.styleFrom(backgroundColor: _rose),
             child: const Text('Preencher ficha')),
-      for (final group in groups.entries)
-        if (group.value.isNotEmpty) _section(group.key, group.value),
-      if (_staff.isNotEmpty || (_isAdmin && (widget.eventId ?? 0) > 0)) ...[
-        const SizedBox(height: 18),
-        const Text('Equipa',
-            style: TextStyle(
-                color: Color(0xFF292624),
-                fontSize: 19,
-                fontWeight: FontWeight.w600)),
-        for (final member in _staff)
-          Row(children: [
-            Expanded(
-                child: _line(
-                    'Fotógrafo',
-                    member['user'] is Map
-                        ? (member['user'] as Map)['name']
-                        : member['name'])),
-            if (_isAdmin)
-              IconButton(
-                  onPressed: () => _removeStaff(member),
-                  icon: const Icon(Icons.remove_circle_outline),
-                  tooltip: 'Remover fotógrafo'),
-          ]),
-        if (_isAdmin)
-          TextButton.icon(
-              onPressed: _addStaff,
-              icon: const Icon(Icons.add),
-              label: const Text('Atribuir fotógrafo')),
-      ],
+      if (dayHours.isNotEmpty) dayBlock('Horários', dayHours),
+      if (dayPlaces.isNotEmpty) dayBlock('Locais', dayPlaces),
+      if (filled(teamText) || _staff.isNotEmpty)
+        Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const SizedBox(height: 16),
+          const Text('Equipa',
+              style: TextStyle(
+                  color: Color(0xFF292624),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                  color: Colors.white, borderRadius: BorderRadius.circular(14)),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                        filled(teamText)
+                            ? '$teamText'
+                            : _staff
+                                .map((m) =>
+                                    '${m['user'] is Map ? (m['user'] as Map)['name'] : m['name']}')
+                                .join(' + '),
+                        style: const TextStyle(
+                            color: Color(0xFF292624),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600)),
+                    for (final row in teamRows.whereType<Map>())
+                      if ('${row['hora'] ?? ''}'.isNotEmpty)
+                        Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                                '${row['membros'] ?? ''}${'${row['destino'] ?? ''}'.isEmpty ? '' : ' · ${row['destino']}'} · na loja às ${row['hora']}',
+                                style:
+                                    const TextStyle(color: Color(0xFF6D625F)))),
+                  ])),
+        ]),
+      if (dayContacts.isNotEmpty) dayBlock('Contactos', dayContacts),
+      for (final group in technical.entries) dayBlock(group.key, group.value),
+      if ('${event['access_pin'] ?? ''}'.trim().isNotEmpty ||
+          '${event['qr_token'] ?? ''}'.trim().isNotEmpty)
+        Container(
+          margin: const EdgeInsets.only(top: 14),
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: const Color(0xFFECE7E3))),
+          child: Wrap(
+              spacing: 24,
+              runSpacing: 16,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Acesso dos convidados',
+                          style: TextStyle(
+                              color: Color(0xFF292624),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 4),
+                      const Text('PIN do catálogo',
+                          style: TextStyle(color: Color(0xFF6D625F))),
+                      SelectableText('${event['access_pin'] ?? '—'}',
+                          style: const TextStyle(
+                              color: Color(0xFF292624),
+                              fontSize: 40,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 8)),
+                      const Text(
+                          'Os convidados entram com este PIN ou lendo o QR.',
+                          style: TextStyle(
+                              color: Color(0xFF6D625F), fontSize: 12)),
+                    ]),
+                if ('${event['qr_token'] ?? ''}'.trim().isNotEmpty)
+                  Container(
+                      color: Colors.white,
+                      padding: const EdgeInsets.all(6),
+                      child: QrImageView(
+                          data:
+                              'https://studio59.wiredevelop.pt/api/public/events/qr/${event['qr_token']}',
+                          size: 170,
+                          backgroundColor: Colors.white)),
+              ]),
+        ),
+      const SizedBox(height: 10),
+      Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: EdgeInsets.zero,
+              expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+              title: const Text('Ver ficha completa',
+                  style: TextStyle(
+                      color: Color(0xFF8E6267),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700)),
+              children: [
+                for (final group in rest.entries)
+                  if (group.value.isNotEmpty) _section(group.key, group.value),
+                _servicesView(event),
+                if (_staff.isNotEmpty ||
+                    (_isAdmin && (widget.eventId ?? 0) > 0)) ...[
+                  const SizedBox(height: 18),
+                  const Text('Fotógrafos atribuídos',
+                      style: TextStyle(
+                          color: Color(0xFF292624),
+                          fontSize: 19,
+                          fontWeight: FontWeight.w600)),
+                  for (final member in _staff)
+                    Row(children: [
+                      Expanded(
+                          child: _line(
+                              'Fotógrafo',
+                              member['user'] is Map
+                                  ? (member['user'] as Map)['name']
+                                  : member['name'])),
+                      if (_isAdmin)
+                        IconButton(
+                            onPressed: () => _removeStaff(member),
+                            icon: const Icon(Icons.remove_circle_outline),
+                            tooltip: 'Remover fotógrafo'),
+                    ]),
+                  if (_isAdmin)
+                    TextButton.icon(
+                        onPressed: _addStaff,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Atribuir fotógrafo')),
+                ],
+              ])),
+      if ((widget.eventId ?? 0) > 0) _postEventNotes(),
     ];
     final content = _loading
         ? const Center(child: CircularProgressIndicator())
@@ -1609,6 +2563,26 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
                           style: FilledButton.styleFrom(backgroundColor: _rose),
                           icon: const Icon(Icons.edit, size: 18),
                           label: const Text('Editar ficha')),
+                    if (_canPrintSheets &&
+                        (widget.eventId ?? 0) > 0 &&
+                        !_editing)
+                      Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: MediaQuery.sizeOf(context).width < 700
+                              ? IconButton(
+                                  onPressed: _openPrintDialog,
+                                  tooltip: 'Imprimir fichas',
+                                  icon: const Icon(Icons.print_outlined,
+                                      color: Color(0xFFB77F84)))
+                              : OutlinedButton.icon(
+                                  onPressed: _openPrintDialog,
+                                  style: OutlinedButton.styleFrom(
+                                      foregroundColor: const Color(0xFFB77F84),
+                                      side: const BorderSide(
+                                          color: Color(0xFFB77F84))),
+                                  icon: const Icon(Icons.print_outlined,
+                                      size: 18),
+                                  label: const Text('Imprimir'))),
                     if (_isAdmin && (widget.eventId ?? 0) > 0 && !_editing)
                       Padding(
                           padding: const EdgeInsets.only(left: 8),

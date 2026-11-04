@@ -11,11 +11,14 @@ import 'package:flutter/material.dart' hide RepeatMode;
 // DO NOT REMOVE OR MODIFY THE CODE ABOVE!
 
 import '/app_state.dart';
+import '/custom_code/widgets/studio59_language.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -30,9 +33,9 @@ class Studio59GuestGallery extends StatefulWidget {
 }
 
 class _GalleryScrollBehavior extends MaterialScrollBehavior {
-  const _GalleryScrollBehavior();
+  _GalleryScrollBehavior();
   @override
-  Set<PointerDeviceKind> get dragDevices => const {
+  Set<PointerDeviceKind> get dragDevices => {
         PointerDeviceKind.touch,
         PointerDeviceKind.mouse,
         PointerDeviceKind.trackpad,
@@ -45,7 +48,7 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
   String get _base => (FFAppState().offlineApiBase.isNotEmpty
       ? FFAppState().offlineApiBase
       : 'https://studio59.wiredevelop.pt/api');
-  static const _rose = Color(0xFFB77F84);
+  static final _rose = Color(0xFFB77F84);
   final _controller = ScrollController();
   final List<Map<String, dynamic>> _photos = [];
   bool _loading = true;
@@ -67,15 +70,21 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
   @override
   void initState() {
     super.initState();
+    s59Language.addListener(_onLanguage);
     _load(1);
     _pollFaceStatus();
   }
 
   @override
   void dispose() {
+    s59Language.removeListener(_onLanguage);
     _faceTimer?.cancel();
     _controller.dispose();
     super.dispose();
+  }
+
+  void _onLanguage() {
+    if (mounted) setState(() {});
   }
 
   Map<String, dynamic> _map(dynamic value) =>
@@ -105,7 +114,7 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
           'Accept': 'application/json',
           'Authorization': 'Bearer $token'
         },
-      ).timeout(const Duration(seconds: 25));
+      ).timeout(Duration(seconds: 25));
       dynamic decoded;
       try {
         decoded = jsonDecode(response.body);
@@ -126,7 +135,7 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
           ? data
           : data is Map && data['data'] is List
               ? data['data'] as List
-              : const [];
+              : [];
       final meta = data is Map ? _map(data) : body;
       final incoming = rows
           .whereType<Map>()
@@ -171,7 +180,7 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
           headers: {
             'Accept': 'application/json',
             'Authorization': 'Bearer $token'
-          }).timeout(const Duration(seconds: 8));
+          }).timeout(Duration(seconds: 8));
       if (!mounted) return;
       if (response.statusCode == 404) {
         setState(() => _faceStatus =
@@ -183,20 +192,22 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
         setState(() => _faceStatus = Map<String, dynamic>.from(body));
     } catch (_) {}
     if (mounted && !_faceReady)
-      _faceTimer = Timer(const Duration(seconds: 8), _pollFaceStatus);
+      _faceTimer = Timer(Duration(seconds: 8), _pollFaceStatus);
   }
 
   String _etaText(int seconds) {
-    if (seconds <= 60) return 'menos de 1 minuto';
+    if (seconds <= 60) return s59tr('menos de 1 minuto');
     final minutes = (seconds / 60).ceil();
-    return minutes == 1 ? 'cerca de 1 minuto' : 'cerca de $minutes minutos';
+    return minutes == 1
+        ? s59tr('cerca de 1 minuto')
+        : s59tr('cerca de {n} minutos', {'n': minutes});
   }
 
   void _titleTapped() {
     if (!_offline) return;
     final now = DateTime.now();
     if (_firstTitleTap == null ||
-        now.difference(_firstTitleTap!) > const Duration(seconds: 3)) {
+        now.difference(_firstTitleTap!) > Duration(seconds: 3)) {
       _firstTitleTap = now;
       _titleTaps = 0;
     }
@@ -209,22 +220,28 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
   }
 
   void _faceNotReady() {
-    final s = _faceStatus ?? const {};
+    final s = _faceStatus ?? {};
     final problem = s['problem'];
     final text = problem != null
-        ? 'A pesquisa por rosto não está disponível nesta sessão. Pode procurar as suas fotografias no catálogo.'
-        : 'A pesquisa por rosto fica disponível dentro de ${_etaText((s['eta_seconds'] as num?)?.toInt() ?? 0)}. '
-            'Já analisámos ${s['indexed'] ?? 0} de ${s['total'] ?? 0} fotografias.';
+        ? s59tr(
+            'A pesquisa por rosto não está disponível nesta sessão. Pode procurar as suas fotografias no catálogo.')
+        : s59tr(
+            'A pesquisa por rosto fica disponível dentro de {t}. Já analisámos {a} de {b} fotografias.',
+            {
+                't': _etaText((s['eta_seconds'] as num?)?.toInt() ?? 0),
+                'a': s['indexed'] ?? 0,
+                'b': s['total'] ?? 0
+              });
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(
           behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF4A3F3C),
-          duration: const Duration(seconds: 5),
+          backgroundColor: Color(0xFF4A3F3C),
+          duration: Duration(seconds: 5),
           content: Row(children: [
-            const Icon(Icons.hourglass_top, color: Colors.white70),
-            const SizedBox(width: 12),
-            Expanded(child: Text(text, style: const TextStyle(fontSize: 16))),
+            Icon(Icons.hourglass_top, color: Colors.white70),
+            SizedBox(width: 12),
+            Expanded(child: Text(text, style: TextStyle(fontSize: 16))),
           ])));
     _pollFaceStatus();
   }
@@ -233,46 +250,85 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
     final eventId = FFAppState().guestEvent.id;
     final token = FFAppState().guestSessionToken.trim();
     if (eventId <= 0 || token.isEmpty || _faceSearching) return;
+    // Cada pessoa tem de aceitar: o iPad passa de mão em mão, por isso o aviso aparece sempre.
+    final accepted = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20)),
+              title: Text(s59tr('Antes de continuar')),
+              content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                        s59tr(
+                            'Para encontrar as suas fotografias, a selfie é comparada com as fotografias do evento.'),
+                        style: TextStyle(fontSize: 17, height: 1.35)),
+                    SizedBox(height: 10),
+                    Text(
+                        s59tr(
+                            'Não guardamos os seus dados faciais: a selfie é eliminada logo após o reconhecimento.'),
+                        style: TextStyle(
+                            fontSize: 17,
+                            height: 1.35,
+                            fontWeight: FontWeight.w600)),
+                  ]),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: Text(s59tr('Cancelar'),
+                        style: TextStyle(color: Color(0xFF6D625F)))),
+                FilledButton(
+                    style: FilledButton.styleFrom(backgroundColor: _rose),
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: Text(s59tr('Aceito e continuo'))),
+              ],
+            ));
+    if (accepted != true || !mounted) return;
     final source = await showModalBottomSheet<ImageSource>(
         context: context,
         backgroundColor: Colors.white,
-        shape: const RoundedRectangleBorder(
+        shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
         builder: (sheetContext) => SafeArea(
             child: Padding(
-                padding: const EdgeInsets.all(20),
+                padding: EdgeInsets.all(20),
                 child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const Text('Encontrar as minhas fotografias',
+                      Text(s59tr('Encontrar as minhas fotografias'),
                           style: TextStyle(
                               fontSize: 19,
                               fontWeight: FontWeight.w700,
                               color: Color(0xFF292624))),
-                      const SizedBox(height: 6),
-                      const Text(
-                          'Tire uma selfie de frente, com boa luz e sem óculos de sol. Mostramos as fotografias do evento onde aparece.',
+                      SizedBox(height: 6),
+                      Text(
+                          s59tr(
+                              'Tire uma selfie de frente, com boa luz. Pode ser com mais pessoas: mostramos as fotografias de cada uma e as que têm em conjunto.'),
                           style: TextStyle(color: Color(0xFF6D625F))),
-                      const SizedBox(height: 16),
+                      SizedBox(height: 16),
                       FilledButton.icon(
                           onPressed: () =>
                               Navigator.pop(sheetContext, ImageSource.camera),
                           style: FilledButton.styleFrom(
                               backgroundColor: _rose,
-                              padding: const EdgeInsets.all(16)),
-                          icon: const Icon(Icons.camera_alt_outlined),
-                          label: const Text('Tirar selfie')),
-                      const SizedBox(height: 10),
+                              padding: EdgeInsets.all(16)),
+                          icon: Icon(Icons.camera_alt_outlined),
+                          label: Text(s59tr('Tirar selfie'))),
+                      SizedBox(height: 10),
                       OutlinedButton.icon(
                           onPressed: () =>
                               Navigator.pop(sheetContext, ImageSource.gallery),
                           style: OutlinedButton.styleFrom(
                               foregroundColor: _rose,
-                              side: const BorderSide(color: _rose),
-                              padding: const EdgeInsets.all(16)),
-                          icon: const Icon(Icons.photo_library_outlined),
-                          label: const Text('Escolher uma fotografia')),
+                              side: BorderSide(color: _rose),
+                              padding: EdgeInsets.all(16)),
+                          icon: Icon(Icons.photo_library_outlined),
+                          label: Text(s59tr('Escolher uma fotografia'))),
                     ]))));
     if (source == null || !mounted) return;
     XFile? picked;
@@ -309,14 +365,19 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
         }));
     try {
       final bytes = await picked.readAsBytes();
+      // A cópia temporária da selfie no dispositivo também é apagada.
+      if (!kIsWeb) {
+        try {
+          await File(picked.path).delete();
+        } catch (_) {}
+      }
       final request = http.MultipartRequest(
           'POST', Uri.parse('$_base/public/events/$eventId/face-search'))
         ..headers.addAll(
             {'Accept': 'application/json', 'Authorization': 'Bearer $token'})
         ..files.add(http.MultipartFile.fromBytes('selfie', bytes,
             filename: 'selfie.jpg'));
-      final streamed =
-          await request.send().timeout(const Duration(seconds: 120));
+      final streamed = await request.send().timeout(Duration(seconds: 120));
       final response = await http.Response.fromStream(streamed);
       dynamic decoded;
       try {
@@ -334,11 +395,10 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
           decoded is! Map) {
         throw StateError(decoded is Map && decoded['message'] != null
             ? '${decoded['message']}'
-            : 'Não foi possível pesquisar (${response.statusCode}).');
+            : 'Não foi possível contactar o servidor.');
       }
-      final rows = decoded['suggested'] is List
-          ? decoded['suggested'] as List
-          : const [];
+      final rows =
+          decoded['suggested'] is List ? decoded['suggested'] as List : [];
       final results = rows
           .whereType<Map>()
           .map((row) => Map<String, dynamic>.from(row))
@@ -348,20 +408,37 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
       setState(() {
         _faceSearching = false;
         _faceResults = results;
+        // Resumo por pessoa: numa selfie de grupo é preciso ver que cada uma foi procurada.
+        final people =
+            decoded['people'] is List ? (decoded['people'] as List) : [];
+        final together = int.tryParse('${decoded['together'] ?? 0}') ?? 0;
         _faceMessage = results.isEmpty
-            ? 'Não encontrámos fotografias suas. Tente outra selfie, de frente e com boa luz.'
-            : '${results.length} ${results.length == 1 ? 'fotografia encontrada' : 'fotografias encontradas'}';
+            ? s59tr(
+                'Não encontrámos fotografias suas. Tente outra selfie, de frente e com boa luz.')
+            : people.length > 1
+                ? s59tr(
+                    '{p} pessoas na selfie: {n} fotografias, {t} em conjunto',
+                    {'p': people.length, 'n': results.length, 't': together})
+                : results.length == 1
+                    ? s59tr('1 fotografia encontrada')
+                    : s59tr(
+                        '{n} fotografias encontradas', {'n': results.length});
+        if (results.isNotEmpty && people.any((c) => c == 0))
+          _faceMessage =
+              '$_faceMessage · ${s59tr('Uma das pessoas não foi encontrada; tente uma selfie só dessa pessoa.')}';
         if (pending > 0)
           _faceMessage =
-              '$_faceMessage · Ainda estamos a analisar $pending fotografias; tente de novo daqui a pouco.';
+              '$_faceMessage · ${s59tr('Ainda estamos a analisar {n} fotografias; tente de novo daqui a pouco.', {
+                'n': pending
+              })}';
       });
     } catch (error) {
       if (mounted)
         setState(() {
           _faceSearching = false;
-          _faceMessage = error is StateError
+          _faceMessage = s59tr(error is StateError
               ? error.message.toString()
-              : 'Não foi possível contactar o servidor.';
+              : 'Não foi possível contactar o servidor.');
         });
     }
   }
@@ -377,8 +454,8 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
     final id = int.tryParse('${photo['id']}');
     if (id == null || id <= 0) return;
     if (_inCart(id)) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Esta fotografia já está no carrinho.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(s59tr('Esta fotografia já está no carrinho.'))));
       return;
     }
     FFAppState()
@@ -412,7 +489,7 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
     final start = list.indexWhere((p) => '${p['id']}' == '${photo['id']}');
     await Navigator.of(context).push(PageRouteBuilder<void>(
       opaque: true,
-      transitionDuration: const Duration(milliseconds: 180),
+      transitionDuration: Duration(milliseconds: 180),
       pageBuilder: (_, __, ___) => _PhotoViewer(
         photos: list,
         initialIndex: start < 0 ? 0 : start,
@@ -427,110 +504,6 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
     if (mounted) setState(() {});
   }
 
-  /// Tutorial passo a passo (só aparece quando o convidado toca em «Ajuda»).
-  Future<void> _showTour() async {
-    const steps = [
-      (
-        Icons.touch_app_outlined,
-        'Ver uma fotografia em grande',
-        'Toque numa fotografia para a abrir em ecrã inteiro. Afaste dois dedos (ou toque duas vezes) para aproximar e deslize para o lado para ver a seguinte.'
-      ),
-      (
-        Icons.add_circle_outline,
-        'Escolher fotografias',
-        'Toque no sinal + por baixo da fotografia, ou em «Adicionar ao carrinho» quando ela está aberta. As escolhidas ficam com um visto.'
-      ),
-      (
-        Icons.face_retouching_natural,
-        'Encontrar as suas fotografias',
-        'Toque em «Encontrar as minhas fotos» e tire uma selfie. Mostramos as fotografias onde aparece. Pode tirar a selfie com mais pessoas.'
-      ),
-      (
-        Icons.shopping_bag_outlined,
-        'Ver o carrinho',
-        'O botão «Ver carrinho», sempre visível no fundo do ecrã, mostra as fotografias escolhidas. Aí escolhe as quantidades e conclui o pedido.'
-      ),
-      (
-        Icons.receipt_long_outlined,
-        'Depois do pedido',
-        'No fim recebe um código. Dirija-se ao fotógrafo para pagar e entregue o iPad à próxima pessoa da sua mesa.'
-      ),
-    ];
-    var index = 0;
-    await showDialog<void>(
-        context: context,
-        builder: (dialogContext) =>
-            StatefulBuilder(builder: (dialogContext, update) {
-              final step = steps[index];
-              final last = index == steps.length - 1;
-              return AlertDialog(
-                backgroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(24)),
-                contentPadding: const EdgeInsets.fromLTRB(28, 28, 28, 8),
-                content: SizedBox(
-                    width: 460,
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Container(
-                          padding: const EdgeInsets.all(18),
-                          decoration: const BoxDecoration(
-                              color: Color(0xFFF6ECEC), shape: BoxShape.circle),
-                          child: Icon(step.$1, color: _rose, size: 52)),
-                      const SizedBox(height: 18),
-                      Text(step.$2,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF292624))),
-                      const SizedBox(height: 12),
-                      Text(step.$3,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                              fontSize: 19,
-                              height: 1.4,
-                              color: Color(0xFF292624))),
-                      const SizedBox(height: 18),
-                      Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: List.generate(
-                              steps.length,
-                              (i) => Container(
-                                  width: i == index ? 22 : 10,
-                                  height: 10,
-                                  margin:
-                                      const EdgeInsets.symmetric(horizontal: 3),
-                                  decoration: BoxDecoration(
-                                      color: i == index
-                                          ? _rose
-                                          : const Color(0xFFE5D8D8),
-                                      borderRadius:
-                                          BorderRadius.circular(5))))),
-                    ])),
-                actionsAlignment: MainAxisAlignment.spaceBetween,
-                actions: [
-                  TextButton(
-                      onPressed: index == 0
-                          ? () => Navigator.pop(dialogContext)
-                          : () => update(() => index--),
-                      child: Text(index == 0 ? 'Fechar' : 'Anterior',
-                          style: const TextStyle(
-                              fontSize: 18, color: Color(0xFF6D625F)))),
-                  FilledButton(
-                      style: FilledButton.styleFrom(
-                          backgroundColor: _rose,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 26, vertical: 16)),
-                      onPressed: last
-                          ? () => Navigator.pop(dialogContext)
-                          : () => update(() => index++),
-                      child: Text(last ? 'Começar' : 'Seguinte',
-                          style: const TextStyle(fontSize: 18))),
-                ],
-              );
-            }));
-  }
-
   Future<void> _exit() async {
     final confirmed = await showDialog<bool>(
         context: context,
@@ -538,19 +511,21 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
               backgroundColor: Colors.white,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(20)),
-              title: const Text('Sair do catálogo?'),
+              title: Text(s59tr('Sair do catálogo?')),
               content: Text(FFAppState().guestCart.isEmpty
-                  ? 'Vai voltar ao ecrã inicial.'
-                  : 'As ${FFAppState().guestCart.length} fotografias selecionadas serão removidas do carrinho.'),
+                  ? s59tr('Vai voltar ao ecrã inicial.')
+                  : s59tr(
+                      'As {n} fotografias selecionadas serão removidas do carrinho.',
+                      {'n': FFAppState().guestCart.length})),
               actions: [
                 TextButton(
                     onPressed: () => Navigator.pop(dialogContext, false),
-                    child: const Text('Cancelar',
+                    child: Text(s59tr('Cancelar'),
                         style: TextStyle(color: Color(0xFF6D625F)))),
                 FilledButton(
                     onPressed: () => Navigator.pop(dialogContext, true),
                     style: FilledButton.styleFrom(backgroundColor: _rose),
-                    child: const Text('Sair')),
+                    child: Text(s59tr('Sair'))),
               ],
             ));
     if (confirmed != true || !mounted) return;
@@ -582,13 +557,13 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
         child: Column(children: [
           Expanded(
               child: ScrollConfiguration(
-            behavior: const _GalleryScrollBehavior(),
+            behavior: _GalleryScrollBehavior(),
             child: CustomScrollView(
                 controller: _controller,
-                physics: const AlwaysScrollableScrollPhysics(),
+                physics: AlwaysScrollableScrollPhysics(),
                 slivers: [
                   SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
                       sliver: SliverToBoxAdapter(
                           child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -598,17 +573,7 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
                                 spacing: 10,
                                 runSpacing: 8,
                                 children: [
-                                  OutlinedButton.icon(
-                                      onPressed: _showTour,
-                                      style: OutlinedButton.styleFrom(
-                                          foregroundColor: _rose,
-                                          side: const BorderSide(color: _rose),
-                                          shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(12))),
-                                      icon: const Icon(Icons.help_outline,
-                                          size: 18),
-                                      label: const Text('Ajuda')),
+                                  Studio59Language(),
                                   FilledButton.icon(
                                       onPressed: _faceSearching
                                           ? null
@@ -618,15 +583,15 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
                                       style: FilledButton.styleFrom(
                                           backgroundColor: _faceReady
                                               ? _rose
-                                              : const Color(0xFFD9CFCD),
+                                              : Color(0xFFD9CFCD),
                                           foregroundColor: _faceReady
                                               ? Colors.white
-                                              : const Color(0xFF6D625F),
+                                              : Color(0xFF6D625F),
                                           shape: RoundedRectangleBorder(
                                               borderRadius:
                                                   BorderRadius.circular(12))),
                                       icon: _faceSearching
-                                          ? const SizedBox(
+                                          ? SizedBox(
                                               width: 18,
                                               height: 18,
                                               child: CircularProgressIndicator(
@@ -638,65 +603,65 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
                                                       .face_retouching_natural
                                                   : Icons.hourglass_top,
                                               size: 18),
-                                      label: Text(_faceSearching
+                                      label: Text(s59tr(_faceSearching
                                           ? 'A procurar…'
-                                          : 'Encontrar as minhas fotos')),
+                                          : 'Encontrar as minhas fotos'))),
                                   if (!_offline)
                                     OutlinedButton.icon(
                                         onPressed: _exit,
                                         style: OutlinedButton.styleFrom(
                                             foregroundColor: _rose,
-                                            side:
-                                                const BorderSide(color: _rose),
+                                            side: BorderSide(color: _rose),
                                             shape: RoundedRectangleBorder(
                                                 borderRadius:
                                                     BorderRadius.circular(12))),
-                                        icon:
-                                            const Icon(Icons.logout, size: 18),
-                                        label: const Text('Sair do catálogo')),
+                                        icon: Icon(Icons.logout, size: 18),
+                                        label: Text(s59tr('Sair do catálogo'))),
                                 ]),
-                            const SizedBox(height: 8),
+                            SizedBox(height: 8),
                             GestureDetector(
                                 behavior: HitTestBehavior.opaque,
                                 onTap: _titleTapped,
                                 child: Text(FFAppState().guestEvent.name,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                         color: Color(0xFF292624),
                                         fontSize: 21,
                                         fontWeight: FontWeight.w700))),
-                            const SizedBox(height: 5),
+                            SizedBox(height: 5),
                             Text(
-                                '${price.toStringAsFixed(2).replaceAll('.', ',')} € por fotografia',
-                                style:
-                                    const TextStyle(color: Color(0xFF6D625F))),
+                                s59tr('{p} € por fotografia', {
+                                  'p': price
+                                      .toStringAsFixed(2)
+                                      .replaceAll('.', ',')
+                                }),
+                                style: TextStyle(color: Color(0xFF6D625F))),
                             if (_error != null)
                               Padding(
-                                  padding: const EdgeInsets.only(top: 14),
-                                  child: Text(_error!,
-                                      style: const TextStyle(
-                                          color: Color(0xFF9B3D3D)))),
+                                  padding: EdgeInsets.only(top: 14),
+                                  child: Text(s59tr(_error!),
+                                      style:
+                                          TextStyle(color: Color(0xFF9B3D3D)))),
                             if (_faceMessage != null || _faceResults != null)
                               Padding(
-                                  padding: const EdgeInsets.only(top: 14),
+                                  padding: EdgeInsets.only(top: 14),
                                   child: Container(
-                                    padding: const EdgeInsets.fromLTRB(
-                                        14, 10, 8, 10),
+                                    padding: EdgeInsets.fromLTRB(14, 10, 8, 10),
                                     decoration: BoxDecoration(
-                                        color: const Color(0xFFF6ECEC),
+                                        color: Color(0xFFF6ECEC),
                                         borderRadius:
                                             BorderRadius.circular(12)),
                                     child: Row(children: [
-                                      const Icon(Icons.face_retouching_natural,
+                                      Icon(Icons.face_retouching_natural,
                                           color: _rose, size: 20),
-                                      const SizedBox(width: 10),
+                                      SizedBox(width: 10),
                                       Expanded(
                                           child: Text(_faceMessage ?? '',
-                                              style: const TextStyle(
+                                              style: TextStyle(
                                                   color: Color(0xFF292624)))),
                                       if (_faceResults != null)
                                         TextButton(
                                             onPressed: _clearFaceSearch,
-                                            child: const Text('Ver todas',
+                                            child: Text(s59tr('Ver todas'),
                                                 style: TextStyle(
                                                     color: _rose,
                                                     fontWeight:
@@ -705,19 +670,19 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
                                   )),
                           ]))),
                   if (_loading)
-                    const SliverFillRemaining(
+                    SliverFillRemaining(
                         hasScrollBody: false,
                         child: Center(child: CupertinoActivityIndicator()))
                   else if (shown.isEmpty)
                     SliverFillRemaining(
                         hasScrollBody: false,
                         child: Center(
-                            child: Text(_faceResults != null
+                            child: Text(s59tr(_faceResults != null
                                 ? 'Sem fotografias encontradas para esta selfie.'
-                                : 'Não existem fotografias disponíveis neste evento.')))
+                                : 'Não existem fotografias disponíveis neste evento.'))))
                   else
                     SliverPadding(
-                        padding: const EdgeInsets.all(16),
+                        padding: EdgeInsets.all(16),
                         sliver: SliverGrid(
                           gridDelegate:
                               SliverGridDelegateWithFixedCrossAxisCount(
@@ -748,12 +713,11 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
                                                   imageUrl:
                                                       '${photo['preview_url'] ?? ''}',
                                                   fit: BoxFit.cover,
-                                                  placeholder: (_, __) =>
-                                                      const Center(
-                                                          child:
-                                                              CupertinoActivityIndicator()),
+                                                  placeholder: (_, __) => Center(
+                                                      child:
+                                                          CupertinoActivityIndicator()),
                                                   errorWidget: (_, __, ___) =>
-                                                      const Icon(Icons
+                                                      Icon(Icons
                                                           .broken_image_outlined)),
                                               if (selected)
                                                 Positioned(
@@ -761,20 +725,18 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
                                                     top: 8,
                                                     child: Container(
                                                         padding:
-                                                            const EdgeInsets
-                                                                .all(5),
+                                                            EdgeInsets.all(5),
                                                         decoration:
-                                                            const BoxDecoration(
+                                                            BoxDecoration(
                                                                 color: _rose,
                                                                 shape: BoxShape
                                                                     .circle),
-                                                        child: const Icon(
-                                                            Icons.check,
+                                                        child: Icon(Icons.check,
                                                             color: Colors.white,
                                                             size: 17))),
                                             ])),
                                         Padding(
-                                            padding: const EdgeInsets.all(10),
+                                            padding: EdgeInsets.all(10),
                                             child: Row(children: [
                                               Expanded(
                                                   child: Text(
@@ -782,15 +744,15 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
                                                       maxLines: 1,
                                                       overflow:
                                                           TextOverflow.ellipsis,
-                                                      style: const TextStyle(
+                                                      style: TextStyle(
                                                           fontWeight: FontWeight
                                                               .w600))),
                                               IconButton(
                                                   onPressed: selected
                                                       ? null
                                                       : () => _add(photo),
-                                                  tooltip:
-                                                      'Adicionar ao carrinho',
+                                                  tooltip: s59tr(
+                                                      'Adicionar ao carrinho'),
                                                   icon: Icon(
                                                       selected
                                                           ? Icons.check_circle
@@ -803,16 +765,16 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
                           }, childCount: shown.length),
                         )),
                   SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                      padding: EdgeInsets.fromLTRB(16, 0, 16, 24),
                       sliver: SliverToBoxAdapter(
                           child: Column(children: [
                         if (_faceResults == null && _page < _lastPage)
                           OutlinedButton(
                               onPressed:
                                   _loadingMore ? null : () => _load(_page + 1),
-                              child: Text(_loadingMore
+                              child: Text(s59tr(_loadingMore
                                   ? 'A carregar…'
-                                  : 'Carregar mais fotografias')),
+                                  : 'Carregar mais fotografias'))),
                       ]))),
                 ]),
           )),
@@ -823,7 +785,7 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
               child: SafeArea(
                   top: false,
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                    padding: EdgeInsets.fromLTRB(16, 10, 16, 10),
                     child: SizedBox(
                         width: double.infinity,
                         child: FilledButton.icon(
@@ -835,13 +797,14 @@ class _Studio59GuestGalleryState extends State<Studio59GuestGallery> {
                                   },
                             style: FilledButton.styleFrom(
                                 backgroundColor: _rose,
-                                padding: const EdgeInsets.all(18),
-                                textStyle: const TextStyle(
+                                padding: EdgeInsets.all(18),
+                                textStyle: TextStyle(
                                     fontSize: 18, fontWeight: FontWeight.w600)),
-                            icon: const Icon(Icons.shopping_bag_outlined),
+                            icon: Icon(Icons.shopping_bag_outlined),
                             label: Text(cartCount == 0
-                                ? 'Ver carrinho (vazio)'
-                                : 'Ver carrinho ($cartCount)'))),
+                                ? s59tr('Ver carrinho (vazio)')
+                                : s59tr(
+                                    'Ver carrinho ({n})', {'n': cartCount})))),
                   ))),
         ]));
   }
@@ -863,7 +826,7 @@ class _PhotoViewer extends StatefulWidget {
 }
 
 class _PhotoViewerState extends State<_PhotoViewer> {
-  static const _rose = Color(0xFFB77F84);
+  static final _rose = Color(0xFFB77F84);
   late final PageController _pages =
       PageController(initialPage: widget.initialIndex);
   late int _index = widget.initialIndex;
@@ -910,9 +873,8 @@ class _PhotoViewerState extends State<_PhotoViewer> {
           child: Stack(children: [
         PageView.builder(
           controller: _pages,
-          physics: _zoomed
-              ? const NeverScrollableScrollPhysics()
-              : const PageScrollPhysics(),
+          physics:
+              _zoomed ? NeverScrollableScrollPhysics() : PageScrollPhysics(),
           itemCount: widget.photos.length,
           onPageChanged: (i) => setState(() {
             _index = i;
@@ -934,10 +896,10 @@ class _PhotoViewerState extends State<_PhotoViewer> {
                   child: CachedNetworkImage(
                       imageUrl: '${widget.photos[i]['preview_url'] ?? ''}',
                       fit: BoxFit.contain,
-                      placeholder: (_, __) => const Center(
+                      placeholder: (_, __) => Center(
                           child:
                               CupertinoActivityIndicator(color: Colors.white)),
-                      errorWidget: (_, __, ___) => const Icon(
+                      errorWidget: (_, __, ___) => Icon(
                           Icons.broken_image_outlined,
                           color: Colors.white,
                           size: 56))),
@@ -952,26 +914,30 @@ class _PhotoViewerState extends State<_PhotoViewer> {
               IconButton(
                   onPressed: () => Navigator.of(context).pop(),
                   iconSize: 32,
-                  icon: const Icon(Icons.close, color: Colors.white),
-                  tooltip: 'Fechar'),
+                  icon: Icon(Icons.close, color: Colors.white),
+                  tooltip: s59tr('Fechar')),
               Expanded(
                   child: Text(
-                      '${photo['number'] ?? photo['filename'] ?? 'Fotografia'}  ·  ${_index + 1} de ${widget.photos.length}',
+                      '${photo['number'] ?? photo['filename'] ?? s59tr('Fotografia')}  ·  ${s59tr('{a} de {b}', {
+                            'a': _index + 1,
+                            'b': widget.photos.length
+                          })}',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
+                      style: TextStyle(
                           color: Colors.white,
                           fontSize: 18,
                           fontWeight: FontWeight.w600))),
-              const SizedBox(width: 48),
+              SizedBox(width: 48),
             ])),
         if (!_zoomed)
           Positioned(
               left: 0,
               right: 0,
               bottom: 86,
-              child: const Center(
+              child: Center(
                   child: Text(
-                      'Afaste dois dedos para aproximar · deslize para o lado para a seguinte',
+                      s59tr(
+                          'Afaste dois dedos para aproximar · deslize para o lado para a seguinte'),
                       style: TextStyle(color: Colors.white70, fontSize: 14)))),
         Positioned(
             left: 16,
@@ -981,11 +947,11 @@ class _PhotoViewerState extends State<_PhotoViewer> {
               if (_index > 0)
                 IconButton.filledTonal(
                     onPressed: () => _pages.previousPage(
-                        duration: const Duration(milliseconds: 220),
+                        duration: Duration(milliseconds: 220),
                         curve: Curves.easeOut),
                     iconSize: 30,
-                    icon: const Icon(Icons.chevron_left)),
-              const SizedBox(width: 10),
+                    icon: Icon(Icons.chevron_left)),
+              SizedBox(width: 10),
               Expanded(
                   child: FilledButton.icon(
                       onPressed: selected
@@ -996,25 +962,25 @@ class _PhotoViewerState extends State<_PhotoViewer> {
                             },
                       style: FilledButton.styleFrom(
                           backgroundColor: _rose,
-                          disabledBackgroundColor: const Color(0xFF5E4A4C),
+                          disabledBackgroundColor: Color(0xFF5E4A4C),
                           disabledForegroundColor: Colors.white,
-                          padding: const EdgeInsets.all(18),
-                          textStyle: const TextStyle(
+                          padding: EdgeInsets.all(18),
+                          textStyle: TextStyle(
                               fontSize: 18, fontWeight: FontWeight.w600)),
                       icon: Icon(selected
                           ? Icons.check_circle
                           : Icons.add_circle_outline),
-                      label: Text(selected
+                      label: Text(s59tr(selected
                           ? 'Já está no carrinho'
-                          : 'Adicionar ao carrinho'))),
-              const SizedBox(width: 10),
+                          : 'Adicionar ao carrinho')))),
+              SizedBox(width: 10),
               if (_index < widget.photos.length - 1)
                 IconButton.filledTonal(
                     onPressed: () => _pages.nextPage(
-                        duration: const Duration(milliseconds: 220),
+                        duration: Duration(milliseconds: 220),
                         curve: Curves.easeOut),
                     iconSize: 30,
-                    icon: const Icon(Icons.chevron_right)),
+                    icon: Icon(Icons.chevron_right)),
             ])),
       ])),
     );

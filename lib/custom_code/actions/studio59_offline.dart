@@ -270,6 +270,8 @@ class _S59Host {
   final Map<int, String> _photoPaths = {};
   List<Map<String, dynamic>> _orders = [];
   List<Map<String, dynamic>> _logs = [];
+  // Notas das contas escritas na sessão (cada gravação é uma versão; enviadas na sincronização).
+  List<Map<String, dynamic>> _accountNotes = [];
   final Map<String, String> _guestTokens = {};
   final Map<String, String> _staffTokens = {};
   final Map<String, Future<Uint8List?>> _previewJobs = {};
@@ -476,6 +478,10 @@ class _S59Host {
         .whereType<Map>()
         .map((l) => Map<String, dynamic>.from(l))
         .toList();
+    _accountNotes = (data['account_notes'] as List? ?? const [])
+        .whereType<Map>()
+        .map((n) => Map<String, dynamic>.from(n))
+        .toList();
     _photos = (data['photos'] as List? ?? const [])
         .whereType<Map>()
         .map((p) => Map<String, dynamic>.from(p))
@@ -590,6 +596,24 @@ class _S59Host {
       'selections': const [],
       'order_updates': const [],
       'logs': _logs,
+      'account_notes': _accountNotes,
+    };
+  }
+
+  /// Mesmo formato que o servidor: versão atual + histórico (mais recente primeiro).
+  Map<String, dynamic> _notesPayload() {
+    final history = _accountNotes.reversed
+        .map((n) => {
+              'body': n['body'] ?? '',
+              'author_name': n['author_name'],
+              'source': 'offline',
+              'created_at': n['at'],
+            })
+        .toList();
+    return {
+      'current': history.firstOrNull,
+      'history': history,
+      'offline_mode': true
     };
   }
 
@@ -827,6 +851,28 @@ class _S59Host {
         return _json(response, 200, {'data': _event});
       if (route('GET', ['events', '*', 'staff']))
         return _json(response, 200, {'data': []});
+      if (route('GET', ['events', '*', 'account-notes']))
+        return _json(response, 200, _notesPayload());
+      if (route('PUT', ['events', '*', 'account-notes'])) {
+        final text = '${body['body'] ?? ''}'.trim();
+        final last = _accountNotes.lastOrNull;
+        if (last == null ? text.isEmpty : last['body'] == text) {
+          return _json(response, 200, {..._notesPayload(), 'unchanged': true});
+        }
+        final author = '${body['author_name'] ?? ''}'.trim();
+        _accountNotes.add({
+          'key':
+              '${_session['qr_secret'] ?? 's'}-${DateTime.now().microsecondsSinceEpoch}',
+          'body': text,
+          'author_name':
+              author.isEmpty ? '${_session['staff_username'] ?? ''}' : author,
+          'at': DateTime.now().toIso8601String(),
+        });
+        log('staff', device, 'account_notes.updated',
+            'Alterou as notas das contas', null);
+        await _save();
+        return _json(response, 200, _notesPayload());
+      }
       if (route('GET', ['orders']) || route('GET', ['events', '*', 'orders'])) {
         final status = request.uri.queryParameters['status'];
         final query = (request.uri.queryParameters['q'] ?? '').toLowerCase();
@@ -856,6 +902,9 @@ class _S59Host {
       }
       if (order != null && route('POST', ['orders', '*', 'mark-paid'])) {
         return _markPaid(response, order, body, device);
+      }
+      if (order != null && route('POST', ['orders', '*', 'mark-unpaid'])) {
+        return _markUnpaid(response, order, device);
       }
       if (order != null && route('PUT', ['orders', '*'])) {
         return _updateOrder(response, order, body, device);
@@ -981,8 +1030,8 @@ class _S59Host {
         body['wants_film'] == true || body['wants_film'] == 'true';
     String? problem;
     if (name.isEmpty) problem = 'O nome é obrigatório.';
-    if ((productType == 'digital' || productType == 'both') && email.isEmpty)
-      problem = 'Para fotografias digitais indique o email.';
+    if (deliveryType == 'shipping' && email.isEmpty)
+      problem = 'Para o envio por correio indique o email.';
     if (email.isNotEmpty && !email.contains('@')) problem = 'Email inválido.';
     if (!const ['paper', 'digital', 'both'].contains(productType))
       problem = 'Formato inválido.';
@@ -1120,6 +1169,39 @@ class _S59Host {
     });
   }
 
+  /// Voltar a «não pago»: limpa recebido, trocos e dívidas (fica no histórico de pagamentos).
+  Future<void> _markUnpaid(
+      HttpResponse response, Map<String, dynamic> order, String device) async {
+    final now = DateTime.now().toIso8601String();
+    order
+      ..['cash_received_amount'] = _s59Euros(0)
+      ..['cash_change_amount'] = _s59Euros(0)
+      ..['cash_due_amount'] = _s59Euros(0)
+      ..['cash_change_given'] = true
+      ..['status'] = 'pending'
+      ..['paid_at'] = null
+      ..['updated_at'] = now;
+    (order['payments'] as List? ??
+            (order['payments'] = <Map<String, dynamic>>[]) as List)
+        .add({
+      'at': now,
+      'device': device,
+      'received_total': _s59Euros(0),
+      'change': _s59Euros(0),
+      'due': _s59Euros(0),
+      'change_given': true,
+      'reason': 'Marcado como não pago',
+    });
+    log(
+        'staff',
+        device,
+        'order.payment',
+        'Pedido ${order['order_code']} marcado como não pago',
+        {'order_code': order['order_code']});
+    await _save();
+    return _json(response, 200, {'data': _orderRow(order)});
+  }
+
   Future<void> _updateOrder(HttpResponse response, Map<String, dynamic> order,
       Map<String, dynamic> body, String device) async {
     final before = Map<String, dynamic>.from(order)
@@ -1129,7 +1211,9 @@ class _S59Host {
       'customer_name',
       'customer_email',
       'customer_phone',
-      'notes'
+      'notes',
+      'table_label',
+      'delivery_address'
     ]) {
       if (body.containsKey(key)) order[key] = '${body[key] ?? ''}';
     }
@@ -1200,8 +1284,12 @@ class _S59Host {
     log('guest', device, 'face.search',
         'Pesquisa facial: ${suggested.length} fotografias sugeridas', null);
     await _save();
-    return _json(
-        response, 200, {'suggested': suggested, 'pending': result['pending']});
+    return _json(response, 200, {
+      'suggested': suggested,
+      'pending': result['pending'],
+      'people': result['people'],
+      'together': result['together']
+    });
   }
 
   Future<void> _servePreview(HttpRequest request, int id) async {
@@ -1565,12 +1653,17 @@ class _S59FaceEngine {
       {bool foregroundOnly = false}) async {
     final img = await decode(encoded);
     if (img == null) return const [];
-    var found = await detect(img);
-    if (foregroundOnly && found.isNotEmpty) {
-      final largest = found.map((f) => f.area).reduce(max);
-      found = found
-          .where((f) => f.area >= largest * 0.25 && f.score >= 0.6)
-          .toList();
+    // Limite mais baixo: rostos parcialmente tapados têm pontuação de deteção menor.
+    var found = await detect(img, threshold: 0.35);
+    if (foregroundOnly) {
+      if (found.isEmpty) found = await detect(img, threshold: 0.25);
+      if (found.isNotEmpty) {
+        // Numa selfie a segunda pessoa fica muitas vezes mais atrás: só ignora quem está claramente ao fundo.
+        final largest = found.map((f) => f.area).reduce(max);
+        found = found.where((f) => f.area >= largest * 0.10).toList()
+          ..sort((a, b) => b.area.compareTo(a.area));
+        if (found.length > 6) found = found.sublist(0, 6);
+      }
     }
     return [for (final f in found) await embed(img, f)];
   }
@@ -1603,7 +1696,12 @@ const _s59FaceModelFiles = {
   'det_10g.onnx': 16923827,
   'w600k_mbf.onnx': 13616099
 };
-const _s59FaceThreshold = 0.52;
+// Mesma lógica do servidor: uma pesquisa por pessoa da selfie, com a média dos rostos seguros da pessoa.
+const _s59FaceDirect = 0.40;
+const _s59FaceSeed = 0.48;
+const _s59FaceWeakSeed = 0.34;
+const _s59FaceWeakAgree = 0.40;
+const _s59FaceCentroid = 0.44;
 const _s59FaceIndexFile = '.studio59_rostos.json';
 
 class _S59FaceIndex {
@@ -1800,28 +1898,100 @@ class _S59FaceIndex {
         await _exclusive(() => engine.faces(selfie, foregroundOnly: true));
     if (query.isEmpty)
       return {'status': 422, 'message': 'Nenhum rosto detetado.'};
-    final scored = <Map<String, dynamic>>[];
-    for (final photo in photos) {
-      final entry = _index['${photo['id']}'];
+    final vectors = <List<double>>[];
+    final owners = <int>[];
+    for (var p = 0; p < photos.length; p++) {
+      final entry = _index['${photos[p]['id']}'];
       if (entry is! Map) continue;
-      var best = 0.0;
       for (final e in (entry['e'] as List? ?? const [])) {
-        final vector =
-            (e as List).cast<num>().map((v) => v.toDouble()).toList();
-        for (final q in query) {
-          best = max(best, _S59FaceEngine.similarity(q, vector));
-        }
+        vectors.add((e as List).cast<num>().map((v) => v.toDouble()).toList());
+        owners.add(p);
       }
-      if (best >= _s59FaceThreshold)
-        scored.add({'photo': photo, 'score': best});
     }
-    scored
-        .sort((a, b) => (b['score'] as double).compareTo(a['score'] as double));
+    // Pontuação de cada rosto do evento para cada pessoa da selfie; cada rosto fica com a pessoa mais parecida.
+    final perPerson = [for (final q in query) _personScores(q, vectors)];
+    final byPhoto = <int, Map<int, double>>{};
+    for (var face = 0; face < vectors.length; face++) {
+      var person = 0;
+      for (var i = 1; i < perPerson.length; i++) {
+        if (perPerson[i][face] > perPerson[person][face]) person = i;
+      }
+      final score = perPerson.isEmpty ? 0.0 : perPerson[person][face];
+      if (score <= 0) continue;
+      final slot = byPhoto.putIfAbsent(owners[face], () => {});
+      slot[person] = max(slot[person] ?? 0.0, score);
+    }
+    double top(int p) => byPhoto[p]!.values.reduce(max);
+    final joint = byPhoto.keys.where((p) => byPhoto[p]!.length > 1).toList()
+      ..sort((a, b) => top(b).compareTo(top(a)));
+    final queues = [
+      for (var i = 0; i < query.length; i++)
+        byPhoto.keys
+            .where((p) => byPhoto[p]!.length == 1 && byPhoto[p]!.containsKey(i))
+            .toList()
+          ..sort((a, b) => byPhoto[b]![i]!.compareTo(byPhoto[a]![i]!)),
+    ];
+    // Primeiro as fotos em conjunto; depois alterna entre as pessoas.
+    final ordered = [...joint];
+    for (var round = 0; queues.any((q) => round < q.length); round++) {
+      for (final q in queues) {
+        if (round < q.length) ordered.add(q[round]);
+      }
+    }
     return {
       'status': 200,
-      'matches': scored.take(200).toList(),
-      'pending': pending(photos)
+      'matches': [
+        for (final p in ordered) {'photo': photos[p], 'score': top(p)}
+      ],
+      'pending': pending(photos),
+      'people': [
+        for (var i = 0; i < query.length; i++)
+          byPhoto.values.where((s) => s.containsKey(i)).length
+      ],
+      'together': joint.length,
     };
+  }
+
+  /// Compara com a selfie e com a média dos rostos seguros da pessoa no próprio evento
+  /// (muito mais estável do que uma selfie, encontra rostos parcialmente tapados).
+  List<double> _personScores(List<double> query, List<List<double>> vectors) {
+    final direct = [
+      for (final v in vectors) _S59FaceEngine.similarity(query, v)
+    ];
+    final order = List<int>.generate(vectors.length, (i) => i)
+      ..sort((a, b) => direct[b].compareTo(direct[a]));
+    var seeds = order.take(30).where((i) => direct[i] >= _s59FaceSeed).toList();
+    if (seeds.length < 3) {
+      final candidates =
+          order.take(8).where((i) => direct[i] >= _s59FaceWeakSeed).toList();
+      if (candidates.isNotEmpty) {
+        final agree = candidates
+            .where((i) =>
+                _S59FaceEngine.similarity(
+                    vectors[i], vectors[candidates.first]) >=
+                _s59FaceWeakAgree)
+            .toList();
+        if (agree.length >= 3) seeds = agree;
+      }
+    }
+    final result = [for (final s in direct) s >= _s59FaceDirect ? s : 0.0];
+    if (seeds.length >= 2) {
+      final centroid = List<double>.of(query);
+      for (final i in seeds) {
+        for (var d = 0; d < centroid.length; d++) {
+          centroid[d] += vectors[i][d];
+        }
+      }
+      final norm = sqrt(centroid.fold<double>(0, (sum, v) => sum + v * v));
+      for (var d = 0; d < centroid.length; d++) {
+        centroid[d] /= norm;
+      }
+      for (var i = 0; i < vectors.length; i++) {
+        final s = _S59FaceEngine.similarity(centroid, vectors[i]);
+        if (s >= _s59FaceCentroid && s > result[i]) result[i] = s;
+      }
+    }
+    return result;
   }
 }
 

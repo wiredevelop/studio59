@@ -50,10 +50,9 @@ Future<Studio59GuestCashSubmitResultStruct>
   }
   String? validation;
   if (customerName.isEmpty) validation = 'Introduza o nome.';
-  // Email obrigatório só com fotografias digitais (formato digital ou ambos).
-  if ((productType == 'digital' || productType == 'both') &&
-      customerEmail.isEmpty)
-    validation = 'Para fotografias digitais indique o email.';
+  // Email obrigatório só com envio para uma morada.
+  if (deliveryType == 'shipping' && customerEmail.isEmpty)
+    validation = 'Para o envio por correio indique o email.';
   if (customerEmail.isNotEmpty && !customerEmail.contains('@'))
     validation = 'Introduza um email válido.';
   if (!['paper', 'digital', 'both'].contains(productType))

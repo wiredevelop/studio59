@@ -20,3 +20,4 @@ export '/custom_code/widgets/studio59_guest_ticket.dart'
 export '/custom_code/widgets/studio59_staff_login.dart' show Studio59StaffLogin;
 export '/custom_code/widgets/studio59_staff_settings.dart'
     show Studio59StaffSettings;
+export '/custom_code/widgets/studio59_language.dart' show Studio59Language;

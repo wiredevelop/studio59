@@ -31,3 +31,26 @@ workflows:
       app_store_connect:
         auth: integration
         submit_to_testflight: true
+
+  macos-test:
+    # Compila a versão Mac para testar; ainda sem assinatura para a App Store.
+    name: macOS Teste (sem App Store)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      flutter: 3.41.4
+      xcode: 26.0.1
+    scripts:
+      - name: Flutter Pub Get
+        script: |
+          flutter config --enable-macos-desktop
+          flutter pub get
+      - name: Build macOS
+        script: |
+          flutter build macos --release --build-name=1.1.0 --build-number="$(date -u +%Y%m%d%H%M)"
+      - name: Zip da app
+        script: |
+          cd build/macos/Build/Products/Release
+          ditto -c -k --keepParent "Studio 59.app" studio59-macos.zip
+    artifacts:
+      - build/macos/Build/Products/Release/studio59-macos.zip
