@@ -1447,13 +1447,42 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
         meta['estar_na_loja_as'] = hours.first;
       }
     }
+    // Horas e local do serviço vêm do conteúdo da ficha: a primeira e a última hora preenchidas e o local da igreja ou da quinta.
+    final fichaHours = [
+      for (final f in _templateFields)
+        if (f['type'] == 'time') ...[
+          if (RegExp(r'^\d{1,2}:\d{2}').hasMatch(_c('${f['key']}').text.trim()))
+            _c('${f['key']}').text.trim().padLeft(5, '0').substring(0, 5),
+        ],
+    ]..sort();
+    var fichaPlace = '';
+    for (final key in const [
+      'local_cerimonia',
+      'igreja_local',
+      'local',
+      'almoco_localidade',
+      'quinta_nome',
+      'quinta_local',
+      'quinta'
+    ]) {
+      if (_templateFields
+              .any((f) => '${f['key']}' == key && f['type'] != 'select') &&
+          _c(key).text.trim().isNotEmpty) {
+        fichaPlace = _c(key).text.trim();
+        break;
+      }
+    }
     final payload = <String, dynamic>{
       'event_type': _formType, 'event_date': _c('event_date').text.trim(),
       'base_price': base, 'price_per_photo': photo,
-      'event_time': _c('event_time').text.trim(),
-      'event_end_time': _c('event_end_time').text.trim(),
+      'event_time':
+          fichaHours.isEmpty ? _c('event_time').text.trim() : fichaHours.first,
+      'event_end_time': fichaHours.length < 2
+          ? _c('event_end_time').text.trim()
+          : fichaHours.last,
       // O nome é sempre gerado pelo servidor a partir dos campos da ficha; cidade e morada deixaram de existir no formulário.
-      'location': _c('location').text.trim(), 'notes': _c('notes').text.trim(),
+      'location': fichaPlace.isEmpty ? _c('location').text.trim() : fichaPlace,
+      'notes': _c('notes').text.trim(),
     };
     for (final f in _templateFields) {
       final key = '${f['key']}';
@@ -1992,10 +2021,7 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
           'half',
           _input('report_number', 'Nº do serviço', 'number', auto: 'sequence')
         ),
-        ('third', _input('event_date', 'Data', 'date', required: true)),
-        ('third', _input('event_time', 'Hora de início', 'time')),
-        ('third', _input('event_end_time', 'Hora de fim', 'time')),
-        ('half', _input('location', 'Local', 'text')),
+        ('half', _input('event_date', 'Data', 'date', required: true)),
         (
           'half',
           _input('estrangeiro', 'Estrangeiro', 'select',
@@ -2167,7 +2193,8 @@ class _Studio59ServiceDetailState extends State<Studio59ServiceDetail> {
             .toList();
     final groups = <String, List<MapEntry<String, dynamic>>>{};
     groups['Serviço'] = [
-      if (filled(event['location'])) MapEntry('location', event['location']),
+      if (filled(event['location']) && templateFields.isEmpty)
+        MapEntry('location', event['location']),
       if (meta['estrangeiro'] == true) const MapEntry('estrangeiro', 'Sim'),
     ];
     if (groups['Serviço']!.isEmpty) groups.remove('Serviço');

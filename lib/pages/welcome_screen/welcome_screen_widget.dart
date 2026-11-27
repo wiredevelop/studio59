@@ -94,33 +94,8 @@ class _WelcomeScreenWidgetState extends State<WelcomeScreenWidget> {
                                       focusColor: Colors.transparent,
                                       hoverColor: Colors.transparent,
                                       highlightColor: Colors.transparent,
-                                      onTap: () async {
-                                        if (_model.teamLogoTapCount == 4) {
-                                          _model.teamLogoTapCount = 0;
-                                          safeSetState(() {});
-                                          _model.welcomeStaffTokenForDashboard =
-                                              await actions
-                                                  .readStudio59StaffToken();
-                                          if (!(_model
-                                                  .welcomeStaffTokenForDashboard ==
-                                              '')) {
-                                            context.pushNamed(
-                                                Studio59DashboardOnlineWidget
-                                                    .routeName);
-                                          } else {
-                                            context.pushNamed(
-                                                TeamOperationsOnlineWidget
-                                                    .routeName);
-                                          }
-                                        } else {
-                                          _model.teamLogoTapCount =
-                                              functions.nextGalleryPage(
-                                                  _model.teamLogoTapCount);
-                                          safeSetState(() {});
-                                        }
-
-                                        safeSetState(() {});
-                                      },
+                                      // Versão iPad (quiosque do convidado): sem acesso à área da equipa.
+                                      onTap: () async {},
                                       child: Image.asset(
                                         'assets/images/studio_59_logo.jpeg',
                                         width: 144.65,

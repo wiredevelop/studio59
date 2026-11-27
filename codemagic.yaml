@@ -1,4 +1,30 @@
 workflows:
+  ipad-ios12-adhoc:
+    # Versão só convidado para os iPads presos no iOS 12 (iPad mini 2).
+    # Ramo ipad-ios12; instala-se por Ad Hoc nos iPads registados em Apple Developer › Devices.
+    name: iPad iOS 12 (Ad Hoc, convidado)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    integrations:
+      app_store_connect: Codemagic Studio59
+    environment:
+      flutter: 3.32.8
+      xcode: 15.4
+      ios_signing:
+        distribution_type: ad_hoc
+        bundle_identifier: pt.studio59.app
+    scripts:
+      - name: Flutter Pub Get
+        script: flutter pub get
+      - name: Assinatura
+        script: xcode-project use-profiles
+      - name: Build IPA
+        script: |
+          flutter build ipa --release --build-name=1.1.0 --build-number="$(date -u +%Y%m%d%H%M)"             --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
   ios-release:
     name: iOS Release (FlutterFlow)
     max_build_duration: 60
